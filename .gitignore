@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+
+# Xcode user state (machine-specific, not needed in repo)
+*.xcuserstate
+xcuserdata/
+DeChaff.xcodeproj/xcuserdata/
+DeChaff.xcodeproj/project.xcworkspace/xcuserdata/
+
+# Build output
+DerivedData/
+build/
+*.o
+*.d

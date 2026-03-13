@@ -1,0 +1,38 @@
+{
+  "fill" : {
+    "automatic-gradient" : "display-p3:0.02168,0.06517,0.15986,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "glass" : true,
+          "hidden" : false,
+          "image-name" : "ChatGPT Image Mar 13, 2026 at 04_54_03 PM.png",
+          "name" : "ChatGPT Image Mar 13, 2026 at 04_54_03 PM",
+          "position" : {
+            "scale" : 1.5,
+            "translation-in-points" : [
+              117.1319580078125,
+              88.57305908203125
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}
