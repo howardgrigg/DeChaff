@@ -1,20 +1,28 @@
 {
-  "fill" : {
-    "automatic-gradient" : "display-p3:0.02168,0.06517,0.15986,1.00000"
-  },
+  "fill-specializations" : [
+    {
+      "value" : {
+        "automatic-gradient" : "display-p3:0.23954,0.19142,0.96783,1.00000"
+      }
+    },
+    {
+      "appearance" : "dark",
+      "value" : {
+        "automatic-gradient" : "display-p3:0.06148,0.05300,0.46504,1.00000"
+      }
+    }
+  ],
   "groups" : [
     {
       "layers" : [
         {
-          "glass" : true,
-          "hidden" : false,
-          "image-name" : "ChatGPT Image Mar 13, 2026 at 04_54_03 PM.png",
-          "name" : "ChatGPT Image Mar 13, 2026 at 04_54_03 PM",
+          "image-name" : "Wheat.png",
+          "name" : "Wheat",
           "position" : {
-            "scale" : 1.5,
+            "scale" : 1.4,
             "translation-in-points" : [
-              117.1319580078125,
-              88.57305908203125
+              0,
+              0
             ]
           }
         }

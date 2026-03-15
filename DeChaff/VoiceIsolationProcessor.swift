@@ -37,12 +37,23 @@ struct ProcessingOptions {
     var targetLUFS: Double = -16.0
     var outputFormat: OutputFormat = .wav
     var mp3Bitrate: Int = 64  // kbps CBR (64 / 96 / 128 / 192 / 256)
+    var shortenSilences: Bool = false
+    var maxSilenceDuration: Double = 1.0  // seconds to retain at the tail of each silent span
+    var trimInSeconds: Double = 0
+    var trimOutSeconds: Double = 0  // 0 = use full file duration
+}
+
+struct SilenceSegment {
+    let startSeconds: Double
+    let endSeconds:   Double
+    let keptSeconds:  Double  // portion retained at tail of the silent span
 }
 
 class VoiceIsolationProcessor {
     private let isolationSubType: UInt32 = 0x766f6973
     private var logHandler: (String) -> Void = { _ in }
     private var progressHandler: (Double) -> Void = { _ in }
+    private(set) var detectedSilenceSegments: [SilenceSegment] = []
 
     func process(
         inputPath: String,
@@ -62,11 +73,12 @@ class VoiceIsolationProcessor {
         let needsAU = options.voiceIsolation || options.compression
         let encodingMP3 = options.outputFormat == .mp3
 
-        // Scale AU+normalization progress to leave room for MP3 encoding if needed
-        let auNormScale = encodingMP3 ? 0.85 : 1.0
+        // Scale AU+normalization progress; silence shortening gets its own 10% slice if enabled
+        let silenceScale = options.shortenSilences ? 0.10 : 0.0
+        let auNormScale  = encodingMP3 ? (0.85 - silenceScale) : (1.0 - silenceScale)
 
         // WAV path used throughout AU/normalization pipeline
-        let wavOutputPath: String
+        var wavOutputPath: String
         var temps: [String] = []
 
         func makeTempPath() -> String {
@@ -105,8 +117,12 @@ class VoiceIsolationProcessor {
             let measureSource = needsAU ? auOutputPath : inputPath
             let pStart = needsAU ? 0.65 * auNormScale : 0.0
             let pMid   = needsAU ? 0.85 * auNormScale : 0.7 * auNormScale
-            guard let measured = measureLUFS(path: measureSource,
+            // When needsAU=true the AU output is already trimmed — pass empty options so measureLUFS
+            // reads the whole file rather than trying to seek to original-file positions.
+            let measureOptions = needsAU ? ProcessingOptions() : options
+            guard let measured = measureLUFS(path: measureSource, options: measureOptions,
                                              progressStart: pStart, progressEnd: pMid) else {
+                logHandler("❌ Loudness measurement failed — skipping normalization")
                 temps.forEach(cleanup); return false
             }
             let gainDB = options.targetLUFS - measured
@@ -115,10 +131,50 @@ class VoiceIsolationProcessor {
             let ok = applyGain(inputPath: measureSource, outputPath: wavOutputPath,
                                gainDB: gainDB, targetLUFS: options.targetLUFS,
                                monoOutput: !needsAU && options.monoOutput,
+                               options: needsAU ? ProcessingOptions() : options,
                                progressStart: pMid, progressEnd: auNormScale)
             guard ok else { temps.forEach(cleanup); return false }
             // Remove the AU temp (if different from wav output)
             if auOutputPath != wavOutputPath { cleanup(auOutputPath) }
+        }
+
+        // Pass 2.5: silence shortening (on normalized WAV, before MP3 encode)
+        if options.shortenSilences {
+            if let segments = detectSilences(inputPath: wavOutputPath, maxKept: options.maxSilenceDuration) {
+                detectedSilenceSegments = segments
+                let totalRemovable = segments.reduce(0.0) {
+                    $0 + max(0, ($1.endSeconds - $1.startSeconds) - $1.keptSeconds)
+                }
+                if totalRemovable > 0 {
+                    let silenceWavPath = makeTempPath()
+                    let ok = shortenSilenceFrames(inputPath: wavOutputPath, outputPath: silenceWavPath,
+                                                  segments: segments,
+                                                  progressStart: auNormScale,
+                                                  progressEnd: auNormScale + silenceScale)
+                    guard ok else { temps.forEach(cleanup); return false }
+                    if encodingMP3 {
+                        cleanup(wavOutputPath)
+                        wavOutputPath = silenceWavPath
+                    } else {
+                        let finalPath = wavOutputPath
+                        do {
+                            try FileManager.default.removeItem(atPath: finalPath)
+                            try FileManager.default.moveItem(atPath: silenceWavPath, toPath: finalPath)
+                            temps.removeAll { $0 == silenceWavPath }
+                        } catch {
+                            logHandler("⚠️ Could not finalize shortened audio: \(error.localizedDescription)")
+                        }
+                    }
+                } else {
+                    logHandler("✂️ No long silences detected")
+                    progressHandler(auNormScale + silenceScale)
+                }
+            } else {
+                logHandler("⚠️ Silence detection failed — skipping")
+                progressHandler(auNormScale + silenceScale)
+            }
+        } else {
+            detectedSilenceSegments = []
         }
 
         // Pass 3: MP3 encoding
@@ -338,11 +394,15 @@ class VoiceIsolationProcessor {
                 isolationAU.map { AudioUnitUninitialize($0); AudioComponentInstanceDispose($0) }
                 return false
             }
-            AudioUnitSetParameter(au, kDynamicsProcessorParam_Threshold,     kAudioUnitScope_Global, 0, -20.0, 0)
-            AudioUnitSetParameter(au, kDynamicsProcessorParam_HeadRoom,      kAudioUnitScope_Global, 0,  5.0,  0)
-            AudioUnitSetParameter(au, kDynamicsProcessorParam_AttackTime,    kAudioUnitScope_Global, 0,  0.1,  0)
-            AudioUnitSetParameter(au, kDynamicsProcessorParam_ReleaseTime,   kAudioUnitScope_Global, 0,  0.3,  0)
-            AudioUnitSetParameter(au, kDynamicsProcessorParam_OverallGain,    kAudioUnitScope_Global, 0,  0.0,  0)
+            // Threshold -28 dB: catches the quieter Bible reader as well as loud preacher peaks
+            // HeadRoom 20 dB: wide soft knee — gradual onset avoids pumping on natural speech variation
+            // AttackTime 5ms: fast enough to level speaker-to-speaker changes without clipping transients
+            // ReleaseTime 200ms: slow enough to avoid rapid gain pumping between sentences
+            AudioUnitSetParameter(au, kDynamicsProcessorParam_Threshold,     kAudioUnitScope_Global, 0, -28.0, 0)
+            AudioUnitSetParameter(au, kDynamicsProcessorParam_HeadRoom,      kAudioUnitScope_Global, 0, 20.0,  0)
+            AudioUnitSetParameter(au, kDynamicsProcessorParam_AttackTime,    kAudioUnitScope_Global, 0,  0.005, 0)
+            AudioUnitSetParameter(au, kDynamicsProcessorParam_ReleaseTime,   kAudioUnitScope_Global, 0,  0.2,  0)
+            AudioUnitSetParameter(au, kDynamicsProcessorParam_OverallGain,   kAudioUnitScope_Global, 0,  0.0,  0)
             AudioUnitSetParameter(au, kDynamicsProcessorParam_ExpansionRatio,kAudioUnitScope_Global, 0,  1.0,  0)
             guard AudioUnitInitialize(au) == noErr else {
                 logHandler("❌ Compressor AU init failed")
@@ -397,6 +457,7 @@ class VoiceIsolationProcessor {
             let doMono = options.monoOutput && format.channelCount > 1
             let monoFmt = AVAudioFormat(standardFormatWithSampleRate: format.sampleRate, channels: 1)!
             var outSettings = format.settings
+            outSettings.removeValue(forKey: AVChannelLayoutKey)  // channel layout from M4A/AAC is not WAV-compatible
             if doMono { outSettings[AVNumberOfChannelsKey] = 1 }
             let outFile = try AVAudioFile(forWriting: URL(fileURLWithPath: outputPath), settings: outSettings)
 
@@ -412,13 +473,18 @@ class VoiceIsolationProcessor {
                 ? AVAudioPCMBuffer(pcmFormat: monoFmt, frameCapacity: frameCount)
                 : nil
 
-            let fileLength = AVAudioFrameCount(audioFile.length)
+            let sr = format.sampleRate
+            let inFrame  = AVAudioFramePosition(options.trimInSeconds * sr)
+            let outFrame = min(options.trimOutSeconds > 0
+                ? AVAudioFramePosition(options.trimOutSeconds * sr)
+                : audioFile.length, audioFile.length)
+            let trimLength = AVAudioFrameCount(max(0, outFrame - inFrame))
             var totalFrames: AVAudioFrameCount = 0
             let startTime = Date()
-            audioFile.framePosition = 0
+            audioFile.framePosition = inFrame
 
-            while totalFrames < fileLength {
-                let toRead = min(frameCount, fileLength - totalFrames)
+            while totalFrames < trimLength {
+                let toRead = min(frameCount, trimLength - totalFrames)
                 inBuf.frameLength = toRead
                 try audioFile.read(into: inBuf, frameCount: toRead)
                 guard inBuf.frameLength > 0 else { break }
@@ -450,11 +516,11 @@ class VoiceIsolationProcessor {
                 }
 
                 totalFrames += inBuf.frameLength
-                progressHandler(progressStart + (progressEnd - progressStart) * Double(totalFrames) / Double(fileLength))
+                progressHandler(progressStart + (progressEnd - progressStart) * Double(totalFrames) / Double(trimLength))
             }
 
             let elapsed = Date().timeIntervalSince(startTime)
-            let speedup = (Double(fileLength) / Double(format.sampleRate)) / elapsed
+            let speedup = (Double(trimLength) / sr) / elapsed
             logHandler(String(format: "AU pass done in %.1fs (%.1f×)", elapsed, speedup))
             return true
         } catch {
@@ -505,7 +571,8 @@ class VoiceIsolationProcessor {
         }
     }
 
-    private func measureLUFS(path: String, progressStart: Double, progressEnd: Double) -> Double? {
+    private func measureLUFS(path: String, options: ProcessingOptions,
+                             progressStart: Double, progressEnd: Double) -> Double? {
         logHandler("📏 Measuring loudness (EBU R128)…")
         do {
             let file = try AVAudioFile(forReading: URL(fileURLWithPath: path))
@@ -517,12 +584,16 @@ class VoiceIsolationProcessor {
             let chunkSize: AVAudioFrameCount = 4096
             guard let buf = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: chunkSize) else { return nil }
             var kw = Array(repeating: [Float](), count: nch)
-            let fileLength = AVAudioFrameCount(file.length)
+            let inFrame  = AVAudioFramePosition(options.trimInSeconds * sr)
+            let outFrame = min(options.trimOutSeconds > 0
+                ? AVAudioFramePosition(options.trimOutSeconds * sr)
+                : file.length, file.length)
+            let trimLength = AVAudioFrameCount(max(0, outFrame - inFrame))
             var readFrames: AVAudioFrameCount = 0
-            file.framePosition = 0
+            file.framePosition = inFrame
 
-            while readFrames < fileLength {
-                let toRead = min(chunkSize, fileLength - readFrames)
+            while readFrames < trimLength {
+                let toRead = min(chunkSize, trimLength - readFrames)
                 buf.frameLength = toRead
                 try file.read(into: buf, frameCount: toRead)
                 guard buf.frameLength > 0 else { break }
@@ -533,7 +604,7 @@ class VoiceIsolationProcessor {
 
                 }
                 readFrames += buf.frameLength
-                progressHandler(progressStart + (progressEnd - progressStart) * 0.7 * Double(readFrames) / Double(fileLength))
+                progressHandler(progressStart + (progressEnd - progressStart) * 0.7 * Double(readFrames) / Double(trimLength))
             }
 
             let total = kw[0].count
@@ -554,7 +625,7 @@ class VoiceIsolationProcessor {
                 pos += hopSize
             }
 
-            guard !blocks.isEmpty else { return nil }
+            guard !blocks.isEmpty else { logHandler("⚠️ EBU R128: no blocks — \(total) samples read (file too short?)"); return nil }
             progressHandler(progressStart + (progressEnd - progressStart) * 0.9)
 
             // Absolute gate −70 LUFS
@@ -600,11 +671,13 @@ class VoiceIsolationProcessor {
     // MARK: - Gain application
 
     private func applyGain(inputPath: String, outputPath: String, gainDB: Double, targetLUFS: Double,
-                           monoOutput: Bool, progressStart: Double, progressEnd: Double) -> Bool {
+                           monoOutput: Bool, options: ProcessingOptions,
+                           progressStart: Double, progressEnd: Double) -> Bool {
         do {
             let file = try AVAudioFile(forReading: URL(fileURLWithPath: inputPath))
             let fmt = file.processingFormat
             var outSettings = fmt.settings
+            outSettings.removeValue(forKey: AVChannelLayoutKey)  // channel layout from M4A/AAC is not WAV-compatible
             if monoOutput { outSettings[AVNumberOfChannelsKey] = 1 }
             let outFile = try AVAudioFile(forWriting: URL(fileURLWithPath: outputPath), settings: outSettings)
             let outFmt = monoOutput ? AVAudioFormat(standardFormatWithSampleRate: fmt.sampleRate, channels: 1)! : fmt
@@ -613,12 +686,17 @@ class VoiceIsolationProcessor {
             let chunkSize: AVAudioFrameCount = 4096
             guard let buf    = AVAudioPCMBuffer(pcmFormat: fmt,    frameCapacity: chunkSize),
                   let outBuf = AVAudioPCMBuffer(pcmFormat: outFmt, frameCapacity: chunkSize) else { return false }
-            let fileLength = AVAudioFrameCount(file.length)
+            let sr = fmt.sampleRate
+            let inFrame  = AVAudioFramePosition(options.trimInSeconds * sr)
+            let outFrame = min(options.trimOutSeconds > 0
+                ? AVAudioFramePosition(options.trimOutSeconds * sr)
+                : file.length, file.length)
+            let trimLength = AVAudioFrameCount(max(0, outFrame - inFrame))
             var totalFrames: AVAudioFrameCount = 0
-            file.framePosition = 0
+            file.framePosition = inFrame
 
-            while totalFrames < fileLength {
-                let toRead = min(chunkSize, fileLength - totalFrames)
+            while totalFrames < trimLength {
+                let toRead = min(chunkSize, trimLength - totalFrames)
                 buf.frameLength = toRead
                 try file.read(into: buf, frameCount: toRead)
                 guard buf.frameLength > 0 else { break }
@@ -634,13 +712,180 @@ class VoiceIsolationProcessor {
                     try outFile.write(from: buf)
                 }
                 totalFrames += buf.frameLength
-                progressHandler(progressStart + (progressEnd - progressStart) * Double(totalFrames) / Double(fileLength))
+                progressHandler(progressStart + (progressEnd - progressStart) * Double(totalFrames) / Double(trimLength))
             }
             logHandler(String(format: "✅ Normalized to %.1f LUFS", targetLUFS))
             return true
         } catch {
             logHandler("❌ Gain pass failed: \(error.localizedDescription)"); return false
         }
+    }
+
+    // MARK: - Silence detection and shortening
+
+    private func detectSilences(inputPath: String, maxKept: Double) -> [SilenceSegment]? {
+        let minSilenceDuration = 0.5
+        let thresholdLinear: Float = Float(pow(10.0, -40.0 / 20.0))  // -40 dBFS ≈ 0.01
+        do {
+            let file = try AVAudioFile(forReading: URL(fileURLWithPath: inputPath))
+            let sr   = file.processingFormat.sampleRate
+            let nch  = Int(file.processingFormat.channelCount)
+            let chunkSize: AVAudioFrameCount = 4096
+            guard let buf = AVAudioPCMBuffer(pcmFormat: file.processingFormat,
+                                              frameCapacity: chunkSize) else { return nil }
+            let fileLength = AVAudioFrameCount(file.length)
+            var readFrames: AVAudioFrameCount = 0
+            file.framePosition = 0
+
+            var silenceStart: Double? = nil
+            var spans: [(start: Double, end: Double)] = []
+
+            while readFrames < fileLength {
+                let toRead = min(chunkSize, fileLength - readFrames)
+                buf.frameLength = toRead
+                try file.read(into: buf, frameCount: toRead)
+                guard buf.frameLength > 0 else { break }
+
+                var sumMS: Float = 0
+                for ch in 0..<nch {
+                    guard let data = buf.floatChannelData?[ch] else { continue }
+                    var ms: Float = 0
+                    vDSP_measqv(data, 1, &ms, vDSP_Length(buf.frameLength))
+                    sumMS += ms
+                }
+                let rms = sqrtf(sumMS / Float(nch))
+                let chunkStartSec = Double(readFrames) / sr
+
+                if rms < thresholdLinear {
+                    if silenceStart == nil { silenceStart = chunkStartSec }
+                } else {
+                    if let start = silenceStart {
+                        spans.append((start: start, end: chunkStartSec))
+                        silenceStart = nil
+                    }
+                }
+                readFrames += buf.frameLength
+            }
+            if let start = silenceStart {
+                spans.append((start: start, end: Double(fileLength) / sr))
+            }
+
+            return spans.compactMap { span in
+                let duration = span.end - span.start
+                guard duration >= minSilenceDuration else { return nil }
+                return SilenceSegment(startSeconds: span.start, endSeconds: span.end,
+                                      keptSeconds: min(duration, maxKept))
+            }
+        } catch {
+            logHandler("❌ Silence detection failed: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    private func shortenSilenceFrames(inputPath: String, outputPath: String,
+                                      segments: [SilenceSegment],
+                                      progressStart: Double, progressEnd: Double) -> Bool {
+        do {
+            let file = try AVAudioFile(forReading: URL(fileURLWithPath: inputPath))
+            let fmt  = file.processingFormat
+            let sr   = fmt.sampleRate
+            var silenceOutSettings = fmt.settings
+            silenceOutSettings.removeValue(forKey: AVChannelLayoutKey)
+            let outFile = try AVAudioFile(forWriting: URL(fileURLWithPath: outputPath),
+                                          settings: silenceOutSettings)
+            let chunkSize: AVAudioFrameCount = 4096
+            guard let buf     = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: chunkSize),
+                  let scratch = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: chunkSize) else { return false }
+
+            // Pre-compute the frame ranges to skip (leading portion of each qualifying silent span)
+            let removedRanges: [(start: Int64, end: Int64)] = segments.compactMap { seg in
+                let removedSecs = (seg.endSeconds - seg.startSeconds) - seg.keptSeconds
+                guard removedSecs > 0 else { return nil }
+                return (Int64(seg.startSeconds * sr), Int64((seg.startSeconds + removedSecs) * sr))
+            }
+
+            let fileLength = Int64(file.length)
+            var inputPos: Int64 = 0
+            var processed: Int64 = 0
+            var regionIdx = 0
+            file.framePosition = 0
+
+            while inputPos < fileLength {
+                let toRead = min(Int64(chunkSize), fileLength - inputPos)
+                buf.frameLength = AVAudioFrameCount(toRead)
+                try file.read(into: buf, frameCount: buf.frameLength)
+                guard buf.frameLength > 0 else { break }
+
+                let chunkStart = inputPos
+                let chunkEnd   = inputPos + Int64(buf.frameLength)
+
+                // Advance cursor past regions that end before this chunk
+                while regionIdx < removedRanges.count && removedRanges[regionIdx].end <= chunkStart {
+                    regionIdx += 1
+                }
+
+                if regionIdx >= removedRanges.count || removedRanges[regionIdx].start >= chunkEnd {
+                    // No removed region overlaps this chunk — write verbatim
+                    try outFile.write(from: buf)
+                } else {
+                    // Chunk straddles a removed region boundary — write sub-ranges only
+                    var writeStart = chunkStart
+                    var ri = regionIdx
+                    while writeStart < chunkEnd {
+                        let rStart = ri < removedRanges.count ? removedRanges[ri].start : chunkEnd
+                        let rEnd   = ri < removedRanges.count ? removedRanges[ri].end   : chunkEnd
+                        if rStart >= chunkEnd {
+                            // Next removed region starts after this chunk — write remaining frames
+                            let off = Int(writeStart - chunkStart)
+                            let cnt = Int(chunkEnd - writeStart)
+                            if cnt > 0 { try writeSubrange(from: buf, into: scratch,
+                                                            offset: off, count: cnt, to: outFile) }
+                            break
+                        } else if rEnd <= writeStart {
+                            ri += 1  // this region ends before writeStart — skip it
+                        } else {
+                            // Region overlaps [writeStart, chunkEnd)
+                            let beforeEnd = min(rStart, chunkEnd)
+                            if beforeEnd > writeStart {
+                                let off = Int(writeStart - chunkStart)
+                                let cnt = Int(beforeEnd - writeStart)
+                                try writeSubrange(from: buf, into: scratch,
+                                                  offset: off, count: cnt, to: outFile)
+                            }
+                            writeStart = min(rEnd, chunkEnd)
+                            if writeStart < rEnd { break }  // removed region extends past chunk
+                            ri += 1
+                        }
+                    }
+                }
+
+                inputPos = chunkEnd
+                processed += Int64(buf.frameLength)
+                progressHandler(progressStart + (progressEnd - progressStart) * Double(processed) / Double(fileLength))
+            }
+
+            let totalRemoved = segments.reduce(0.0) {
+                $0 + max(0, ($1.endSeconds - $1.startSeconds) - $1.keptSeconds)
+            }
+            let segCount = segments.filter { ($0.endSeconds - $0.startSeconds - $0.keptSeconds) > 0 }.count
+            logHandler(String(format: "✂️ Shortened silences: removed %.1fs across %d segment%@",
+                              totalRemoved, segCount, segCount == 1 ? "" : "s"))
+            return true
+        } catch {
+            logHandler("❌ Silence shortening failed: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    private func writeSubrange(from src: AVAudioPCMBuffer, into scratch: AVAudioPCMBuffer,
+                                offset: Int, count: Int, to file: AVAudioFile) throws {
+        scratch.frameLength = AVAudioFrameCount(count)
+        for ch in 0..<Int(src.format.channelCount) {
+            guard let s = src.floatChannelData?[ch],
+                  let d = scratch.floatChannelData?[ch] else { continue }
+            memcpy(d, s.advanced(by: offset), count * MemoryLayout<Float>.size)
+        }
+        try file.write(from: scratch)
     }
 
     // MARK: - Helpers
@@ -657,4 +902,21 @@ class VoiceIsolationProcessor {
         guard let path else { return }
         try? FileManager.default.removeItem(atPath: path)
     }
+}
+
+/// Remaps a chapter timestamp from the original audio timeline to the shortened output timeline.
+/// Chapters falling inside a removed silent region snap to the end of the kept tail.
+func remapChapterTime(_ timeSeconds: Double, using segments: [SilenceSegment]) -> Double {
+    var removedBefore = 0.0
+    for seg in segments {
+        let removedInSeg     = (seg.endSeconds - seg.startSeconds) - seg.keptSeconds
+        let removedRegionEnd = seg.startSeconds + removedInSeg
+        if timeSeconds <= seg.startSeconds { break }
+        else if timeSeconds < removedRegionEnd {
+            removedBefore += (timeSeconds - seg.startSeconds); break
+        } else {
+            removedBefore += removedInSeg
+        }
+    }
+    return max(0, timeSeconds - removedBefore)
 }
