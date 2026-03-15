@@ -3,6 +3,8 @@ import UniformTypeIdentifiers
 import AppKit
 import AVFoundation
 import Accelerate
+import Speech
+import CoreMedia
 
 @MainActor
 class ProcessingModel: ObservableObject {
@@ -23,6 +25,14 @@ class ProcessingModel: ObservableObject {
     @Published var chapters: [Chapter] = []
     @Published var shortenSilences: Bool = false
     @Published var maxSilenceDuration: Double = 1.0
+    @Published var doTranscription = false
+
+    // Transcription state
+    @Published var transcriptText = ""
+    @Published var isTranscribing = false
+    @Published var transcriptError: String? = nil
+    private var transcriptionTask: Task<Void, Never>?
+
     @Published var tagSermonTitle  = ""
     @Published var tagBibleReading = ""
     @Published var tagPreacher     = ""
@@ -96,6 +106,8 @@ class ProcessingModel: ObservableObject {
         detailLoadTask?.cancel()
         detailSamples = []; detailRangeStart = 0; detailRangeEnd = 0
         waveformZoom = 1.0; waveformVisibleStart = 0.0
+        transcriptionTask?.cancel()
+        transcriptText = ""; transcriptError = nil; isTranscribing = false
 
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
@@ -262,6 +274,55 @@ class ProcessingModel: ObservableObject {
                 self.detailSamples = samples
                 self.detailRangeStart = start
                 self.detailRangeEnd = end
+            }
+        }
+    }
+
+    func startTranscription(trimIn: Double) {
+        guard let url = inputURL else { return }
+        transcriptionTask?.cancel()
+        transcriptText = ""; transcriptError = nil; isTranscribing = true
+        let capturedURL = url
+        let capturedTrimIn = trimIn
+        transcriptionTask = Task.detached(priority: .utility) { [weak self] in
+            guard let self else { return }
+            do {
+                let transcriber = SpeechTranscriber(locale: .current, preset: .progressiveTranscription)
+                let status = await AssetInventory.status(forModules: [transcriber])
+                guard status >= .installed else {
+                    await MainActor.run { [weak self] in
+                        self?.transcriptError = status == .unsupported
+                            ? "Speech recognition is not supported on this device."
+                            : "Speech recognition model is not installed. Go to System Settings → Accessibility → Speech to download it."
+                        self?.isTranscribing = false
+                    }
+                    return
+                }
+                let file = try AVAudioFile(forReading: capturedURL)
+                if capturedTrimIn > 0 {
+                    file.framePosition = AVAudioFramePosition(capturedTrimIn * file.processingFormat.sampleRate)
+                }
+                let analyzer = SpeechAnalyzer(modules: [transcriber])
+                async let analysis: CMTime? = analyzer.analyzeSequence(from: file)
+                for try await result in transcriber.results {
+                    try Task.checkCancellation()
+                    let chunk = String(result.text.characters)
+                    await MainActor.run { [weak self] in
+                        guard let self else { return }
+                        if !self.transcriptText.isEmpty { self.transcriptText += " " }
+                        self.transcriptText += chunk
+                    }
+                }
+                _ = try await analysis
+            } catch is CancellationError {
+                // cancelled — leave text as-is
+            } catch {
+                await MainActor.run { [weak self] in
+                    self?.transcriptError = error.localizedDescription
+                }
+            }
+            await MainActor.run { [weak self] in
+                self?.isTranscribing = false
             }
         }
     }
@@ -632,6 +693,23 @@ struct ContentView: View {
     @State private var keyMonitor: Any?
     @State private var scrollMonitor: Any?
     @State private var clickMonitor: Any?
+    @State private var transcriptWindowController: NSWindowController?
+
+    private func openTranscriptWindow() {
+        if let wc = transcriptWindowController, wc.window?.isVisible == true {
+            wc.window?.makeKeyAndOrderFront(nil)
+            return
+        }
+        let hosting = NSHostingController(rootView: TranscriptView(model: model))
+        let window = NSWindow(contentViewController: hosting)
+        window.title = "Transcript"
+        window.setContentSize(NSSize(width: 500, height: 420))
+        window.styleMask = [.titled, .closable, .resizable, .miniaturizable]
+        window.isReleasedWhenClosed = false
+        let wc = NSWindowController(window: window)
+        transcriptWindowController = wc
+        wc.showWindow(nil)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -833,6 +911,8 @@ struct ContentView: View {
                 }
             }
 
+            Toggle("Transcribe audio (on-device)", isOn: $model.doTranscription)
+
             Divider()
 
             HStack(spacing: 12) {
@@ -985,10 +1065,17 @@ struct ContentView: View {
                 Spacer()
 
                 if !model.isProcessing {
-                    Button("Process →") { model.startProcessing() }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                        .disabled(model.isLoadingWaveform)
+                    Button("Process →") {
+                        model.startProcessing()
+                        if model.doTranscription {
+                            let trimIn = model.trimInSeconds
+                            model.startTranscription(trimIn: trimIn)
+                            openTranscriptWindow()
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(model.isLoadingWaveform)
                 }
             }
             .padding(.horizontal, 16)
@@ -1223,6 +1310,62 @@ struct ContentView: View {
             DispatchQueue.main.async { self.model.loadFile(url: url) }
         }
         return true
+    }
+}
+
+// MARK: - Transcript Window
+
+struct TranscriptView: View {
+    @ObservedObject var model: ProcessingModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Transcript")
+                    .font(.headline)
+                Spacer()
+                if model.isTranscribing {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                        .padding(.trailing, 4)
+                    Text("Transcribing…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if !model.transcriptText.isEmpty {
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(model.transcriptText, forType: .string)
+                    } label: {
+                        Label("Copy", systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+            .padding()
+
+            Divider()
+
+            if let error = model.transcriptError {
+                Text(error)
+                    .foregroundStyle(.red)
+                    .padding()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else if model.transcriptText.isEmpty {
+                Text(model.isTranscribing ? "Waiting for first results…" : "No transcript yet.")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    Text(model.transcriptText)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                }
+            }
+        }
+        .frame(minWidth: 420, minHeight: 320)
     }
 }
 
