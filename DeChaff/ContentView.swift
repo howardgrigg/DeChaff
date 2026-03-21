@@ -21,11 +21,11 @@ class ProcessingModel: ObservableObject {
     @Published var monoOutput    = true
     @Published var targetLUFS: Double = -16.0
     @Published var outputFormat: OutputFormat = .mp3
-    @Published var mp3Bitrate: Int = 128
+    @Published var mp3Bitrate: Int = 64
     @Published var chapters: [Chapter] = []
-    @Published var shortenSilences: Bool = false
+    @Published var shortenSilences: Bool = true
     @Published var maxSilenceDuration: Double = 1.0
-    @Published var doTranscription = false
+    @Published var doTranscription = true
 
     // Transcription state
     @Published var transcriptText = ""
