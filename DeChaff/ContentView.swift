@@ -671,7 +671,7 @@ func formatPlaybackTime(_ seconds: Double) -> String {
 
 struct ContentView: View {
     @StateObject var model = ProcessingModel()
-    @StateObject var ytManager = YtDlpManager()
+    @EnvironmentObject var ytManager: YtDlpManager
     @StateObject var youtube = YouTubeViewModel()
     @State var currentStep = 0
     @State var isTargeted = false
@@ -680,7 +680,6 @@ struct ContentView: View {
     @State private var scrollMonitor: Any?
     @State private var clickMonitor: Any?
     @State private var showLog = false
-    @State private var showSettings = false
     @AppStorage("dechaff.youtube.channelURL") var ytChannelURL = ""
     @AppStorage("dechaff.youtube.videoLimit") var ytVideoLimit = 10
 
@@ -727,9 +726,6 @@ struct ContentView: View {
             Task { await ytManager.checkAndUpdate() }
         }
         .onDisappear { teardownMonitors() }
-        .sheet(isPresented: $showSettings) {
-            SettingsView(manager: ytManager, channelURL: $ytChannelURL, videoLimit: $ytVideoLimit)
-        }
     }
 
     // MARK: - App Header
@@ -749,11 +745,6 @@ struct ContentView: View {
                         .lineLimit(1).truncationMode(.middle)
                 }
             }
-            Button { showSettings = true } label: {
-                Image(systemName: "gear").font(.system(size: 14))
-            }
-            .buttonStyle(.borderless)
-            .help("Settings")
         }
     }
 
