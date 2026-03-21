@@ -11,6 +11,11 @@
 		AA00000000000000000000B2 /* DeChaffApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000AF /* DeChaffApp.swift */; };
 		AA00000000000000000000B3 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000B0 /* ContentView.swift */; };
 		AA00000000000000000000B4 /* VoiceIsolationProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000B1 /* VoiceIsolationProcessor.swift */; };
+		DC00000000000000000000E2 /* Step1LoadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC00000000000000000000E1 /* Step1LoadView.swift */; };
+		DC00000000000000000000E4 /* Step2TrimView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC00000000000000000000E3 /* Step2TrimView.swift */; };
+		DC00000000000000000000E6 /* Step3InfoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC00000000000000000000E5 /* Step3InfoView.swift */; };
+		DC00000000000000000000E8 /* Step4ChaptersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC00000000000000000000E7 /* Step4ChaptersView.swift */; };
+		DC00000000000000000000EA /* Step5OutputView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC00000000000000000000E9 /* Step5OutputView.swift */; };
 		AA00000000000000000000C4 /* lame in Resources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000C3 /* lame */; };
 		AA00000000000000000000C5 /* Wheat.png in Resources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000C6 /* Wheat.png */; };
 /* End PBXBuildFile section */
@@ -21,6 +26,11 @@
 		AA00000000000000000000AF /* DeChaffApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeChaffApp.swift; sourceTree = "<group>"; };
 		AA00000000000000000000B0 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		AA00000000000000000000B1 /* VoiceIsolationProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceIsolationProcessor.swift; sourceTree = "<group>"; };
+		DC00000000000000000000E1 /* Step1LoadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Step1LoadView.swift; sourceTree = "<group>"; };
+		DC00000000000000000000E3 /* Step2TrimView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Step2TrimView.swift; sourceTree = "<group>"; };
+		DC00000000000000000000E5 /* Step3InfoView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Step3InfoView.swift; sourceTree = "<group>"; };
+		DC00000000000000000000E7 /* Step4ChaptersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Step4ChaptersView.swift; sourceTree = "<group>"; };
+		DC00000000000000000000E9 /* Step5OutputView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Step5OutputView.swift; sourceTree = "<group>"; };
 		AA00000000000000000000C3 /* lame */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; path = lame; sourceTree = "<group>"; };
 		AA00000000000000000000C6 /* Wheat.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = Wheat.png; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -58,6 +68,11 @@
 				AA00000000000000000000AF /* DeChaffApp.swift */,
 				AA00000000000000000000B0 /* ContentView.swift */,
 				AA00000000000000000000B1 /* VoiceIsolationProcessor.swift */,
+				DC00000000000000000000E1 /* Step1LoadView.swift */,
+				DC00000000000000000000E3 /* Step2TrimView.swift */,
+				DC00000000000000000000E5 /* Step3InfoView.swift */,
+				DC00000000000000000000E7 /* Step4ChaptersView.swift */,
+				DC00000000000000000000E9 /* Step5OutputView.swift */,
 				AA00000000000000000000C3 /* lame */,
 				AA00000000000000000000C6 /* Wheat.png */,
 				5069CC302F64007A00F65B34 /* DeChaff.icon */,
@@ -162,6 +177,11 @@
 				AA00000000000000000000B2 /* DeChaffApp.swift in Sources */,
 				AA00000000000000000000B3 /* ContentView.swift in Sources */,
 				AA00000000000000000000B4 /* VoiceIsolationProcessor.swift in Sources */,
+				DC00000000000000000000E2 /* Step1LoadView.swift in Sources */,
+				DC00000000000000000000E4 /* Step2TrimView.swift in Sources */,
+				DC00000000000000000000E6 /* Step3InfoView.swift in Sources */,
+				DC00000000000000000000E8 /* Step4ChaptersView.swift in Sources */,
+				DC00000000000000000000EA /* Step5OutputView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
