@@ -1,66 +1,55 @@
 # DeChaff User Guide
 
-DeChaff prepares sermon recordings for podcast distribution. Drop in a raw audio file and it cleans the audio, normalises loudness, encodes to MP3, and adds chapter markers with ID3 tags — all in one step.
+DeChaff prepares sermon recordings for podcast distribution. Work through five steps — Load, Trim, Info, Chapters, Output — then click **Process**. The app cleans the audio, normalises loudness, encodes to MP3, and adds chapter markers with ID3 tags automatically.
 
 ---
 
-## Basic workflow
+## The five steps
 
-1. **Drop a file** onto the drop zone (or click **Choose File…**). Supported formats: WAV, MP3, M4A, AIFF, FLAC, CAF.
-2. The waveform appears at the bottom of the window. Trim the recording if needed (see below).
-3. Fill in the **Info** tags on the right if you want them embedded in the MP3.
-4. Add **Chapter** markers if needed.
-5. Click **Process →** to run. The output file is saved next to the original.
+### Step 1 — Load
+
+Drop an audio file onto the drop zone, or click **Choose File…**
+
+Supported formats: WAV, MP3, M4A, AIFF, FLAC, CAF.
+
+Once the file loads, DeChaff reads the waveform and shows the duration. Click **Next** to continue. You can also drop a file directly onto any step — the app will load it and take you to Step 2.
 
 ---
 
-## Waveform & trimming
+### Step 2 — Trim
 
-The waveform panel at the bottom shows the full recording. Two orange handles mark the **trim-in** (start) and **trim-out** (end) — only audio between them is processed. This is useful for cutting mic noise before the service starts and dead air at the end.
+The waveform shows the full recording. Two orange handles mark the **trim-in** (start) and **trim-out** (end) — only audio between them is processed. Use this to cut mic noise before the service starts and dead air at the end.
 
 **Setting trim points**
 - Drag the orange handles directly on the waveform.
-- Or click to position the playhead, then click **Set In** or **Set Out** to snap the nearest handle to the playhead.
+- Or move the playhead and press **I** to set the in point, **O** to set the out point.
+- Or click **Set In** / **Set Out** in the toolbar to snap to the current playhead position.
 
 **Playback**
 - Click anywhere on the waveform to jump to that position.
-- Press **Space** to play/pause (works unless a text field is focused).
-- The golden playhead line shows the current position.
+- Press **Space** to play/pause.
 
 **Zooming in for precision**
-- **Pinch** on the trackpad to zoom in — the waveform shows higher detail as you zoom.
-- The scrollbar below the waveform appears when zoomed; drag it to pan, or use the trackpad scroll wheel.
-- **Double-click** the waveform to zoom back out to full view.
+- Scroll vertically on the trackpad to zoom in — the waveform shows higher detail as you zoom.
+- Scroll horizontally to pan when zoomed in.
+- A scrollbar appears below the waveform when zoomed; drag it to pan.
 
 ---
 
-## Processing options
+### Step 3 — Info
 
-| Option | What it does |
-|--------|-------------|
-| **Voice Isolation** | Runs Apple's built-in voice isolation engine to remove background noise, room reverb, and crowd sounds. |
-| **Dynamic Compression** | Evens out volume differences — quieter passages are brought up, peaks are controlled. Helps with preachers who vary a lot in volume. |
-| **Loudness Normalisation** | Adjusts the overall level to a target measured in LUFS (the broadcast standard). Default −16 LUFS suits most podcast platforms; use the slider to adjust. |
-| **Mono output** | Mixes down to a single channel. Recommended — sermons recorded in stereo waste file size without benefit. |
-| **Shorten long silences** | Finds pauses longer than the threshold and trims them. Useful for tightening recordings with long gaps between thoughts. The slider sets the maximum silence length to keep. |
-| **MP3 bitrate** | Quality/size trade-off for the MP3 output. 64 kbps is fine for speech; use 128 kbps+ if music quality matters. |
-
----
-
-## Info tags (right panel → Info tab)
-
-These fields are embedded in the MP3 as ID3 tags and are used to build the output filename automatically.
+These fields are embedded in the MP3 as ID3 tags and used to build the output filename.
 
 | Field | Notes |
 |-------|-------|
 | **Sermon Title** | e.g. *The Saving Power of Jesus* |
 | **Bible Reading** | e.g. *Romans 1:16–17* |
-| **Preacher** | Speaker name |
+| **Preacher** | Speaker name — remembered between sessions |
 | **Series** | Sermon series title — remembered between sessions |
-| **Date** | Date picker — defaults to today. The year is embedded in the ID3 tag; the full date prefixes the filename. |
-| **Artwork** | Drag an image onto the artwork square, or click it to choose a file. Remembered between sessions. |
+| **Date** | Defaults to today. The year is embedded in the ID3 tag; the full date prefixes the filename. |
+| **Artwork** | Drag an image onto the square, or click to choose a file. Remembered between sessions. |
 
-**Output filename** is built automatically from the tags:
+**Output filename** is built automatically:
 ```
 YYYY-MM-DD Sermon Title, Bible Reading | Preacher | Series.mp3
 ```
@@ -68,35 +57,70 @@ If no tags are filled in, the file is named `<original>_dechaff.mp3`.
 
 ---
 
-## Chapter markers (right panel → Chapters tab)
+### Step 4 — Chapters
 
-Chapters appear as purple lines on the waveform and as a navigable chapter list in podcast apps.
+Chapters appear as markers on the waveform and as a navigable chapter list in podcast apps.
 
 **Adding chapters**
-- Click **+** in the Chapters tab. The first chapter is pre-labelled *Bible Reading* and the second *Sermon*, using the text from the Info fields if filled in.
-- Chapter times default to 1-minute intervals — adjust them after adding.
+- Play or scrub to the moment you want to mark, then click **+ Add Chapter**.
+- The first chapter is placed at the very start of the trimmed recording and pre-labelled *Bible Reading* (using the text from the Info field if filled in).
+- The second chapter defaults to 2 minutes in and is pre-labelled *Sermon*.
+- Further chapters are placed at the current playhead position.
 
 **Editing chapters**
-- **Drag a purple marker** on the waveform to reposition it. The playhead follows and the time updates in the table.
-- **Click the time field** in the table and type a time directly (format: `m:ss` or `h:mm:ss`).
+- **Drag a chapter marker** on the waveform to reposition it.
+- **Click the time field** in the list and type a time directly (`m:ss` or `h:mm:ss`).
 - Click the title field to rename a chapter.
-- Click the **×** button to delete a chapter.
+- Click the **−** button to delete a chapter.
 
-Chapters are stored in *output time* — that is, relative to the trim-in point. A chapter at `0:00` plays at the very start of the trimmed recording, regardless of where the trim-in handle sits on the original file.
+Chapter times are in *output time* — relative to the trim-in point. A chapter at `0:00` plays at the very start of the trimmed recording regardless of where the trim-in handle sits on the original file.
 
 ---
 
-## Output file
+### Step 5 — Output
 
-The processed file is saved in the **same folder as the original**. When processing finishes, a green bar shows the filename with a **Reveal in Finder** button.
+Review the processing options and click **Process** when ready.
 
-To process another file, simply drop it onto the drop zone or the waveform area — the window resets automatically.
+**Audio Processing**
+
+| Option | Default | What it does |
+|--------|---------|-------------|
+| **Voice Isolation** | On | Apple's voice isolation engine removes background noise, room reverb, and crowd sounds. |
+| **Dynamic Compression** | On | Evens out volume differences — quieter passages are brought up, peaks are controlled. |
+| **Loudness Normalisation** | On | Adjusts overall level to a target LUFS. Default −16 LUFS suits most podcast platforms. A built-in peak limiter prevents clipping. |
+| **Mono Output** | On | Mixes down to a single channel. Recommended — speech recorded in stereo wastes file size without benefit. |
+| **Shorten Long Silences** | On | Finds pauses longer than the threshold and trims them. Default maximum is 1.0 s. |
+
+**Output Format**
+
+| Option | Default | Notes |
+|--------|---------|-------|
+| **Format** | MP3 | WAV produces a larger uncompressed file. |
+| **Bitrate** | 64 kbps | 64 kbps is fine for speech; use 128 kbps+ if music quality matters. |
+
+**Extras**
+
+| Option | Default | Notes |
+|--------|---------|-------|
+| **Transcribe Audio** | On | Generates a text transcript using on-device speech recognition. Requires macOS 26+. The transcript appears on the done screen and can be copied to the clipboard. |
+
+---
+
+## After processing
+
+When processing finishes, the done screen shows:
+
+- The output filename with a **Reveal in Finder** button
+- The transcript (if transcription was enabled), with a **Copy** button
+
+To process another file, click **Process Another** or drop a new file onto the window.
 
 ---
 
 ## Tips
 
-- **Long recordings**: Zoom into the waveform at the start and end to place trim handles precisely rather than guessing.
-- **Shorten silences**: Start with 1.0 s and listen to the result — too short can make the delivery feel rushed.
-- **Series field**: This is the only field that persists between sessions, since series titles typically span many recordings. Fill in the others fresh each week.
-- **Chapter timing**: If you're not sure where a section starts, play the recording and press **Set In** / **Set Out** to mark points on the fly, then convert those to chapter positions by dragging the markers.
+- **Trim precisely** — zoom into the waveform at the start and end to place handles exactly, or use the I/O keys while playing back.
+- **Shorten silences** — the default 1.0 s works well for most sermons. Too short and the delivery can feel rushed; too long and pauses drag.
+- **Chapter timing** — if you're unsure where a section starts, play the recording and press **+ Add Chapter** at the right moment. You can always drag the marker afterwards to fine-tune it.
+- **Preacher and Series** are remembered between sessions — you only need to update them when they change.
+- **Artwork** is also remembered between sessions. Set it once and it will be embedded in every recording until you change it.
