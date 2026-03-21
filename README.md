@@ -1,10 +1,14 @@
 # DeChaff
 
+<img src="DeChaff-iOS-Default-1024x1024@1x.png" alt="DeChaff icon" width="96" align="right" />
+
 A macOS app that prepares sermon recordings for podcast distribution. Work through a simple five-step wizard — load, trim, tag, chapter, configure — then hit Process. DeChaff cleans the audio, normalises loudness, encodes to MP3, and embeds ID3 tags with chapter markers automatically.
 
 Built for the AV team at [City On a Hill](https://www.cityonahill.co.nz).
 
 ![macOS 13+](https://img.shields.io/badge/macOS-13%2B-blue) ![Swift](https://img.shields.io/badge/Swift-5-orange)
+
+![DeChaff interface screenshot](DeChaff%20Sermon%20Editing%20Interface.png)
 
 ---
 
