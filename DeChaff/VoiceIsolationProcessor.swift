@@ -673,28 +673,60 @@ class VoiceIsolationProcessor {
     private func applyGain(inputPath: String, outputPath: String, gainDB: Double, targetLUFS: Double,
                            monoOutput: Bool, options: ProcessingOptions,
                            progressStart: Double, progressEnd: Double) -> Bool {
+        // -1 dBFS ceiling — leave a little headroom for MP3 encoder intersample peaks
+        let peakCeiling: Float = Float(pow(10.0, -1.0 / 20.0))  // ≈ 0.891
         do {
             let file = try AVAudioFile(forReading: URL(fileURLWithPath: inputPath))
             let fmt = file.processingFormat
-            var outSettings = fmt.settings
-            outSettings.removeValue(forKey: AVChannelLayoutKey)  // channel layout from M4A/AAC is not WAV-compatible
-            if monoOutput { outSettings[AVNumberOfChannelsKey] = 1 }
-            let outFile = try AVAudioFile(forWriting: URL(fileURLWithPath: outputPath), settings: outSettings)
-            let outFmt = monoOutput ? AVAudioFormat(standardFormatWithSampleRate: fmt.sampleRate, channels: 1)! : fmt
-            var gain = Float(pow(10.0, gainDB / 20.0))
-
-            let chunkSize: AVAudioFrameCount = 4096
-            guard let buf    = AVAudioPCMBuffer(pcmFormat: fmt,    frameCapacity: chunkSize),
-                  let outBuf = AVAudioPCMBuffer(pcmFormat: outFmt, frameCapacity: chunkSize) else { return false }
             let sr = fmt.sampleRate
             let inFrame  = AVAudioFramePosition(options.trimInSeconds * sr)
             let outFrame = min(options.trimOutSeconds > 0
                 ? AVAudioFramePosition(options.trimOutSeconds * sr)
                 : file.length, file.length)
             let trimLength = AVAudioFrameCount(max(0, outFrame - inFrame))
-            var totalFrames: AVAudioFrameCount = 0
-            file.framePosition = inFrame
+            let chunkSize: AVAudioFrameCount = 4096
+            guard let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: chunkSize) else { return false }
 
+            // Pass 1: find true peak of the region
+            var truePeak: Float = 0
+            file.framePosition = inFrame
+            var scanned: AVAudioFrameCount = 0
+            while scanned < trimLength {
+                let toRead = min(chunkSize, trimLength - scanned)
+                buf.frameLength = toRead
+                try file.read(into: buf, frameCount: toRead)
+                guard buf.frameLength > 0 else { break }
+                for ch in 0..<Int(fmt.channelCount) {
+                    guard let data = buf.floatChannelData?[ch] else { continue }
+                    var chPeak: Float = 0
+                    vDSP_maxmgv(data, 1, &chPeak, vDSP_Length(buf.frameLength))
+                    truePeak = max(truePeak, chPeak)
+                }
+                scanned += buf.frameLength
+            }
+
+            // Cap gain so output peak won't exceed ceiling
+            var gain = Float(pow(10.0, gainDB / 20.0))
+            if truePeak > 0 {
+                let maxSafeGain = peakCeiling / truePeak
+                if gain > maxSafeGain {
+                    let limitedDB = 20.0 * log10(Double(maxSafeGain))
+                    logHandler(String(format: "⚠️ Peak limiter: capped gain from %+.1f dB to %+.1f dB to prevent clipping",
+                                      gainDB, limitedDB))
+                    gain = maxSafeGain
+                }
+            }
+
+            // Pass 2: apply gain and write output
+            var outSettings = fmt.settings
+            outSettings.removeValue(forKey: AVChannelLayoutKey)
+            if monoOutput { outSettings[AVNumberOfChannelsKey] = 1 }
+            let outFile = try AVAudioFile(forWriting: URL(fileURLWithPath: outputPath), settings: outSettings)
+            let outFmt = monoOutput ? AVAudioFormat(standardFormatWithSampleRate: sr, channels: 1)! : fmt
+            guard let outBuf = AVAudioPCMBuffer(pcmFormat: outFmt, frameCapacity: chunkSize) else { return false }
+
+            file.framePosition = inFrame
+            var totalFrames: AVAudioFrameCount = 0
             while totalFrames < trimLength {
                 let toRead = min(chunkSize, trimLength - totalFrames)
                 buf.frameLength = toRead
@@ -712,7 +744,8 @@ class VoiceIsolationProcessor {
                     try outFile.write(from: buf)
                 }
                 totalFrames += buf.frameLength
-                progressHandler(progressStart + (progressEnd - progressStart) * Double(totalFrames) / Double(trimLength))
+                // Progress spans the second half of the allocated range (first half was peak scan)
+                progressHandler(progressStart + (progressEnd - progressStart) * (0.5 + 0.5 * Double(totalFrames) / Double(trimLength)))
             }
             logHandler(String(format: "✅ Normalized to %.1f LUFS", targetLUFS))
             return true
