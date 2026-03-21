@@ -98,6 +98,10 @@ class ProcessingModel: ObservableObject {
     }
 
     func loadFile(url: URL) {
+        // Clean up any previous yt-dlp temp download
+        if let old = inputURL, old.lastPathComponent.hasPrefix("dechaff-yt-") {
+            try? FileManager.default.removeItem(at: old)
+        }
         inputURL = url
         inputDuration = 0
         waveformSamples = []
@@ -667,6 +671,8 @@ func formatPlaybackTime(_ seconds: Double) -> String {
 
 struct ContentView: View {
     @StateObject var model = ProcessingModel()
+    @StateObject var ytManager = YtDlpManager()
+    @StateObject var youtube = YouTubeViewModel()
     @State var currentStep = 0
     @State var isTargeted = false
     @State var isArtworkTargeted = false
@@ -674,6 +680,9 @@ struct ContentView: View {
     @State private var scrollMonitor: Any?
     @State private var clickMonitor: Any?
     @State private var showLog = false
+    @State private var showSettings = false
+    @AppStorage("dechaff.youtube.channelURL") var ytChannelURL = ""
+    @AppStorage("dechaff.youtube.videoLimit") var ytVideoLimit = 10
 
     let stepTitles = ["Load", "Trim", "Info", "Chapters", "Output"]
 
@@ -713,8 +722,14 @@ struct ContentView: View {
         }
         .frame(width: 760)
         .frame(minHeight: 520)
-        .onAppear { setupMonitors() }
+        .onAppear {
+            setupMonitors()
+            Task { await ytManager.checkAndUpdate() }
+        }
         .onDisappear { teardownMonitors() }
+        .sheet(isPresented: $showSettings) {
+            SettingsView(manager: ytManager, channelURL: $ytChannelURL, videoLimit: $ytVideoLimit)
+        }
     }
 
     // MARK: - App Header
@@ -734,6 +749,11 @@ struct ContentView: View {
                         .lineLimit(1).truncationMode(.middle)
                 }
             }
+            Button { showSettings = true } label: {
+                Image(systemName: "gear").font(.system(size: 14))
+            }
+            .buttonStyle(.borderless)
+            .help("Settings")
         }
     }
 

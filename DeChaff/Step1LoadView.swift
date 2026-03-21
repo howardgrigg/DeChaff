@@ -7,16 +7,21 @@ extension ContentView {
     // MARK: - Step 1: Load Audio
 
     var step1View: some View {
-        VStack {
-            Spacer()
-            VStack(spacing: 16) {
-                dropZone
-                if let url = model.inputURL, !model.isLoadingWaveform {
-                    fileInfoRow(url: url)
+        ScrollView {
+            VStack(spacing: 24) {
+                VStack(spacing: 16) {
+                    dropZone
+                    if let url = model.inputURL, !model.isLoadingWaveform {
+                        fileInfoRow(url: url)
+                    }
                 }
+
+                Divider()
+
+                youtubeSection
             }
             .frame(maxWidth: 480)
-            Spacer()
+            .padding(.vertical, 32)
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 36)
