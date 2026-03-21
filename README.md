@@ -10,6 +10,8 @@ Built for the AV team at [City On a Hill](https://www.cityonahill.co.nz).
 
 ![DeChaff interface screenshot](DeChaff%20Sermon%20Editing%20Interface.png)
 
+![DeChaff chapter marking screenshot](DeChaff%20Audio%20Chapter%20Marking.png)
+
 ---
 
 ## Features
