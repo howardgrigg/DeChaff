@@ -845,6 +845,9 @@ struct ContentView: View {
             if currentStep == 4 { step5View.transition(.opacity) }
         }
         .animation(.easeInOut(duration: 0.18), value: currentStep)
+        .onChange(of: currentStep) { newStep in
+            if newStep != 1 && newStep != 3 { model.pausePlayback() }
+        }
     }
 
     // MARK: - Processing View
@@ -1085,11 +1088,25 @@ struct ContentView: View {
 
     private func setupMonitors() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard event.keyCode == 49 else { return event }
             let responder = NSApp.keyWindow?.firstResponder
             let isTyping = responder is NSTextView || responder is NSTextField
-            if !isTyping && (self.currentStep == 1 || self.currentStep == 3) {
-                self.model.togglePlayback(); return nil
+            guard !isTyping else { return event }
+            switch event.keyCode {
+            case 49: // Spacebar — play/pause on trim or chapters step
+                if self.currentStep == 1 || self.currentStep == 3 {
+                    self.model.togglePlayback(); return nil
+                }
+            case 34: // I — set mark-in on trim step
+                if self.currentStep == 1 && !self.model.waveformSamples.isEmpty {
+                    self.model.trimInSeconds = min(self.model.playheadSeconds, self.model.trimOutSeconds - 0.5)
+                    return nil
+                }
+            case 31: // O — set mark-out on trim step
+                if self.currentStep == 1 && !self.model.waveformSamples.isEmpty {
+                    self.model.trimOutSeconds = max(self.model.playheadSeconds, self.model.trimInSeconds + 0.5)
+                    return nil
+                }
+            default: break
             }
             return event
         }
