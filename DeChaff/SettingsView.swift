@@ -2,7 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject var manager: YtDlpManager
-    @AppStorage("dechaff.youtube.channelURL") private var channelURL = ""
+    @AppStorage("dechaff.youtube.channelURL") private var channelURL = "https://www.youtube.com/@cityonahillnz"
     @AppStorage("dechaff.youtube.videoLimit") private var videoLimit = 10
 
     var body: some View {

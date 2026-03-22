@@ -135,7 +135,10 @@ class ProcessingModel: ObservableObject {
         guard let url = inputURL, !isProcessing else { return }
         let inputPath = url.path
         let baseName = url.deletingPathExtension().lastPathComponent
-        let dir = url.deletingLastPathComponent().path
+        let isYouTubeDownload = url.lastPathComponent.hasPrefix("dechaff-yt-")
+        let dir = isYouTubeDownload
+            ? (FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first?.path ?? url.deletingLastPathComponent().path)
+            : url.deletingLastPathComponent().path
         let titleParts = [tagSermonTitle, tagBibleReading].filter { !$0.isEmpty }.joined(separator: ", ")
         let pipeParts  = [titleParts, tagPreacher, tagSeries].filter { !$0.isEmpty }.joined(separator: " | ")
         let namePart   = pipeParts.isEmpty
@@ -680,8 +683,9 @@ struct ContentView: View {
     @State private var scrollMonitor: Any?
     @State private var clickMonitor: Any?
     @State private var showLog = false
-    @AppStorage("dechaff.youtube.channelURL") var ytChannelURL = ""
+    @AppStorage("dechaff.youtube.channelURL") var ytChannelURL = "https://www.youtube.com/@cityonahillnz"
     @AppStorage("dechaff.youtube.videoLimit") var ytVideoLimit = 10
+    @State var ytTab: Int = 1   // 0 = Videos, 1 = Live Streams
 
     let stepTitles = ["Load", "Trim", "Info", "Chapters", "Output"]
 

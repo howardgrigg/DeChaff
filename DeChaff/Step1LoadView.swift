@@ -69,13 +69,16 @@ extension ContentView {
                     }
                     Button("Choose File…") { openFilePicker() }
                         .buttonStyle(.bordered).padding(.top, 4)
+                        .disabled(youtube.downloadingVideoID != nil)
                 }
             }
         }
         .frame(height: 230)
         .onDrop(of: [UTType.fileURL], isTargeted: $isTargeted) { providers in
-            loadDroppedFile(from: providers, advanceStep: true)
+            guard youtube.downloadingVideoID == nil else { return false }
+            return loadDroppedFile(from: providers, advanceStep: true)
         }
+        .opacity(youtube.downloadingVideoID != nil ? 0.4 : 1)
     }
 
     func fileInfoRow(url: URL) -> some View {

@@ -4,6 +4,16 @@ extension ContentView {
 
     // MARK: - YouTube section (shown in Step 1 below the drop zone)
 
+    // Appends /videos or /streams to the channel URL based on the selected tab
+    private var tabbedChannelURL: String {
+        let base = ytChannelURL
+            .trimmingCharacters(in: .init(charactersIn: "/"))
+            .replacingOccurrences(of: "/videos", with: "")
+            .replacingOccurrences(of: "/streams", with: "")
+        let suffix = ytTab == 1 ? "/streams" : "/videos"
+        return base + suffix
+    }
+
     var youtubeSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             // Header row
@@ -11,18 +21,37 @@ extension ContentView {
                 Label("From YouTube", systemImage: "play.rectangle")
                     .font(.headline)
                 Spacer()
-                if youtube.isFetchingList {
-                    ProgressView().scaleEffect(0.75)
-                } else {
+                Picker("", selection: $ytTab) {
+                    Text("Videos").tag(0)
+                    Text("Live Streams").tag(1)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 180)
+                .controlSize(.small)
+                .opacity(0.7)
+                .onChange(of: ytTab) { _ in
+                    youtube.videos = []
+                    youtube.listError = nil
+                    if !ytChannelURL.isEmpty && ytManager.binaryURL != nil {
+                        youtube.refresh(manager: ytManager, channelURL: tabbedChannelURL, limit: ytVideoLimit)
+                    }
+                }
+                // Fixed-size container so the spinner and button don't shift the layout
+                ZStack {
+                    ProgressView()
+                        .scaleEffect(0.75)
+                        .opacity(youtube.isFetchingList ? 1 : 0)
                     Button {
-                        youtube.refresh(manager: ytManager, channelURL: ytChannelURL, limit: ytVideoLimit)
+                        youtube.refresh(manager: ytManager, channelURL: tabbedChannelURL, limit: ytVideoLimit)
                     } label: {
                         Image(systemName: "arrow.clockwise")
                     }
                     .buttonStyle(.borderless)
-                    .disabled(ytChannelURL.isEmpty || ytManager.binaryURL == nil)
+                    .disabled(ytChannelURL.isEmpty || ytManager.binaryURL == nil || youtube.isFetchingList)
                     .help("Refresh video list")
+                    .opacity(youtube.isFetchingList ? 0 : 1)
                 }
+                .frame(width: 20, height: 20)
             }
 
             // Body
@@ -76,6 +105,11 @@ extension ContentView {
                 errorBanner(dlErr) { youtube.downloadError = nil }
             }
         }
+        .onAppear {
+            if youtube.videos.isEmpty && !ytChannelURL.isEmpty && ytManager.binaryURL != nil {
+                youtube.refresh(manager: ytManager, channelURL: tabbedChannelURL, limit: ytVideoLimit)
+            }
+        }
     }
 
     // MARK: - Video row
@@ -122,13 +156,28 @@ extension ContentView {
             // State indicator
             if isDownloading {
                 VStack(spacing: 4) {
-                    ProgressView(value: youtube.downloadProgress)
-                        .progressViewStyle(.linear)
-                        .frame(width: 80)
-                    Text(String(format: "%.0f%%", youtube.downloadProgress * 100))
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.secondary)
+                    if let pct = ytManager.downloadProgress {
+                        ProgressView(value: pct)
+                            .progressViewStyle(.linear)
+                            .frame(width: 72)
+                        Text(String(format: "%.0f%%", pct * 100))
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ProgressView()
+                            .scaleEffect(0.75)
+                        Text("Finishing…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Button("Cancel") {
+                        youtube.cancel(manager: ytManager)
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+                    .foregroundStyle(.red)
                 }
+                .frame(width: 80)
             } else {
                 Image(systemName: "arrow.down.circle")
                     .foregroundStyle(anyDownloading ? .quaternary : .secondary)

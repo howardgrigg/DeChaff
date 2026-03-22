@@ -6,8 +6,8 @@ class YouTubeViewModel: ObservableObject {
     @Published var isFetchingList = false
     @Published var listError: String? = nil
     @Published var downloadingVideoID: String? = nil
-    @Published var downloadProgress: Double = 0
     @Published var downloadError: String? = nil
+    private var downloadCancelled = false
 
     func refresh(manager: YtDlpManager, channelURL: String, limit: Int) {
         guard !channelURL.isEmpty else {
@@ -34,20 +34,29 @@ class YouTubeViewModel: ObservableObject {
     func select(_ entry: VideoEntry, manager: YtDlpManager, onLoaded: @escaping (URL) -> Void) {
         guard downloadingVideoID == nil else { return }
         downloadingVideoID = entry.id
-        downloadProgress = 0
         downloadError = nil
+        downloadCancelled = false
         Task {
             do {
-                let url = try await manager.downloadAudio(videoID: entry.id) { [weak self] p in
-                    self?.downloadProgress = p
-                }
+                let url = try await manager.downloadAudio(videoID: entry.id)
                 downloadingVideoID = nil
+                downloadCancelled = false
                 onLoaded(url)
             } catch {
                 downloadingVideoID = nil
-                downloadError = error.localizedDescription
+                if !downloadCancelled {
+                    downloadError = error.localizedDescription
+                }
+                downloadCancelled = false
             }
         }
+    }
+
+    func cancel(manager: YtDlpManager) {
+        downloadCancelled = true
+        manager.cancelDownload()
+        downloadingVideoID = nil
+        manager.downloadProgress = nil
     }
 }
 

@@ -8,6 +8,9 @@ struct DeChaffApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(ytManager)
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+                    ytManager.cleanupTempFiles()
+                }
         }
         .windowResizability(.contentSize)
 
