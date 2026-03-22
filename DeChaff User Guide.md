@@ -8,11 +8,21 @@ DeChaff prepares sermon recordings for podcast distribution. Work through five s
 
 ### Step 1 — Load
 
+There are two ways to load audio:
+
+**From a local file**
+
 Drop an audio file onto the drop zone, or click **Choose File…**
 
 Supported formats: WAV, MP3, M4A, AIFF, FLAC, CAF.
 
-Once the file loads, DeChaff reads the waveform and shows the duration. Click **Next** to continue. You can also drop a file directly onto any step — the app will load it and take you to Step 2.
+**From YouTube**
+
+The YouTube browser below the drop zone lists recent videos and live streams from your configured channel. Tap a video to download its audio — a progress bar shows download status, and a **Cancel** button lets you abort at any time. Once downloaded, the audio loads automatically and the app advances to Step 2.
+
+To configure the channel, open **Settings** (⌘,) and enter a YouTube channel URL or handle (e.g. `@YourChurch`). You can also change how many recent videos are shown (5, 10, or 20). yt-dlp — the download tool — is installed automatically on first launch and kept up to date.
+
+Once a file loads, DeChaff reads the waveform and shows the duration. Click **Next** to continue. You can also drop a file directly onto any step — the app will load it and take you to Step 2.
 
 ---
 
@@ -54,6 +64,8 @@ These fields are embedded in the MP3 as ID3 tags and used to build the output fi
 YYYY-MM-DD Sermon Title, Bible Reading | Preacher | Series.mp3
 ```
 If no tags are filled in, the file is named `<original>_dechaff.mp3`.
+
+The file is saved to the same folder as the original, or to `~/Downloads` when the source was downloaded from YouTube.
 
 ---
 

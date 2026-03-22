@@ -16,6 +16,7 @@ Built for the AV team at [City On a Hill](https://www.cityonahill.co.nz).
 
 ## Features
 
+- **YouTube browser** — browse and download audio from a YouTube channel directly inside the app; yt-dlp is bundled and kept up to date automatically
 - **Voice isolation** — Apple's built-in `AUSoundIsolation` engine removes background noise, room reverb, and crowd sounds
 - **Dynamic compression** — evens out volume differences between quiet and loud passages
 - **Loudness normalisation** — targets a configurable LUFS level (default −16 LUFS, EBU R128) with peak limiting to prevent clipping
@@ -29,7 +30,7 @@ Built for the AV team at [City On a Hill](https://www.cityonahill.co.nz).
 
 ## Quick start
 
-1. **Load** — drop an audio file onto the drop zone (WAV, MP3, M4A, AIFF, FLAC, CAF)
+1. **Load** — drop an audio file onto the drop zone, or pick a recent video from the YouTube browser
 2. **Trim** — drag the orange handles or use the I / O keys to set start and end points
 3. **Info** — fill in sermon title, preacher, bible reading, series, date, and artwork
 4. **Chapters** — add chapter markers at key moments; first chapter defaults to the start, second to 2 minutes
@@ -37,11 +38,13 @@ Built for the AV team at [City On a Hill](https://www.cityonahill.co.nz).
 
 ## Output filename
 
-Named automatically from the tag fields and saved next to the original:
+Named automatically from the tag fields:
 
 ```
 YYYY-MM-DD Sermon Title, Bible Reading | Preacher | Series.mp3
 ```
+
+Saved to the same folder as the original file, or to `~/Downloads` when the source was downloaded from YouTube.
 
 ## Requirements
 
