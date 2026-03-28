@@ -20,6 +20,8 @@ Supported formats: WAV, MP3, M4A, AIFF, FLAC, CAF.
 
 The YouTube browser below the drop zone lists recent videos and live streams from your configured channel. Tap a video to download its audio — a progress bar shows download status, and a **Cancel** button lets you abort at any time. Once downloaded, the audio loads automatically and the app advances to Step 2.
 
+While the audio downloads, DeChaff uses on-device Apple Intelligence to parse the YouTube video title into sermon title, Bible reading, preacher, and series fields. The tag date is also set automatically from the YouTube upload date. By the time you reach the Info step, these fields are already filled in — just review and adjust if needed.
+
 To configure the channel, open **Settings** (⌘,) and enter a YouTube channel URL or handle (e.g. `@YourChurch`). You can also change how many recent videos are shown (5, 10, or 20). yt-dlp — the download tool — is installed automatically on first launch and kept up to date.
 
 Once a file loads, DeChaff reads the waveform and shows the duration. Click **Next** to continue. You can also drop a file directly onto any step — the app will load it and take you to Step 2.
@@ -40,15 +42,15 @@ The waveform shows the full recording. Two orange handles mark the **trim-in** (
 - Press **Space** to play/pause.
 
 **Zooming in for precision**
-- Scroll vertically on the trackpad to zoom in — the waveform shows higher detail as you zoom.
-- Scroll horizontally to pan when zoomed in.
-- A scrollbar appears below the waveform when zoomed; drag it to pan.
+- Scroll vertically on the trackpad to zoom in — the zoom anchors on your cursor position so the area under the pointer stays in view. The waveform shows higher detail as you zoom thanks to multi-resolution peak rendering.
+- Scroll horizontally to pan when zoomed in — the native macOS scrollbar with inertia appears below the waveform.
+- Drag the scrollbar to pan quickly across long recordings.
 
 ---
 
 ### Step 3 — Info
 
-These fields are embedded in the MP3 as ID3 tags and used to build the output filename.
+These fields are embedded in the MP3 as ID3 tags and used to build the output filename. When loading from YouTube, fields are pre-filled automatically by AI metadata extraction — just review and adjust.
 
 | Field | Notes |
 |-------|-------|
@@ -71,7 +73,7 @@ The file is saved to the same folder as the original, or to `~/Downloads` when t
 
 ### Step 4 — Chapters
 
-Chapters appear as markers on the waveform and as a navigable chapter list in podcast apps.
+Chapters appear as markers on the waveform and as a navigable chapter list in podcast apps. When you enter this step, the waveform automatically scrolls to the trim-in point so you're looking at the start of the recording.
 
 **Adding chapters**
 - Play or scrub to the moment you want to mark, then click **+ Add Chapter**.
@@ -99,7 +101,8 @@ Review the processing options and click **Process** when ready.
 |--------|---------|-------------|
 | **Voice Isolation** | On | Apple's voice isolation engine removes background noise, room reverb, and crowd sounds. |
 | **Dynamic Compression** | On | Evens out volume differences — quieter passages are brought up, peaks are controlled. |
-| **Loudness Normalisation** | On | Adjusts overall level to a target LUFS. Default −16 LUFS suits most podcast platforms. A built-in peak limiter prevents clipping. |
+| **Long-Term Levelling** | On | A slow automatic gain control that smooths volume differences across the recording with a ~3-second time constant (±6 dB range). Applied between voice isolation and loudness normalisation. |
+| **Loudness Normalisation** | On | Adjusts overall level to a target LUFS. Default −16 LUFS suits most podcast platforms. A fast-attack/slow-release soft limiter prevents clipping without dulling transients. |
 | **Mono Output** | On | Mixes down to a single channel. Recommended — speech recorded in stereo wastes file size without benefit. |
 | **Shorten Long Silences** | On | Finds pauses longer than the threshold and trims them. Default maximum is 1.0 s. |
 
