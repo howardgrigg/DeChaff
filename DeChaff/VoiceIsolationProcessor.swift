@@ -39,6 +39,7 @@ struct ProcessingOptions {
     var mp3Bitrate: Int = 64  // kbps CBR (64 / 96 / 128 / 192 / 256)
     var shortenSilences: Bool = false
     var maxSilenceDuration: Double = 1.0  // seconds to retain at the tail of each silent span
+    var slowLeveler: Bool = false          // windowed RMS gain envelope
     var trimInSeconds: Double = 0
     var trimOutSeconds: Double = 0  // 0 = use full file duration
 }
@@ -72,10 +73,16 @@ class VoiceIsolationProcessor {
 
         let needsAU = options.voiceIsolation || options.compression
         let encodingMP3 = options.outputFormat == .mp3
+        let levelerActive = options.slowLeveler
 
         // Scale AU+normalization progress; silence shortening gets its own 10% slice if enabled
         let silenceScale = options.shortenSilences ? 0.10 : 0.0
         let auNormScale  = encodingMP3 ? (0.85 - silenceScale) : (1.0 - silenceScale)
+
+        // Progress fractions (of auNormScale) — compress AU slightly when leveler is active
+        let p_auEnd:   Double = levelerActive ? 0.45 : 0.65  // end of AU pass
+        let p_levEnd:  Double = 0.60                          // end of leveler (= norm start)
+        let p_measEnd: Double = levelerActive ? 0.78 : 0.85  // end of LUFS measurement
 
         // WAV path used throughout AU/normalization pipeline
         var wavOutputPath: String
@@ -90,15 +97,14 @@ class VoiceIsolationProcessor {
         }
 
         if encodingMP3 {
-            // Final output is MP3, so all intermediate WAV work goes to a temp file
             wavOutputPath = makeTempPath()
         } else {
             wavOutputPath = outputPath
         }
 
-        // Temp WAV needed between AU pass and normalization
+        // Temp WAV needed when a downstream pass follows the AU pass
         let auOutputPath: String
-        if needsAU && options.normalization {
+        if needsAU && (options.normalization || levelerActive) {
             auOutputPath = makeTempPath()
         } else {
             auOutputPath = wavOutputPath
@@ -106,21 +112,37 @@ class VoiceIsolationProcessor {
 
         // Pass 1: isolation + compression
         if needsAU {
-            let p1End = options.normalization ? 0.65 * auNormScale : auNormScale
+            let p1End = (options.normalization || levelerActive) ? p_auEnd * auNormScale : auNormScale
             let ok = runAUPass(audioFile: audioFile, outputPath: auOutputPath,
                                options: options, progressStart: 0.0, progressEnd: p1End)
             guard ok else { temps.forEach(cleanup); return false }
         }
 
+        // Pass 1.5: slow leveler — after AU (or directly from input), before normalization.
+        // Builds a smooth per-sample gain envelope from 1-second window RMS measurements,
+        // clamped to ±6 dB, to even out sustained level differences between speakers.
+        var normSource: String = needsAU ? auOutputPath : inputPath
+        if levelerActive {
+            let levelerPath = options.normalization ? makeTempPath() : wavOutputPath
+            let lStart = needsAU ? p_auEnd * auNormScale : 0.0
+            let lEnd   = needsAU ? p_levEnd * auNormScale
+                                 : (options.normalization ? 0.25 * auNormScale : auNormScale)
+            let ok = applySlowLeveler(inputPath: normSource, outputPath: levelerPath,
+                                      progressStart: lStart, progressEnd: lEnd)
+            guard ok else { temps.forEach(cleanup); return false }
+            if normSource != inputPath { cleanup(normSource) }
+            normSource = levelerPath
+        }
+
         // Pass 2: normalization
         if options.normalization {
-            let measureSource = needsAU ? auOutputPath : inputPath
-            let pStart = needsAU ? 0.65 * auNormScale : 0.0
-            let pMid   = needsAU ? 0.85 * auNormScale : 0.7 * auNormScale
-            // When needsAU=true the AU output is already trimmed — pass empty options so measureLUFS
-            // reads the whole file rather than trying to seek to original-file positions.
+            let pStart = needsAU ? p_levEnd * auNormScale
+                                 : (levelerActive ? 0.25 * auNormScale : 0.0)
+            let pMid   = needsAU ? p_measEnd * auNormScale
+                                 : (levelerActive ? 0.65 * auNormScale : 0.7 * auNormScale)
+            // AU output is already trimmed — pass empty options so measureLUFS reads the whole file
             let measureOptions = needsAU ? ProcessingOptions() : options
-            guard let measured = measureLUFS(path: measureSource, options: measureOptions,
+            guard let measured = measureLUFS(path: normSource, options: measureOptions,
                                              progressStart: pStart, progressEnd: pMid) else {
                 logHandler("❌ Loudness measurement failed — skipping normalization")
                 temps.forEach(cleanup); return false
@@ -128,14 +150,13 @@ class VoiceIsolationProcessor {
             let gainDB = options.targetLUFS - measured
             logHandler(String(format: "Measured %.1f LUFS → target %.1f LUFS (%+.1f dB)",
                                measured, options.targetLUFS, gainDB))
-            let ok = applyGain(inputPath: measureSource, outputPath: wavOutputPath,
+            let ok = applyGain(inputPath: normSource, outputPath: wavOutputPath,
                                gainDB: gainDB, targetLUFS: options.targetLUFS,
                                monoOutput: !needsAU && options.monoOutput,
                                options: needsAU ? ProcessingOptions() : options,
                                progressStart: pMid, progressEnd: auNormScale)
             guard ok else { temps.forEach(cleanup); return false }
-            // Remove the AU temp (if different from wav output)
-            if auOutputPath != wavOutputPath { cleanup(auOutputPath) }
+            if normSource != wavOutputPath { cleanup(normSource) }
         }
 
         // Pass 2.5: silence shortening (on normalized WAV, before MP3 encode)
@@ -399,15 +420,18 @@ class VoiceIsolationProcessor {
                 isolationAU.map { AudioUnitUninitialize($0); AudioComponentInstanceDispose($0) }
                 return false
             }
-            // Threshold -28 dB: catches the quieter Bible reader as well as loud preacher peaks
-            // HeadRoom 20 dB: wide soft knee — gradual onset avoids pumping on natural speech variation
-            // AttackTime 5ms: fast enough to level speaker-to-speaker changes without clipping transients
-            // ReleaseTime 200ms: slow enough to avoid rapid gain pumping between sentences
+            // Threshold -28 dB: engages on all speech, including the quieter scripture reader
+            // HeadRoom 6 dB: ceiling = -22 dBFS before makeup — gives ~4.7:1 effective ratio,
+            //   which is standard for podcast voice and meaningfully reduces crest factor
+            // OverallGain +8 dB: makeup gain to raise the compressed output level, reducing
+            //   the gap that loudness normalisation has to close
+            // AttackTime 3ms: fast enough to catch peaks without biting into transients
+            // ReleaseTime 150ms: snappy enough to stay tight without audible pumping
             AudioUnitSetParameter(au, kDynamicsProcessorParam_Threshold,     kAudioUnitScope_Global, 0, -28.0, 0)
-            AudioUnitSetParameter(au, kDynamicsProcessorParam_HeadRoom,      kAudioUnitScope_Global, 0, 20.0,  0)
-            AudioUnitSetParameter(au, kDynamicsProcessorParam_AttackTime,    kAudioUnitScope_Global, 0,  0.005, 0)
-            AudioUnitSetParameter(au, kDynamicsProcessorParam_ReleaseTime,   kAudioUnitScope_Global, 0,  0.2,  0)
-            AudioUnitSetParameter(au, kDynamicsProcessorParam_OverallGain,   kAudioUnitScope_Global, 0,  0.0,  0)
+            AudioUnitSetParameter(au, kDynamicsProcessorParam_HeadRoom,      kAudioUnitScope_Global, 0,  6.0,  0)
+            AudioUnitSetParameter(au, kDynamicsProcessorParam_AttackTime,    kAudioUnitScope_Global, 0,  0.003, 0)
+            AudioUnitSetParameter(au, kDynamicsProcessorParam_ReleaseTime,   kAudioUnitScope_Global, 0,  0.15,  0)
+            AudioUnitSetParameter(au, kDynamicsProcessorParam_OverallGain,   kAudioUnitScope_Global, 0,  8.0,  0)
             AudioUnitSetParameter(au, kDynamicsProcessorParam_ExpansionRatio,kAudioUnitScope_Global, 0,  1.0,  0)
             guard AudioUnitInitialize(au) == noErr else {
                 logHandler("❌ Compressor AU init failed")
@@ -560,6 +584,124 @@ class VoiceIsolationProcessor {
         var ts = AudioTimeStamp()
         ts.mSampleTime = sampleTime; ts.mFlags = .sampleTimeValid
         return AudioUnitRender(au, &flags, &ts, 0, input.frameLength, output.mutableAudioBufferList) == noErr
+    }
+
+    // MARK: - Slow leveler
+
+    /// Builds a smooth per-sample gain envelope from 1-second window RMS measurements,
+    /// clamped to ±6 dB, to even out sustained level differences (e.g. quiet scripture
+    /// reader → loud preacher) without audible pumping.
+    ///
+    /// Algorithm:
+    ///  1. Measure RMS per 1-second window across all channels.
+    ///  2. Use the median voiced-window RMS as the reference level.
+    ///  3. Compute per-window gain = clamp(ref / rms, −6 dB … +6 dB); silent windows → unity.
+    ///  4. Smooth with a zero-phase forward + backward EMA (α = 0.25, ≈ 3 s time constant).
+    ///  5. Apply with a linear ramp across each window (continuity guaranteed at boundaries).
+    private func applySlowLeveler(inputPath: String, outputPath: String,
+                                   progressStart: Double, progressEnd: Double) -> Bool {
+        logHandler("📊 Building slow gain envelope…")
+        let maxGainDB: Float = 6.0
+        do {
+            let file = try AVAudioFile(forReading: URL(fileURLWithPath: inputPath))
+            let fmt  = file.processingFormat
+            let sr   = fmt.sampleRate
+            let nch  = Int(fmt.channelCount)
+            let totalFrames = Int(file.length)
+            guard totalFrames > 0 else { return true }
+
+            let windowFrames = Int(sr)   // 1-second windows
+            let nWindows = (totalFrames + windowFrames - 1) / windowFrames
+
+            // ── Pass 1: RMS per window ────────────────────────────────────────
+            guard let buf = AVAudioPCMBuffer(pcmFormat: fmt,
+                                             frameCapacity: AVAudioFrameCount(windowFrames)) else { return false }
+            var windowRMS = [Float](repeating: 0, count: nWindows)
+
+            file.framePosition = 0
+            for w in 0..<nWindows {
+                let toRead = AVAudioFrameCount(min(windowFrames, totalFrames - w * windowFrames))
+                buf.frameLength = toRead
+                try file.read(into: buf, frameCount: toRead)
+                guard buf.frameLength > 0 else { break }
+                var sumMS: Float = 0
+                for ch in 0..<nch {
+                    guard let d = buf.floatChannelData?[ch] else { continue }
+                    var ms: Float = 0
+                    vDSP_measqv(d, 1, &ms, vDSP_Length(buf.frameLength))
+                    sumMS += ms
+                }
+                windowRMS[w] = sqrt(max(sumMS / Float(nch), 0))
+                progressHandler(progressStart + (progressEnd - progressStart) * 0.4 * Double(w + 1) / Double(nWindows))
+            }
+
+            // ── Build gain map ────────────────────────────────────────────────
+            let noiseFloor: Float = Float(pow(10.0, -50.0 / 20.0))   // –50 dBFS
+            let maxLinear  = Float(pow(10.0, Double(maxGainDB) / 20.0))
+            let minLinear  = 1.0 / maxLinear
+
+            // Reference: median RMS of windows above the noise floor
+            let voiced = windowRMS.filter { $0 > noiseFloor }
+            guard !voiced.isEmpty else {
+                logHandler("⚠️ Slow leveler: signal below noise floor, skipping")
+                try FileManager.default.copyItem(atPath: inputPath, toPath: outputPath)
+                return true
+            }
+            let reference = voiced.sorted()[voiced.count / 2]
+
+            var gainMap = [Float](repeating: 1.0, count: nWindows)
+            for w in 0..<nWindows where windowRMS[w] > noiseFloor {
+                gainMap[w] = max(minLinear, min(maxLinear, reference / max(windowRMS[w], 1e-10)))
+            }
+
+            // ── Smooth: zero-phase forward + backward EMA (~3 s time constant) ──
+            let alpha: Float = 0.25
+            for i in 1..<nWindows {
+                gainMap[i] = alpha * gainMap[i] + (1 - alpha) * gainMap[i - 1]
+            }
+            for i in stride(from: nWindows - 2, through: 0, by: -1) {
+                gainMap[i] = alpha * gainMap[i] + (1 - alpha) * gainMap[i + 1]
+            }
+
+            let minG = gainMap.min() ?? 1, maxG = gainMap.max() ?? 1
+            logHandler(String(format: "📊 Leveler gain range: %+.1f dB to %+.1f dB",
+                              20.0 * log10(Double(minG)), 20.0 * log10(Double(maxG))))
+
+            // ── Pass 2: apply gain with per-window linear ramp ────────────────
+            var outSettings = fmt.settings
+            outSettings.removeValue(forKey: AVChannelLayoutKey)
+            let outFile = try AVAudioFile(forWriting: URL(fileURLWithPath: outputPath), settings: outSettings)
+
+            guard let writeBuf = AVAudioPCMBuffer(pcmFormat: fmt,
+                                                  frameCapacity: AVAudioFrameCount(windowFrames)) else { return false }
+            file.framePosition = 0
+            for w in 0..<nWindows {
+                let toRead = AVAudioFrameCount(min(windowFrames, totalFrames - w * windowFrames))
+                buf.frameLength = toRead
+                try file.read(into: buf, frameCount: toRead)
+                guard buf.frameLength > 0 else { break }
+                writeBuf.frameLength = buf.frameLength
+                let n = vDSP_Length(buf.frameLength)
+
+                // Ramp from midpoint(prev, this) to midpoint(this, next) — no discontinuity at boundaries
+                var gStart = ((w > 0 ? gainMap[w - 1] : gainMap[w]) + gainMap[w]) * 0.5
+                var gEnd   = (gainMap[w] + (w + 1 < nWindows ? gainMap[w + 1] : gainMap[w])) * 0.5
+                var gainRamp = [Float](repeating: 0, count: Int(n))
+                vDSP_vgen(&gStart, &gEnd, &gainRamp, 1, n)
+
+                for ch in 0..<nch {
+                    guard let inD  = buf.floatChannelData?[ch],
+                          let outD = writeBuf.floatChannelData?[ch] else { continue }
+                    vDSP_vmul(inD, 1, gainRamp, 1, outD, 1, n)
+                }
+                try outFile.write(from: writeBuf)
+                progressHandler(progressStart + (progressEnd - progressStart) * (0.4 + 0.6 * Double(w + 1) / Double(nWindows)))
+            }
+            logHandler("✅ Slow leveler applied")
+            return true
+        } catch {
+            logHandler("❌ Slow leveler failed: \(error.localizedDescription)"); return false
+        }
     }
 
     // MARK: - EBU R128 loudness measurement
@@ -727,25 +869,33 @@ class VoiceIsolationProcessor {
                 scanned += buf.frameLength
             }
 
-            // Cap gain so output peak won't exceed ceiling
+            // Apply the full target gain. If peaks exceed the ceiling after boosting,
+            // hard-clip them in the write loop below. For speech, sharp transient
+            // clipping is largely inaudible and far preferable to leaving the file
+            // 10+ dB below the loudness target.
             var gain = Float(pow(10.0, gainDB / 20.0))
-            if truePeak > 0 {
-                let maxSafeGain = peakCeiling / truePeak
-                if gain > maxSafeGain {
-                    let limitedDB = 20.0 * log10(Double(maxSafeGain))
-                    logHandler(String(format: "⚠️ Peak limiter: capped gain from %+.1f dB to %+.1f dB to prevent clipping",
-                                      gainDB, limitedDB))
-                    gain = maxSafeGain
-                }
+            if truePeak > 0 && truePeak * gain > peakCeiling {
+                let projectedDBFS = 20.0 * log10(Double(truePeak * gain))
+                logHandler(String(format: "⚠️ High crest factor: peaks would reach %.1f dBFS — soft limiting to %.1f dBFS (add more compression to avoid this)",
+                                  projectedDBFS, 20.0 * log10(Double(peakCeiling))))
             }
 
-            // Pass 2: apply gain and write output
+            // Pass 2: apply gain + soft limiter, then write output.
+            // Instead of hard-clipping, we use a per-sample gain envelope follower:
+            // fast attack (1 ms) engages the moment a peak exceeds the ceiling;
+            // slow release (150 ms) lets the gain recover smoothly, avoiding pumping.
             var outSettings = fmt.settings
             outSettings.removeValue(forKey: AVChannelLayoutKey)
             if monoOutput { outSettings[AVNumberOfChannelsKey] = 1 }
             let outFile = try AVAudioFile(forWriting: URL(fileURLWithPath: outputPath), settings: outSettings)
             let outFmt = monoOutput ? AVAudioFormat(standardFormatWithSampleRate: sr, channels: 1)! : fmt
             guard let outBuf = AVAudioPCMBuffer(pcmFormat: outFmt, frameCapacity: chunkSize) else { return false }
+
+            // Limiter state — persists across chunks
+            var limGain: Float = 1.0
+            let attackCoeff  = Float(exp(-1.0 / (0.001 * sr)))   // 1 ms attack
+            let releaseCoeff = Float(exp(-1.0 / (0.150 * sr)))   // 150 ms release
+            var limGainBuf   = [Float](repeating: 1.0, count: Int(chunkSize))
 
             file.framePosition = inFrame
             var totalFrames: AVAudioFrameCount = 0
@@ -754,9 +904,32 @@ class VoiceIsolationProcessor {
                 buf.frameLength = toRead
                 try file.read(into: buf, frameCount: toRead)
                 guard buf.frameLength > 0 else { break }
-                for ch in 0..<Int(fmt.channelCount) {
+                let nch = Int(fmt.channelCount)
+                let n   = Int(buf.frameLength)
+
+                // Apply target gain to all channels
+                for ch in 0..<nch {
                     guard let data = buf.floatChannelData?[ch] else { continue }
-                    vDSP_vsmul(data, 1, &gain, data, 1, vDSP_Length(buf.frameLength))
+                    vDSP_vsmul(data, 1, &gain, data, 1, vDSP_Length(n))
+                }
+
+                // Build per-sample limiter gain from the multi-channel peak envelope
+                for i in 0..<n {
+                    var peak: Float = 0
+                    for ch in 0..<nch {
+                        if let d = buf.floatChannelData?[ch] { peak = max(peak, abs(d[i])) }
+                    }
+                    let tg = peak > peakCeiling ? peakCeiling / peak : 1.0
+                    limGain = tg < limGain
+                        ? attackCoeff  * limGain + (1 - attackCoeff)  * tg
+                        : releaseCoeff * limGain + (1 - releaseCoeff) * tg
+                    limGainBuf[i] = limGain
+                }
+
+                // Apply limiter envelope to all channels
+                for ch in 0..<nch {
+                    guard let data = buf.floatChannelData?[ch] else { continue }
+                    vDSP_vmul(data, 1, limGainBuf, 1, data, 1, vDSP_Length(n))
                 }
                 if monoOutput && fmt.channelCount > 1 {
                     outBuf.frameLength = buf.frameLength

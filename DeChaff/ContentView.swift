@@ -25,6 +25,7 @@ class ProcessingModel: ObservableObject {
     @Published var chapters: [Chapter] = []
     @Published var shortenSilences: Bool = true
     @Published var maxSilenceDuration: Double = 1.0
+    @Published var doSlowLeveler: Bool = false
     @Published var doTranscription = true
 
     // Transcription state
@@ -173,6 +174,7 @@ class ProcessingModel: ObservableObject {
             mp3Bitrate:         mp3Bitrate,
             shortenSilences:    shortenSilences,
             maxSilenceDuration: maxSilenceDuration,
+            slowLeveler:        doSlowLeveler,
             trimInSeconds:      trimIn,
             trimOutSeconds:     trimOut
         )
@@ -223,23 +225,15 @@ class ProcessingModel: ObservableObject {
     func stopPlayback()   { playback.stop() }
     func seekPlayback(to time: Double) { playback.seek(to: time) }
 
-    /// Zoom centred on a fractional position within the viewport (0 = left edge, 1 = right edge).
-    /// Pass nil to zoom towards the playhead, or 0.5 to zoom towards centre.
-    func waveformZoomScroll(dy: Double, viewportFraction: Double? = nil) {
+    /// Zoom centred on the playhead position.
+    func waveformZoomScroll(dy: Double) {
         guard inputDuration > 0 else { return }
-        let visibleDuration = inputDuration / waveformZoom
-        let anchor: Double
-        if let frac = viewportFraction {
-            anchor = waveformVisibleStart + visibleDuration * frac
-        } else {
-            anchor = playback.playheadSeconds
-        }
+        let anchor = playback.playheadSeconds
         let oldZoom = waveformZoom
         waveformZoom = max(1.0, min(40.0, waveformZoom * (1.0 + dy * 0.025)))
         if waveformZoom != oldZoom { tileCache.invalidateAll() }
         let newVD = inputDuration / waveformZoom
-        let fraction = viewportFraction ?? 0.5
-        waveformVisibleStart = max(0, min(anchor - newVD * fraction, inputDuration - newVD))
+        waveformVisibleStart = max(0, min(anchor - newVD / 2, inputDuration - newVD))
     }
 
     func startTranscription(trimIn: Double, trimOut: Double) {
@@ -1176,19 +1170,7 @@ struct ContentView: View {
             let dy = Double(event.scrollingDeltaY)
             guard abs(dy) > abs(Double(event.scrollingDeltaX)) else { return event }
             guard abs(dy) > 0.5 else { return event }
-            // Compute cursor's fractional x within the waveform viewport
-            var fraction: Double? = nil
-            if let window = event.window {
-                let locInWindow = event.locationInWindow
-                let viewWidth = self.model.waveformViewWidth
-                // The waveform is inset 24pt from each side and starts below the header
-                let waveformLeft: CGFloat = 24
-                let cursorX = locInWindow.x - waveformLeft
-                if cursorX >= 0 && cursorX <= viewWidth {
-                    fraction = Double(cursorX / viewWidth)
-                }
-            }
-            self.model.waveformZoomScroll(dy: dy, viewportFraction: fraction)
+            self.model.waveformZoomScroll(dy: dy)
             return nil
         }
     }

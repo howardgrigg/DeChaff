@@ -16,6 +16,10 @@ extension ContentView {
                                      subtitle: "Balance loud and quiet passages",
                                      isOn: $model.doCompression)
                     Divider().padding(.leading, 16)
+                    settingsToggleRow("Long-Term Levelling",
+                                     subtitle: "Even out sustained volume differences between speakers",
+                                     isOn: $model.doSlowLeveler)
+                    Divider().padding(.leading, 16)
                     settingsToggleRow("Loudness Normalisation",
                                      subtitle: "Target \(String(format: "%.0f", model.targetLUFS)) LUFS for consistent podcast volume",
                                      isOn: $model.doNormalization)
