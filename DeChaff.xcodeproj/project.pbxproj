@@ -23,6 +23,7 @@
 		DC00000000000000000000F0 /* YouTubeSectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC00000000000000000000EF /* YouTubeSectionView.swift */; };
 		DC00000000000000000000F2 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC00000000000000000000F1 /* SettingsView.swift */; };
 		DC00000000000000000000F4 /* SermonMetadataExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC00000000000000000000F3 /* SermonMetadataExtractor.swift */; };
+		DC00000000000000000000F6 /* WaveformTileCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC00000000000000000000F5 /* WaveformTileCache.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -43,6 +44,7 @@
 		DC00000000000000000000EF /* YouTubeSectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouTubeSectionView.swift; sourceTree = "<group>"; };
 		DC00000000000000000000F1 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		DC00000000000000000000F3 /* SermonMetadataExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SermonMetadataExtractor.swift; sourceTree = "<group>"; };
+		DC00000000000000000000F5 /* WaveformTileCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaveformTileCache.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -88,6 +90,7 @@
 				DC00000000000000000000EF /* YouTubeSectionView.swift */,
 				DC00000000000000000000F1 /* SettingsView.swift */,
 				DC00000000000000000000F3 /* SermonMetadataExtractor.swift */,
+				DC00000000000000000000F5 /* WaveformTileCache.swift */,
 				AA00000000000000000000C3 /* lame */,
 				AA00000000000000000000C6 /* Wheat.png */,
 				5069CC302F64007A00F65B34 /* DeChaff.icon */,
@@ -202,6 +205,7 @@
 				DC00000000000000000000F0 /* YouTubeSectionView.swift in Sources */,
 				DC00000000000000000000F2 /* SettingsView.swift in Sources */,
 				DC00000000000000000000F4 /* SermonMetadataExtractor.swift in Sources */,
+				DC00000000000000000000F6 /* WaveformTileCache.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

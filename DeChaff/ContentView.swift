@@ -52,30 +52,32 @@ class ProcessingModel: ObservableObject {
     }
 
     @Published var tagArtwork: Data? = nil {
-        didSet { UserDefaults.standard.set(tagArtwork, forKey: "dechaff.artwork") }
+        didSet {
+            UserDefaults.standard.set(tagArtwork, forKey: "dechaff.artwork")
+            cachedArtworkImage = tagArtwork.flatMap { NSImage(data: $0) }
+        }
     }
+    /// Cached NSImage derived from tagArtwork — avoids re-decoding on every SwiftUI redraw.
+    var cachedArtworkImage: NSImage? = nil
 
     // File load state
     @Published var inputURL: URL? = nil
     @Published var inputDuration: Double = 0
-    @Published var waveformSamples: [Float] = []
+    @Published var waveformSamples: [Float] = []  // kept for isEmpty checks
     @Published var isLoadingWaveform = false
+
+    // Multi-resolution waveform data
+    @Published var waveformData: WaveformData? = nil
+    let tileCache = WaveformTileCache()
 
     // Trim
     @Published var trimInSeconds: Double = 0
     @Published var trimOutSeconds: Double = 0
 
-    // Playback
-    @Published var isPlaying = false
-    @Published var playheadSeconds: Double = 0
-    private var audioPlayer: AVAudioPlayer?
-    private var playbackTimer: Timer?
-
-    // Detail waveform (on-demand, for zoomed-in view)
-    @Published var detailSamples: [Float] = []
-    @Published var detailRangeStart: Double = 0
-    @Published var detailRangeEnd: Double = 0
-    private var detailLoadTask: Task<Void, Never>?
+    // Playback — isolated into @Observable so the 20 Hz timer updates only
+    // redraw views that actually read playback.isPlaying / playback.playheadSeconds,
+    // not the entire view hierarchy.
+    let playback = PlaybackState()
 
     // Waveform viewport
     @Published var waveformZoom: Double = 1.0
@@ -86,6 +88,7 @@ class ProcessingModel: ObservableObject {
         tagSeries   = UserDefaults.standard.string(forKey: "dechaff.series") ?? ""
         tagPreacher = UserDefaults.standard.string(forKey: "dechaff.preacher") ?? ""
         tagArtwork  = UserDefaults.standard.data(forKey: "dechaff.artwork")
+        cachedArtworkImage = tagArtwork.flatMap { NSImage(data: $0) }
         let stored  = UserDefaults.standard.double(forKey: "dechaff.date")
         if stored != 0 { tagDate = Date(timeIntervalSinceReferenceDate: stored) }
     }
@@ -105,6 +108,8 @@ class ProcessingModel: ObservableObject {
         inputURL = url
         inputDuration = 0
         waveformSamples = []
+        waveformData = nil
+        tileCache.invalidateAll()
         isLoadingWaveform = true
         trimInSeconds = 0
         trimOutSeconds = 0
@@ -113,19 +118,19 @@ class ProcessingModel: ObservableObject {
         logs = []
         outputURL = nil
         stopPlayback()
-        detailLoadTask?.cancel()
-        detailSamples = []; detailRangeStart = 0; detailRangeEnd = 0
         waveformZoom = 1.0; waveformVisibleStart = 0.0
         transcriptionTask?.cancel()
         transcriptText = ""; transcriptError = nil; isTranscribing = false
 
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
-            let (duration, samples) = await generateWaveform(url: url)
+            let (data, duration) = await generateMultiResWaveform(url: url)
             await MainActor.run {
                 self.inputDuration = duration
                 self.trimOutSeconds = duration
-                self.waveformSamples = samples
+                self.waveformData = data
+                // Keep waveformSamples populated for isEmpty checks elsewhere
+                self.waveformSamples = data?.level2 ?? []
                 self.isLoadingWaveform = false
             }
         }
@@ -211,66 +216,22 @@ class ProcessingModel: ObservableObject {
         }
     }
 
-    // MARK: - Playback
+    // MARK: - Playback (forwarded to PlaybackState)
 
-    func togglePlayback() { isPlaying ? pausePlayback() : playFrom(playheadSeconds) }
+    func togglePlayback() { playback.toggle(url: inputURL) }
+    func pausePlayback()  { playback.pause() }
+    func stopPlayback()   { playback.stop() }
+    func seekPlayback(to time: Double) { playback.seek(to: time) }
 
-    func playFrom(_ t: Double) {
-        guard let url = inputURL, let player = try? AVAudioPlayer(contentsOf: url) else { return }
-        audioPlayer = player
-        player.currentTime = t
-        player.play()
-        isPlaying = true
-        playbackTimer?.invalidate()
-        playbackTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
-            guard let self, let p = self.audioPlayer else { return }
-            DispatchQueue.main.async {
-                self.playheadSeconds = p.currentTime
-                if !p.isPlaying { self.isPlaying = false; self.playbackTimer?.invalidate() }
-            }
-        }
-    }
-
-    func pausePlayback() { audioPlayer?.pause(); isPlaying = false; playbackTimer?.invalidate() }
-
-    func stopPlayback() {
-        audioPlayer?.stop(); audioPlayer = nil
-        isPlaying = false; playbackTimer?.invalidate(); playheadSeconds = 0
-    }
-
-    func seekPlayback(to time: Double) {
-        playheadSeconds = time
-        audioPlayer?.currentTime = time
-    }
-
-    func waveformScroll(dx: Double, dy: Double) {
+    func waveformZoomScroll(dy: Double) {
         guard inputDuration > 0 else { return }
         let visibleDuration = inputDuration / waveformZoom
-        if abs(dx) >= abs(dy) {
-            guard waveformZoom > 1.0 else { return }
-            let shift = dx / Double(waveformViewWidth) * visibleDuration
-            waveformVisibleStart = max(0, min(waveformVisibleStart + shift, inputDuration - visibleDuration))
-        } else {
-            let centre = waveformVisibleStart + visibleDuration / 2
-            waveformZoom = max(1.0, min(40.0, waveformZoom * (1.0 + dy * 0.025)))
-            let newVD = inputDuration / waveformZoom
-            waveformVisibleStart = max(0, min(centre - newVD / 2, inputDuration - newVD))
-        }
-    }
-
-    func requestDetailWaveform(start: Double, end: Double) {
-        detailLoadTask?.cancel()
-        let url = inputURL
-        detailLoadTask = Task.detached(priority: .utility) { [weak self] in
-            guard let self, let url else { return }
-            do { try await Task.sleep(nanoseconds: 200_000_000) } catch { return }
-            let samples = await generateDetailWaveform(url: url, start: start, end: end)
-            await MainActor.run {
-                self.detailSamples = samples
-                self.detailRangeStart = start
-                self.detailRangeEnd = end
-            }
-        }
+        let centre = waveformVisibleStart + visibleDuration / 2
+        let oldZoom = waveformZoom
+        waveformZoom = max(1.0, min(40.0, waveformZoom * (1.0 + dy * 0.025)))
+        if waveformZoom != oldZoom { tileCache.invalidateAll() }
+        let newVD = inputDuration / waveformZoom
+        waveformVisibleStart = max(0, min(centre - newVD / 2, inputDuration - newVD))
     }
 
     func startTranscription(trimIn: Double, trimOut: Double) {
@@ -372,75 +333,12 @@ func extractTrimmedAudio(from sourceURL: URL, trimIn: Double, trimOut: Double) t
     return tempURL
 }
 
-// MARK: - Waveform generation
+// MARK: - Waveform generation (moved to WaveformTileCache.swift)
 
-func generateWaveform(url: URL, buckets: Int = 600) async -> (duration: Double, samples: [Float]) {
-    guard let file = try? AVAudioFile(forReading: url) else { return (0, []) }
-    let sr = file.processingFormat.sampleRate
-    let totalFrames = file.length
-    let duration = Double(totalFrames) / sr
-    let nch = Int(file.processingFormat.channelCount)
-    let framesPerBucket = max(1, Int(totalFrames) / buckets)
-    let chunkSize = AVAudioFrameCount(framesPerBucket)
-    guard let buf = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: chunkSize) else {
-        return (duration, [])
-    }
-    var peaks = [Float](); peaks.reserveCapacity(buckets)
-    file.framePosition = 0
-    while file.framePosition < totalFrames {
-        buf.frameLength = min(chunkSize, AVAudioFrameCount(totalFrames - file.framePosition))
-        guard (try? file.read(into: buf, frameCount: buf.frameLength)) != nil, buf.frameLength > 0 else { break }
-        var peak: Float = 0
-        for ch in 0..<nch {
-            guard let data = buf.floatChannelData?[ch] else { continue }
-            var chPeak: Float = 0
-            vDSP_maxmgv(data, 1, &chPeak, vDSP_Length(buf.frameLength))
-            peak = max(peak, chPeak)
-        }
-        peaks.append(peak)
-    }
-    var maxPeak: Float = 0
-    vDSP_maxv(peaks, 1, &maxPeak, vDSP_Length(peaks.count))
-    if maxPeak > 0 { var s = 1 / maxPeak; vDSP_vsmul(peaks, 1, &s, &peaks, 1, vDSP_Length(peaks.count)) }
-    return (duration, peaks)
-}
-
-func generateDetailWaveform(url: URL, start: Double, end: Double, buckets: Int = 1200) async -> [Float] {
-    guard let file = try? AVAudioFile(forReading: url) else { return [] }
-    let sr = file.processingFormat.sampleRate
-    let nch = Int(file.processingFormat.channelCount)
-    let startFrame = AVAudioFramePosition(start * sr)
-    let endFrame   = min(AVAudioFramePosition(end * sr), file.length)
-    let rangeFrames = max(0, endFrame - startFrame)
-    guard rangeFrames > 0 else { return [] }
-    let framesPerBucket = max(1, Int(rangeFrames) / buckets)
-    let chunkSize = AVAudioFrameCount(framesPerBucket)
-    guard let buf = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: chunkSize) else { return [] }
-    var peaks = [Float](); peaks.reserveCapacity(buckets)
-    file.framePosition = startFrame
-    while file.framePosition < endFrame {
-        let remaining = AVAudioFrameCount(endFrame - file.framePosition)
-        buf.frameLength = min(chunkSize, remaining)
-        guard (try? file.read(into: buf, frameCount: buf.frameLength)) != nil, buf.frameLength > 0 else { break }
-        var peak: Float = 0
-        for ch in 0..<nch {
-            guard let data = buf.floatChannelData?[ch] else { continue }
-            var chPeak: Float = 0
-            vDSP_maxmgv(data, 1, &chPeak, vDSP_Length(buf.frameLength))
-            peak = max(peak, chPeak)
-        }
-        peaks.append(peak)
-    }
-    var maxPeak: Float = 0
-    vDSP_maxv(peaks, 1, &maxPeak, vDSP_Length(peaks.count))
-    if maxPeak > 0 { var s = 1 / maxPeak; vDSP_vsmul(peaks, 1, &s, &peaks, 1, vDSP_Length(peaks.count)) }
-    return peaks
-}
-
-// MARK: - WaveformView
+// MARK: - WaveformView (ScrollView + tiled CGImage + overlay)
 
 struct WaveformView: View {
-    let samples: [Float]
+    let waveformData: WaveformData
     let duration: Double
     @Binding var trimIn: Double
     @Binding var trimOut: Double
@@ -449,215 +347,298 @@ struct WaveformView: View {
     let trimInOffset: Double
     var onSeek: (Double) -> Void
     var onChapterMove: ((UUID, Double) -> Void)?
-    let detailSamples: [Float]
-    let detailRangeStart: Double
-    let detailRangeEnd: Double
-    var onNeedDetail: ((Double, Double) -> Void)?
     @Binding var zoom: Double
     @Binding var visibleStart: Double
     var onViewWidth: ((CGFloat) -> Void)?
+    let tileCache: WaveformTileCache
 
     @State private var dragHandle: Int? = nil
     @State private var dragChapterID: UUID? = nil
-    @State private var dragStartVisibleStart: Double = 0
-    @State private var dragStartX: CGFloat = 0
     @State private var lastMagnification: Double = 1.0
+    @State private var viewportWidth: CGFloat = 700
 
     private var visibleDuration: Double { duration / zoom }
+    private var fullWidth: CGFloat { viewportWidth * CGFloat(zoom) }
+
     private func clampStart(_ s: Double) -> Double { max(0, min(s, duration - visibleDuration)) }
-    private func xFor(_ t: Double, width: CGFloat) -> CGFloat {
+    /// Map time to x-coordinate within the full scrollable width.
+    private func fullXFor(_ t: Double) -> CGFloat {
+        CGFloat(t / duration) * fullWidth
+    }
+    /// Map x in viewport to time (for gesture handling via visibleStart).
+    private func xForViewport(_ t: Double, width: CGFloat) -> CGFloat {
         CGFloat((t - visibleStart) / visibleDuration) * width
     }
-    private func timeFor(_ x: CGFloat, width: CGFloat) -> Double {
+    private func timeForViewport(_ x: CGFloat, width: CGFloat) -> Double {
         max(0, min(duration, visibleStart + Double(x / width) * visibleDuration))
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            GeometryReader { geo in
-                let w = geo.size.width
-                let h = geo.size.height
-                let _ = onViewWidth?(w)
+        GeometryReader { geo in
+            let w = geo.size.width
+            let h = geo.size.height
+            let _ = DispatchQueue.main.async { viewportWidth = w; onViewWidth?(w) }
 
-                Canvas { ctx, _ in
-                    guard !samples.isEmpty, duration > 0 else { return }
+            ZStack {
+                // Layer 1: Scrollable tiled waveform with overlays drawn in content
+                ScrollView(.horizontal, showsIndicators: zoom > 1.01) {
+                    ZStack(alignment: .topLeading) {
+                        // Waveform tiles
+                        WaveformTiledContent(
+                            waveformData: waveformData,
+                            duration: duration,
+                            trimIn: trimIn,
+                            trimOut: trimOut,
+                            tileCache: tileCache,
+                            viewportWidth: w,
+                            height: h,
+                            zoom: zoom
+                        )
 
-                    let trimInX  = xFor(trimIn,  width: w)
-                    let trimOutX = xFor(trimOut, width: w)
-                    let visEnd   = visibleStart + visibleDuration
-
-                    // Dim outside trim
-                    let dimColor = Color.black.opacity(0.35)
-                    if trimInX > 0 { ctx.fill(Path(CGRect(x: 0, y: 0, width: min(trimInX, w), height: h)), with: .color(dimColor)) }
-                    if trimOutX < w { ctx.fill(Path(CGRect(x: max(0, trimOutX), y: 0, width: w - max(0, trimOutX), height: h)), with: .color(dimColor)) }
-
-                    // Waveform bars
-                    let useDetail = !detailSamples.isEmpty && detailRangeStart <= visibleStart && detailRangeEnd >= visEnd
-                    let drawSamples  = useDetail ? detailSamples  : samples
-                    let drawOrigin   = useDetail ? detailRangeStart : 0.0
-                    let drawDuration = useDetail ? (detailRangeEnd - detailRangeStart) : duration
-                    let midY = h / 2
-                    let barW = max(1.0, w * CGFloat(zoom * drawDuration / duration) / CGFloat(drawSamples.count))
-                    let firstIdx = max(0, Int((visibleStart - drawOrigin) / drawDuration * Double(drawSamples.count)) - 1)
-                    let lastIdx  = min(drawSamples.count - 1, Int(ceil((visEnd - drawOrigin) / drawDuration * Double(drawSamples.count))) + 1)
-                    if firstIdx <= lastIdx {
-                        for i in firstIdx...lastIdx {
-                            let sampleTime = drawOrigin + drawDuration * Double(i) / Double(drawSamples.count)
-                            let x = xFor(sampleTime, width: w)
-                            let barH = max(1, CGFloat(drawSamples[i]) * midY * 0.9)
-                            let inTrim = sampleTime >= trimIn && sampleTime <= trimOut
-                            ctx.fill(Path(CGRect(x: x, y: midY - barH, width: max(1, barW - 0.5), height: barH * 2)),
-                                     with: .color(inTrim ? .accentColor : Color.secondary.opacity(0.4)))
-                        }
-                    }
-
-                    // Chapter markers
-                    var lastLabelX: CGFloat = -100
-                    for chapter in chapters.sorted(by: { $0.timeSeconds < $1.timeSeconds }) {
-                        let inputTime = chapter.timeSeconds + trimInOffset
-                        let x = xFor(inputTime, width: w)
-                        guard x >= -1 && x <= w + 1 else { continue }
-                        let isDragging = chapter.id == dragChapterID
-                        ctx.stroke(Path { p in p.move(to: CGPoint(x: x, y: 0)); p.addLine(to: CGPoint(x: x, y: h)) },
-                                   with: .color(isDragging ? Color.yellow : Color.purple.opacity(0.8)),
-                                   lineWidth: isDragging ? 2 : 1.5)
-                        ctx.fill(Path(ellipseIn: CGRect(x: x - 4, y: h * 0.5 - 4, width: 8, height: 8)),
-                                 with: .color(isDragging ? Color.yellow : Color.purple.opacity(0.7)))
-                        if x - lastLabelX >= 30 {
-                            let label = chapter.title.isEmpty ? "●" : String(chapter.title.prefix(12))
-                            ctx.draw(Text(label).font(.system(size: 9, weight: isDragging ? .bold : .regular))
-                                        .foregroundStyle(isDragging ? Color.yellow : Color.purple),
-                                     at: CGPoint(x: x + 3, y: 8), anchor: .leading)
-                            lastLabelX = x
-                        }
-                    }
-
-                    // Trim handles
-                    func drawHandle(x: CGFloat) {
-                        guard x >= -9 && x <= w + 9 else { return }
-                        ctx.stroke(Path { p in p.move(to: CGPoint(x: x, y: 0)); p.addLine(to: CGPoint(x: x, y: h)) },
-                                   with: .color(.white.opacity(0.35)), lineWidth: 6)
-                        ctx.stroke(Path { p in p.move(to: CGPoint(x: x, y: 0)); p.addLine(to: CGPoint(x: x, y: h)) },
-                                   with: .color(.orange), lineWidth: 2)
-                        ctx.fill(Path { p in
-                            p.move(to: CGPoint(x: x - 9, y: 0)); p.addLine(to: CGPoint(x: x + 9, y: 0))
-                            p.addLine(to: CGPoint(x: x, y: 14)); p.closeSubpath()
-                        }, with: .color(.orange))
-                        ctx.fill(Path { p in
-                            p.move(to: CGPoint(x: x - 9, y: h)); p.addLine(to: CGPoint(x: x + 9, y: h))
-                            p.addLine(to: CGPoint(x: x, y: h - 14)); p.closeSubpath()
-                        }, with: .color(.orange))
-                    }
-                    drawHandle(x: trimInX)
-                    drawHandle(x: trimOutX)
-
-                    // Playhead
-                    if playhead >= visibleStart && playhead <= visEnd {
-                        let px = xFor(playhead, width: w)
-                        ctx.stroke(Path { p in p.move(to: CGPoint(x: px, y: 0)); p.addLine(to: CGPoint(x: px, y: h)) },
-                                   with: .color(Color(red: 1.0, green: 0.78, blue: 0.0)), lineWidth: 1.5)
-                    }
-
-                    // Zoom indicator
-                    if zoom > 1.01 {
-                        let label = zoom >= 10 ? String(format: "%.0f×", zoom) : String(format: "%.1f×", zoom)
-                        ctx.draw(Text(label).font(.system(size: 9, weight: .medium)).foregroundStyle(Color.white),
-                                 at: CGPoint(x: w - 6, y: 6), anchor: .topTrailing)
-                    }
-                }
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { value in
+                        // Overlay: dim regions, handles, chapters, playhead — all at time positions
+                        Canvas { ctx, size in
+                            let fw = size.width
+                            let fh = size.height
                             guard duration > 0 else { return }
-                            let startX = value.startLocation.x
-                            let curX   = value.location.x
-                            if dragHandle == nil {
-                                let inX  = xFor(trimIn,  width: w)
-                                let outX = xFor(trimOut, width: w)
-                                let dIn  = abs(startX - inX)
-                                let dOut = abs(startX - outX)
-                                if dIn <= 12 || dOut <= 12 {
-                                    dragHandle = dIn < dOut ? 0 : 1
-                                } else {
-                                    var best: (dist: CGFloat, id: UUID)? = nil
-                                    for ch in chapters {
-                                        let cx = xFor(ch.timeSeconds + trimInOffset, width: w)
-                                        let d  = abs(startX - cx)
-                                        if d <= 10, best == nil || d < best!.dist { best = (d, ch.id) }
+
+                            // Dim outside trim
+                            let trimInX  = fullXFor(trimIn)
+                            let trimOutX = fullXFor(trimOut)
+                            let dimColor = Color.black.opacity(0.35)
+                            if trimInX > 0 {
+                                ctx.fill(Path(CGRect(x: 0, y: 0, width: trimInX, height: fh)), with: .color(dimColor))
+                            }
+                            if trimOutX < fw {
+                                ctx.fill(Path(CGRect(x: trimOutX, y: 0, width: fw - trimOutX, height: fh)), with: .color(dimColor))
+                            }
+
+                            // Chapter markers
+                            var lastLabelX: CGFloat = -100
+                            for chapter in chapters.sorted(by: { $0.timeSeconds < $1.timeSeconds }) {
+                                let inputTime = chapter.timeSeconds + trimInOffset
+                                let x = fullXFor(inputTime)
+                                guard x >= 0 && x <= fw else { continue }
+                                let isDragging = chapter.id == dragChapterID
+                                ctx.stroke(Path { p in p.move(to: CGPoint(x: x, y: 0)); p.addLine(to: CGPoint(x: x, y: fh)) },
+                                           with: .color(isDragging ? Color.yellow : Color.purple.opacity(0.8)),
+                                           lineWidth: isDragging ? 2 : 1.5)
+                                ctx.fill(Path(ellipseIn: CGRect(x: x - 4, y: fh * 0.5 - 4, width: 8, height: 8)),
+                                         with: .color(isDragging ? Color.yellow : Color.purple.opacity(0.7)))
+                                if x - lastLabelX >= 30 {
+                                    let label = chapter.title.isEmpty ? "●" : String(chapter.title.prefix(12))
+                                    ctx.draw(Text(label).font(.system(size: 9, weight: isDragging ? .bold : .regular))
+                                                .foregroundStyle(isDragging ? Color.yellow : Color.purple),
+                                             at: CGPoint(x: x + 3, y: 8), anchor: .leading)
+                                    lastLabelX = x
+                                }
+                            }
+
+                            // Trim handles
+                            func drawHandle(x: CGFloat) {
+                                guard x >= -9 && x <= fw + 9 else { return }
+                                ctx.stroke(Path { p in p.move(to: CGPoint(x: x, y: 0)); p.addLine(to: CGPoint(x: x, y: fh)) },
+                                           with: .color(.white.opacity(0.35)), lineWidth: 6)
+                                ctx.stroke(Path { p in p.move(to: CGPoint(x: x, y: 0)); p.addLine(to: CGPoint(x: x, y: fh)) },
+                                           with: .color(.orange), lineWidth: 2)
+                                ctx.fill(Path { p in
+                                    p.move(to: CGPoint(x: x - 9, y: 0)); p.addLine(to: CGPoint(x: x + 9, y: 0))
+                                    p.addLine(to: CGPoint(x: x, y: 14)); p.closeSubpath()
+                                }, with: .color(.orange))
+                                ctx.fill(Path { p in
+                                    p.move(to: CGPoint(x: x - 9, y: fh)); p.addLine(to: CGPoint(x: x + 9, y: fh))
+                                    p.addLine(to: CGPoint(x: x, y: fh - 14)); p.closeSubpath()
+                                }, with: .color(.orange))
+                            }
+                            drawHandle(x: trimInX)
+                            drawHandle(x: trimOutX)
+
+                            // Playhead
+                            let phX = fullXFor(playhead)
+                            if phX >= 0 && phX <= fw {
+                                ctx.stroke(Path { p in p.move(to: CGPoint(x: phX, y: 0)); p.addLine(to: CGPoint(x: phX, y: fh)) },
+                                           with: .color(Color(red: 1.0, green: 0.78, blue: 0.0)), lineWidth: 1.5)
+                            }
+                        }
+                        .allowsHitTesting(false)
+
+                        // Gesture layer — inside scroll content so positions map to time
+                        Color.clear
+                            .contentShape(Rectangle())
+                            .gesture(
+                                DragGesture(minimumDistance: 0)
+                                    .onChanged { value in
+                                        guard duration > 0 else { return }
+                                        // Positions are in scroll content coordinates (0...fullWidth)
+                                        let startX = value.startLocation.x
+                                        let curX   = value.location.x
+                                        if dragHandle == nil {
+                                            let inX  = fullXFor(trimIn)
+                                            let outX = fullXFor(trimOut)
+                                            let dIn  = abs(startX - inX)
+                                            let dOut = abs(startX - outX)
+                                            if dIn <= 12 || dOut <= 12 {
+                                                dragHandle = dIn < dOut ? 0 : 1
+                                            } else {
+                                                var best: (dist: CGFloat, id: UUID)? = nil
+                                                for ch in chapters {
+                                                    let cx = fullXFor(ch.timeSeconds + trimInOffset)
+                                                    let d  = abs(startX - cx)
+                                                    if d <= 10, best == nil || d < best!.dist { best = (d, ch.id) }
+                                                }
+                                                if let hit = best {
+                                                    dragHandle = -2; dragChapterID = hit.id
+                                                } else {
+                                                    dragHandle = -1
+                                                }
+                                            }
+                                        }
+                                        let time = max(0, min(duration, Double(curX / fullWidth) * duration))
+                                        switch dragHandle {
+                                        case 0: trimIn = min(time, trimOut - 0.5); onSeek(trimIn)
+                                        case 1: trimOut = max(time, trimIn + 0.5); onSeek(trimOut)
+                                        case -2:
+                                            if let id = dragChapterID {
+                                                onChapterMove?(id, max(0, time - trimInOffset))
+                                                onSeek(time)
+                                            }
+                                        default: break
+                                        }
                                     }
-                                    if let hit = best {
-                                        dragHandle = -2; dragChapterID = hit.id
-                                    } else {
-                                        dragHandle = -1
-                                        dragStartVisibleStart = visibleStart; dragStartX = startX
+                                    .onEnded { value in
+                                        if dragHandle == -1 && abs(value.translation.width) < 5 {
+                                            let time = max(0, min(duration, Double(value.location.x / fullWidth) * duration))
+                                            onSeek(time)
+                                        }
+                                        dragHandle = nil; dragChapterID = nil
                                     }
-                                }
-                            }
-                            switch dragHandle {
-                            case 0: trimIn = min(timeFor(curX, width: w), trimOut - 0.5); onSeek(trimIn)
-                            case 1: trimOut = max(timeFor(curX, width: w), trimIn + 0.5); onSeek(trimOut)
-                            case -2:
-                                if let id = dragChapterID {
-                                    let originalTime = timeFor(curX, width: w)
-                                    onChapterMove?(id, max(0, originalTime - trimInOffset))
-                                    onSeek(originalTime)
-                                }
-                            default:
-                                if zoom > 1.0 {
-                                    let shift = -Double(curX - dragStartX) / Double(w) * visibleDuration
-                                    visibleStart = clampStart(dragStartVisibleStart + shift)
-                                }
-                            }
-                        }
-                        .onEnded { value in
-                            if dragHandle == -1 && abs(value.translation.width) < 5 {
-                                onSeek(timeFor(value.location.x, width: w))
-                            }
-                            dragHandle = nil; dragChapterID = nil
-                        }
-                )
-                .gesture(
-                    MagnificationGesture()
-                        .onChanged { value in
-                            guard duration > 0 else { return }
-                            let delta = Double(value) / lastMagnification
-                            lastMagnification = Double(value)
-                            let centre = visibleStart + visibleDuration / 2
-                            zoom = max(1.0, min(40.0, zoom * delta))
-                            visibleStart = clampStart(centre - visibleDuration / 2)
-                        }
-                        .onEnded { _ in lastMagnification = 1.0 }
-                )
-                .onTapGesture(count: 2) {
-                    withAnimation(.easeOut(duration: 0.2)) { zoom = 1.0; visibleStart = 0 }
+                            )
+                    }
+                    .frame(width: fullWidth, height: h)
+                    .background(GeometryReader { inner in
+                        Color.clear.preference(
+                            key: ScrollOffsetKey.self,
+                            value: inner.frame(in: .named("waveformScroll")).minX
+                        )
+                    })
                 }
-                .onChange(of: playhead) { ph in
-                    guard zoom > 1.0 else { return }
-                    let vEnd = visibleStart + visibleDuration
-                    if ph < visibleStart || ph > vEnd { visibleStart = clampStart(ph - visibleDuration * 0.1) }
+                .coordinateSpace(name: "waveformScroll")
+                .onPreferenceChange(ScrollOffsetKey.self) { offset in
+                    let newStart = Double(-offset / fullWidth) * duration
+                    let clamped = clampStart(newStart)
+                    if abs(clamped - visibleStart) > 0.001 {
+                        visibleStart = clamped
+                    }
                 }
-                .onChange(of: duration) { _ in zoom = 1.0; visibleStart = 0 }
-                .onChange(of: visibleStart) { _ in requestDetail() }
-                .onChange(of: zoom)         { _ in requestDetail() }
+
+                // Fixed viewport overlay: zoom indicator only
+                if zoom > 1.01 {
+                    VStack {
+                        HStack {
+                            Spacer()
+                            Text(zoom >= 10 ? String(format: "%.0f×", zoom) : String(format: "%.1f×", zoom))
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 2)
+                        }
+                        Spacer()
+                    }
+                    .allowsHitTesting(false)
+                }
             }
-            if zoom > 1.01 {
-                Slider(value: Binding(
-                    get: { let s = duration - visibleDuration; return s > 0 ? visibleStart / s : 0 },
-                    set: { visibleStart = clampStart($0 * (duration - visibleDuration)) }
-                ))
-                .controlSize(.mini)
-                .padding(.horizontal, 4)
+            .gesture(
+                MagnificationGesture()
+                    .onChanged { value in
+                        guard duration > 0 else { return }
+                        let delta = Double(value) / lastMagnification
+                        lastMagnification = Double(value)
+                        let centre = visibleStart + visibleDuration / 2
+                        zoom = max(1.0, min(40.0, zoom * delta))
+                        visibleStart = clampStart(centre - visibleDuration / 2)
+                        tileCache.invalidateAll()
+                    }
+                    .onEnded { _ in lastMagnification = 1.0 }
+            )
+            .onTapGesture(count: 2) {
+                withAnimation(.easeOut(duration: 0.2)) { zoom = 1.0; visibleStart = 0 }
+                tileCache.invalidateAll()
             }
+            .onChange(of: playhead) { ph in
+                guard zoom > 1.0 else { return }
+                let vEnd = visibleStart + visibleDuration
+                if ph < visibleStart || ph > vEnd {
+                    visibleStart = clampStart(ph - visibleDuration * 0.1)
+                }
+            }
+            .onChange(of: duration) { _ in zoom = 1.0; visibleStart = 0 }
         }
     }
+}
 
-    private func requestDetail() {
-        guard zoom > 2.0, duration > 0 else { return }
-        let buffer   = visibleDuration * 0.25
-        let reqStart = max(0, visibleStart - buffer)
-        let reqEnd   = min(duration, visibleStart + visibleDuration + buffer)
-        onNeedDetail?(reqStart, reqEnd)
+// Preference key to read scroll offset
+private struct ScrollOffsetKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+// MARK: - Tiled waveform content (inside ScrollView)
+
+private struct WaveformTiledContent: View {
+    let waveformData: WaveformData
+    let duration: Double
+    let trimIn: Double
+    let trimOut: Double
+    let tileCache: WaveformTileCache
+    let viewportWidth: CGFloat
+    let height: CGFloat
+    let zoom: Double
+
+    var body: some View {
+        Canvas { ctx, size in
+            let fullW = size.width
+            let h = size.height
+            guard duration > 0, fullW > 0 else { return }
+
+            let (peaks, fpp) = waveformData.peaks(forZoom: zoom, viewportWidth: viewportWidth)
+            guard !peaks.isEmpty else { return }
+
+            let tileW = tileCache.tileWidth
+            let tileCount = Int(ceil(fullW / tileW))
+            let quantZoom = WaveformTileCache.quantiseZoom(zoom)
+            let trimInHash = Int(trimIn * 100)
+            let trimOutHash = Int(trimOut * 100)
+
+            let accentCG = NSColor.controlAccentColor.cgColor
+            let dimCG = NSColor.secondaryLabelColor.withAlphaComponent(0.4).cgColor
+
+            for ti in 0..<tileCount {
+                let tileX = CGFloat(ti) * tileW
+                let tileOriginSec = Double(tileX / fullW) * duration
+                let tileDurSec = Double(tileW / fullW) * duration
+                let key = WaveformTileCache.TileKey(
+                    zoomLevel: quantZoom, tileIndex: ti,
+                    trimInHash: trimInHash, trimOutHash: trimOutHash
+                )
+
+                let image: CGImage?
+                if let cached = tileCache.tile(for: key) {
+                    image = cached
+                } else {
+                    image = tileCache.renderTile(
+                        key: key, peaks: peaks, framesPerPeak: fpp,
+                        sampleRate: waveformData.sampleRate, duration: duration,
+                        tileOriginSeconds: tileOriginSec, tileDurationSeconds: tileDurSec,
+                        trimIn: trimIn, trimOut: trimOut, height: h,
+                        accentColor: accentCG, dimColor: dimCG
+                    )
+                }
+
+                if let image {
+                    let rect = CGRect(x: tileX, y: 0, width: tileW, height: h)
+                    ctx.draw(Image(decorative: image, scale: 1), in: rect)
+                }
+            }
+        }
     }
 }
 
@@ -668,6 +649,51 @@ func formatPlaybackTime(_ seconds: Double) -> String {
     let h = Int(t) / 3600, m = (Int(t) % 3600) / 60, s = Int(t) % 60
     if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
     return String(format: "%d:%02d", m, s)
+}
+
+// MARK: - PlaybackState
+
+/// Isolated `@Observable` for playback so that the 20 Hz timer only invalidates
+/// views that read `isPlaying` or `playheadSeconds`, not the entire hierarchy.
+@MainActor @Observable
+final class PlaybackState {
+    var isPlaying = false
+    var playheadSeconds: Double = 0
+
+    private var audioPlayer: AVAudioPlayer?
+    private var playbackTimer: Timer?
+
+    func toggle(url: URL?) {
+        isPlaying ? pause() : playFrom(playheadSeconds, url: url)
+    }
+
+    func playFrom(_ t: Double, url: URL?) {
+        guard let url, let player = try? AVAudioPlayer(contentsOf: url) else { return }
+        audioPlayer = player
+        player.currentTime = t
+        player.play()
+        isPlaying = true
+        playbackTimer?.invalidate()
+        playbackTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            guard let self, let p = self.audioPlayer else { return }
+            self.playheadSeconds = p.currentTime
+            if !p.isPlaying { self.isPlaying = false; self.playbackTimer?.invalidate() }
+        }
+    }
+
+    func pause() {
+        audioPlayer?.pause(); isPlaying = false; playbackTimer?.invalidate()
+    }
+
+    func stop() {
+        audioPlayer?.stop(); audioPlayer = nil
+        isPlaying = false; playbackTimer?.invalidate(); playheadSeconds = 0
+    }
+
+    func seek(to time: Double) {
+        playheadSeconds = time
+        audioPlayer?.currentTime = time
+    }
 }
 
 // MARK: - ContentView
@@ -685,7 +711,8 @@ struct ContentView: View {
     @State private var showLog = false
     @AppStorage("dechaff.youtube.channelURL") var ytChannelURL = "https://www.youtube.com/@cityonahillnz"
     @AppStorage("dechaff.youtube.videoLimit") var ytVideoLimit = 10
-    @State var ytTab: Int = 1   // 0 = Videos, 1 = Live Streams
+    @State var ytTab: Int = 2   // 0 = YouTube URL, 1 = Videos, 2 = Live Streams
+    @State var ytDirectURL: String = ""
 
     let stepTitles = ["Load", "Trim", "Info", "Chapters", "Output"]
 
@@ -1022,13 +1049,13 @@ struct ContentView: View {
                     Text("Load a file first").font(.caption).foregroundStyle(.quaternary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
+            } else if let data = model.waveformData {
                 WaveformView(
-                    samples: model.waveformSamples,
+                    waveformData: data,
                     duration: model.inputDuration,
                     trimIn: $model.trimInSeconds,
                     trimOut: $model.trimOutSeconds,
-                    playhead: model.playheadSeconds,
+                    playhead: model.playback.playheadSeconds,
                     chapters: showChapters ? model.chapters : [],
                     trimInOffset: model.trimInSeconds,
                     onSeek: { model.seekPlayback(to: $0) },
@@ -1037,13 +1064,10 @@ struct ContentView: View {
                             model.chapters[idx].timeSeconds = newTime
                         }
                     } : nil,
-                    detailSamples: model.detailSamples,
-                    detailRangeStart: model.detailRangeStart,
-                    detailRangeEnd: model.detailRangeEnd,
-                    onNeedDetail: { s, e in model.requestDetailWaveform(start: s, end: e) },
                     zoom: $model.waveformZoom,
                     visibleStart: $model.waveformVisibleStart,
-                    onViewWidth: { model.waveformViewWidth = $0 }
+                    onViewWidth: { model.waveformViewWidth = $0 },
+                    tileCache: model.tileCache
                 )
             }
         }
@@ -1059,7 +1083,7 @@ struct ContentView: View {
             Spacer()
             if showSetInOut {
                 Button("Set In") {
-                    model.trimInSeconds = min(model.playheadSeconds, model.trimOutSeconds - 0.5)
+                    model.trimInSeconds = min(model.playback.playheadSeconds, model.trimOutSeconds - 0.5)
                 }
                 .buttonStyle(.bordered).controlSize(.small).disabled(model.waveformSamples.isEmpty)
 
@@ -1067,7 +1091,7 @@ struct ContentView: View {
                     .font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
 
                 Button("Set Out") {
-                    model.trimOutSeconds = max(model.playheadSeconds, model.trimInSeconds + 0.5)
+                    model.trimOutSeconds = max(model.playback.playheadSeconds, model.trimInSeconds + 0.5)
                 }
                 .buttonStyle(.bordered).controlSize(.small).disabled(model.waveformSamples.isEmpty)
             }
@@ -1076,14 +1100,14 @@ struct ContentView: View {
 
     var playPauseButton: some View {
         Button { model.togglePlayback() } label: {
-            Image(systemName: model.isPlaying ? "pause.fill" : "play.fill").frame(width: 20, height: 20)
+            Image(systemName: model.playback.isPlaying ? "pause.fill" : "play.fill").frame(width: 20, height: 20)
         }
         .buttonStyle(.borderless)
         .disabled(model.waveformSamples.isEmpty)
     }
 
     var playheadTimeLabel: some View {
-        Text(formatPlaybackTime(model.playheadSeconds))
+        Text(formatPlaybackTime(model.playback.playheadSeconds))
             .font(.system(.caption, design: .monospaced))
             .foregroundStyle(.secondary)
             .frame(width: 52, alignment: .leading)
@@ -1113,12 +1137,12 @@ struct ContentView: View {
                 }
             case 34: // I — set mark-in on trim step
                 if self.currentStep == 1 && !self.model.waveformSamples.isEmpty {
-                    self.model.trimInSeconds = min(self.model.playheadSeconds, self.model.trimOutSeconds - 0.5)
+                    self.model.trimInSeconds = min(self.model.playback.playheadSeconds, self.model.trimOutSeconds - 0.5)
                     return nil
                 }
             case 31: // O — set mark-out on trim step
                 if self.currentStep == 1 && !self.model.waveformSamples.isEmpty {
-                    self.model.trimOutSeconds = max(self.model.playheadSeconds, self.model.trimInSeconds + 0.5)
+                    self.model.trimOutSeconds = max(self.model.playback.playheadSeconds, self.model.trimInSeconds + 0.5)
                     return nil
                 }
             default: break
@@ -1135,7 +1159,11 @@ struct ContentView: View {
         }
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
             guard self.model.inputURL != nil, self.currentStep == 1 || self.currentStep == 3 else { return event }
-            self.model.waveformScroll(dx: Double(event.scrollingDeltaX), dy: Double(event.scrollingDeltaY))
+            // Only consume vertical scroll for zoom; let horizontal pass through to the native ScrollView
+            let dy = Double(event.scrollingDeltaY)
+            guard abs(dy) > abs(Double(event.scrollingDeltaX)) else { return event }
+            guard abs(dy) > 0.5 else { return event }
+            self.model.waveformZoomScroll(dy: dy)
             return nil
         }
     }
