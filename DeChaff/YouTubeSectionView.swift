@@ -188,8 +188,16 @@ extension ContentView {
         .contentShape(Rectangle())
         .onTapGesture {
             guard !anyDownloading else { return }
-            youtube.select(entry, manager: ytManager) { url in
+            youtube.select(entry, manager: ytManager) { url, metadata, uploadDate in
                 model.loadFile(url: url)
+                // Pre-fill tag fields with AI-extracted metadata
+                if let metadata {
+                    if !metadata.title.isEmpty       { model.tagSermonTitle  = metadata.title }
+                    if !metadata.bibleReading.isEmpty { model.tagBibleReading = metadata.bibleReading }
+                    if !metadata.speaker.isEmpty     { model.tagPreacher     = metadata.speaker }
+                    if !metadata.series.isEmpty      { model.tagSeries       = metadata.series }
+                }
+                if let uploadDate { model.tagDate = uploadDate }
                 withAnimation(.easeInOut(duration: 0.2)) { currentStep = 1 }
             }
         }

@@ -31,17 +31,26 @@ class YouTubeViewModel: ObservableObject {
         }
     }
 
-    func select(_ entry: VideoEntry, manager: YtDlpManager, onLoaded: @escaping (URL) -> Void) {
+    func select(_ entry: VideoEntry, manager: YtDlpManager,
+                onLoaded: @escaping (URL, SermonMetadata?, Date?) -> Void) {
         guard downloadingVideoID == nil else { return }
         downloadingVideoID = entry.id
         downloadError = nil
         downloadCancelled = false
         Task {
             do {
-                let url = try await manager.downloadAudio(videoID: entry.id)
+                // Run AI metadata extraction concurrently with the audio download.
+                // Inference on a short title finishes long before the download completes.
+                async let audioURL = manager.downloadAudio(videoID: entry.id)
+                async let metadata = extractSermonMetadata(from: entry.title)
+
+                let url     = try await audioURL
+                let details = await metadata
+                let date    = parseYouTubeUploadDate(entry.uploadDate)
+
                 downloadingVideoID = nil
                 downloadCancelled = false
-                onLoaded(url)
+                onLoaded(url, details, date)
             } catch {
                 downloadingVideoID = nil
                 if !downloadCancelled {
@@ -60,7 +69,16 @@ class YouTubeViewModel: ObservableObject {
     }
 }
 
-// MARK: - Date formatting helper
+// MARK: - Date helpers
+
+/// Parses a yt-dlp upload date string like "20240317" into a Date, or nil if unparseable.
+func parseYouTubeUploadDate(_ raw: String) -> Date? {
+    guard raw.count == 8 else { return nil }
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyyMMdd"
+    formatter.timeZone = TimeZone(identifier: "UTC")
+    return formatter.date(from: raw)
+}
 
 func formatYouTubeDate(_ raw: String) -> String {
     // raw is "20240317"

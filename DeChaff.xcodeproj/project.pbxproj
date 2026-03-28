@@ -22,6 +22,7 @@
 		DC00000000000000000000EE /* YouTubeViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC00000000000000000000ED /* YouTubeViewModel.swift */; };
 		DC00000000000000000000F0 /* YouTubeSectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC00000000000000000000EF /* YouTubeSectionView.swift */; };
 		DC00000000000000000000F2 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC00000000000000000000F1 /* SettingsView.swift */; };
+		DC00000000000000000000F4 /* SermonMetadataExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC00000000000000000000F3 /* SermonMetadataExtractor.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -41,6 +42,7 @@
 		DC00000000000000000000ED /* YouTubeViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouTubeViewModel.swift; sourceTree = "<group>"; };
 		DC00000000000000000000EF /* YouTubeSectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouTubeSectionView.swift; sourceTree = "<group>"; };
 		DC00000000000000000000F1 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		DC00000000000000000000F3 /* SermonMetadataExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SermonMetadataExtractor.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -85,6 +87,7 @@
 				DC00000000000000000000ED /* YouTubeViewModel.swift */,
 				DC00000000000000000000EF /* YouTubeSectionView.swift */,
 				DC00000000000000000000F1 /* SettingsView.swift */,
+				DC00000000000000000000F3 /* SermonMetadataExtractor.swift */,
 				AA00000000000000000000C3 /* lame */,
 				AA00000000000000000000C6 /* Wheat.png */,
 				5069CC302F64007A00F65B34 /* DeChaff.icon */,
@@ -198,6 +201,7 @@
 				DC00000000000000000000EE /* YouTubeViewModel.swift in Sources */,
 				DC00000000000000000000F0 /* YouTubeSectionView.swift in Sources */,
 				DC00000000000000000000F2 /* SettingsView.swift in Sources */,
+				DC00000000000000000000F4 /* SermonMetadataExtractor.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

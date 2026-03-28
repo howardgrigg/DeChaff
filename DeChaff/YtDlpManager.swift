@@ -127,6 +127,10 @@ class YtDlpManager: ObservableObject {
             "--no-warnings",
             channelURL
         ]
+        // PYTHONUNBUFFERED=1 prevents Python's block-buffering on pipes.
+        // Without it, output only arrives in ~8 KB chunks instead of line-by-line.
+        process.environment = ProcessInfo.processInfo.environment
+            .merging(["PYTHONUNBUFFERED": "1"]) { _, new in new }
         let outPipe = Pipe()
         let errPipe = Pipe()
         process.standardOutput = outPipe
@@ -303,30 +307,13 @@ class YtDlpManager: ObservableObject {
 
     private func downloadBundle(from url: URL, version: String) async throws {
         try FileManager.default.createDirectory(at: Self.supportDir, withIntermediateDirectories: true)
-        let (asyncBytes, response) = try await URLSession.shared.bytes(from: url)
-        let totalBytes = (response as? HTTPURLResponse)?
-            .value(forHTTPHeaderField: "Content-Length").flatMap { Int($0) } ?? 0
 
-        let zipURL = Self.supportDir.appendingPathComponent("yt-dlp.zip.download")
-        FileManager.default.createFile(atPath: zipURL.path, contents: nil)
-        let handle = try FileHandle(forWritingTo: zipURL)
-        defer { try? handle.close() }
-
-        var received = 0
-        var buffer = Data(capacity: 256 * 1024)
-        for try await byte in asyncBytes {
-            buffer.append(byte)
-            received += 1
-            if buffer.count >= 256 * 1024 {
-                handle.write(buffer)
-                buffer.removeAll(keepingCapacity: true)
-                if totalBytes > 0 {
-                    installStatus = .downloading(progress: Double(received) / Double(totalBytes))
-                }
+        let tempZip = try await downloadFile(from: url) { [weak self] progress in
+            Task { @MainActor [weak self] in
+                self?.installStatus = .downloading(progress: progress)
             }
         }
-        if !buffer.isEmpty { handle.write(buffer) }
-        try? handle.close()
+        defer { try? FileManager.default.removeItem(at: tempZip) }
 
         // Extract zip into a temp subdirectory then move binaries into place
         let extractDir = Self.supportDir.appendingPathComponent("yt-dlp.unzip")
@@ -335,12 +322,11 @@ class YtDlpManager: ObservableObject {
 
         let unzip = Process()
         unzip.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
-        unzip.arguments = ["-o", zipURL.path, "-d", extractDir.path]
+        unzip.arguments = ["-o", tempZip.path, "-d", extractDir.path]
         unzip.standardOutput = Pipe()
         unzip.standardError = Pipe()
         try unzip.run()
         unzip.waitUntilExit()
-        try? FileManager.default.removeItem(at: zipURL)
 
         // Move ALL extracted contents into supportDir, replacing anything already there.
         // This preserves _Internal/ (required by PyInstaller onedir bundles) alongside the binary.
@@ -372,36 +358,18 @@ class YtDlpManager: ObservableObject {
 
     private func downloadBinary(from url: URL, version: String) async throws {
         try FileManager.default.createDirectory(at: Self.supportDir, withIntermediateDirectories: true)
-        let (asyncBytes, response) = try await URLSession.shared.bytes(from: url)
-        let totalBytes = (response as? HTTPURLResponse)?
-            .value(forHTTPHeaderField: "Content-Length").flatMap { Int($0) } ?? 0
 
-        let tempURL = Self.supportDir.appendingPathComponent("yt-dlp.download")
-        FileManager.default.createFile(atPath: tempURL.path, contents: nil)
-        let handle = try FileHandle(forWritingTo: tempURL)
-        defer { try? handle.close() }
-
-        var received = 0
-        var buffer = Data(capacity: 256 * 1024)
-        for try await byte in asyncBytes {
-            buffer.append(byte)
-            received += 1
-            if buffer.count >= 256 * 1024 {
-                handle.write(buffer)
-                buffer.removeAll(keepingCapacity: true)
-                if totalBytes > 0 {
-                    let p = Double(received) / Double(totalBytes)
-                    installStatus = .downloading(progress: p)
-                }
+        let tempFile = try await downloadFile(from: url) { [weak self] progress in
+            Task { @MainActor [weak self] in
+                self?.installStatus = .downloading(progress: progress)
             }
         }
-        if !buffer.isEmpty { handle.write(buffer) }
 
         let finalURL = Self.binaryPath
         if FileManager.default.fileExists(atPath: finalURL.path) {
             try FileManager.default.removeItem(at: finalURL)
         }
-        try FileManager.default.moveItem(at: tempURL, to: finalURL)
+        try FileManager.default.moveItem(at: tempFile, to: finalURL)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: finalURL.path)
         UserDefaults.standard.set(version, forKey: "dechaff.ytdlp.version")
         installStatus = .installed(version: version)
@@ -429,30 +397,12 @@ class YtDlpManager: ObservableObject {
 
         installStatus = .downloading(progress: 0)
 
-        let (asyncBytes, response) = try await URLSession.shared.bytes(from: asset.browser_download_url)
-        let totalBytes = (response as? HTTPURLResponse)?
-            .value(forHTTPHeaderField: "Content-Length").flatMap { Int($0) } ?? 0
-
-        let zipURL = Self.supportDir.appendingPathComponent("ffmpeg.zip.download")
-        FileManager.default.createFile(atPath: zipURL.path, contents: nil)
-        let handle = try FileHandle(forWritingTo: zipURL)
-        defer { try? handle.close() }
-
-        var received = 0
-        var buffer = Data(capacity: 256 * 1024)
-        for try await byte in asyncBytes {
-            buffer.append(byte)
-            received += 1
-            if buffer.count >= 256 * 1024 {
-                handle.write(buffer)
-                buffer.removeAll(keepingCapacity: true)
-                if totalBytes > 0 {
-                    installStatus = .downloading(progress: Double(received) / Double(totalBytes))
-                }
+        let tempZip = try await downloadFile(from: asset.browser_download_url) { [weak self] progress in
+            Task { @MainActor [weak self] in
+                self?.installStatus = .downloading(progress: progress)
             }
         }
-        if !buffer.isEmpty { handle.write(buffer) }
-        try? handle.close()
+        defer { try? FileManager.default.removeItem(at: tempZip) }
 
         let extractDir = Self.supportDir.appendingPathComponent("ffmpeg.unzip")
         try? FileManager.default.removeItem(at: extractDir)
@@ -460,12 +410,11 @@ class YtDlpManager: ObservableObject {
 
         let unzip = Process()
         unzip.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
-        unzip.arguments = ["-o", zipURL.path, "-d", extractDir.path]
+        unzip.arguments = ["-o", tempZip.path, "-d", extractDir.path]
         unzip.standardOutput = Pipe()
         unzip.standardError = Pipe()
         try unzip.run()
         unzip.waitUntilExit()
-        try? FileManager.default.removeItem(at: zipURL)
 
         // The zip contains a top-level folder; search recursively for the ffmpeg binary.
         let executableNames: Set<String> = ["ffmpeg", "ffprobe"]
@@ -483,6 +432,66 @@ class YtDlpManager: ObservableObject {
         try? FileManager.default.removeItem(at: extractDir)
     }
 
+    /// Downloads a file at full speed using URLSessionDownloadTask, reporting fractional progress.
+    /// Returns the URL of a temporary file that the caller is responsible for deleting.
+    private nonisolated func downloadFile(
+        from url: URL,
+        progressHandler: @escaping (Double) -> Void
+    ) async throws -> URL {
+        try await withCheckedThrowingContinuation { continuation in
+            let delegate = FileDownloadDelegate(progressHandler: progressHandler) { result in
+                continuation.resume(with: result)
+            }
+            let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+            session.downloadTask(with: url).resume()
+            delegate.session = session   // retain session until download completes
+        }
+    }
+
+}
+
+// MARK: - FileDownloadDelegate
+
+private final class FileDownloadDelegate: NSObject, URLSessionDownloadDelegate {
+    private let progressHandler: (Double) -> Void
+    private let completion: (Result<URL, Error>) -> Void
+    private var finished = false
+    var session: URLSession?
+
+    init(progressHandler: @escaping (Double) -> Void,
+         completion: @escaping (Result<URL, Error>) -> Void) {
+        self.progressHandler = progressHandler
+        self.completion = completion
+    }
+
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
+                    didFinishDownloadingTo location: URL) {
+        guard !finished else { return }
+        finished = true
+        let dest = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dechaff-dl-\(UUID().uuidString)")
+        do {
+            try FileManager.default.moveItem(at: location, to: dest)
+            completion(.success(dest))
+        } catch {
+            completion(.failure(error))
+        }
+        self.session = nil
+    }
+
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
+                    didWriteData _: Int64, totalBytesWritten: Int64,
+                    totalBytesExpectedToWrite: Int64) {
+        guard totalBytesExpectedToWrite > 0 else { return }
+        progressHandler(Double(totalBytesWritten) / Double(totalBytesExpectedToWrite))
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        guard let error, !finished else { return }
+        finished = true
+        completion(.failure(error))
+        self.session = nil
+    }
 }
 
 // MARK: - Errors
