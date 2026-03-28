@@ -84,7 +84,7 @@ class YtDlpManager: ObservableObject {
             // Download yt-dlp if needed
             let release = try await fetchLatestRelease()
             let storedVersion = UserDefaults.standard.string(forKey: "dechaff.ytdlp.version") ?? ""
-            if release.tag_name == storedVersion, let bin = binaryURL, isBinaryWorking(bin) {
+            if release.tag_name == storedVersion, let bin = binaryURL, await isBinaryWorking(bin) {
                 installStatus = .installed(version: release.tag_name)
             } else {
                 // Stored version doesn't match, binary missing, or binary is broken — re-download
@@ -156,7 +156,7 @@ class YtDlpManager: ObservableObject {
                 if entries.count >= limit { break }  // enforce limit in case --playlist-end is unreliable
             }
         }
-        process.waitUntilExit()
+        await awaitTermination(of: process)
         if process.terminationStatus != 0 && entries.isEmpty {
             let errText = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
             throw YtDlpError.processFailed(errText.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -167,6 +167,10 @@ class YtDlpManager: ObservableObject {
     // MARK: - Download audio
 
     func downloadAudio(videoID: String) async throws -> URL {
+        try await downloadAudio(url: "https://youtu.be/\(videoID)")
+    }
+
+    func downloadAudio(url videoURL: String) async throws -> URL {
         guard let bin = binaryURL else { throw YtDlpError.notInstalled }
         let uuid = UUID().uuidString
         let tempDir = URL(fileURLWithPath: NSTemporaryDirectory())
@@ -195,7 +199,7 @@ class YtDlpManager: ObservableObject {
         if let ffmpeg = ffmpegURL {
             args += ["--ffmpeg-location", ffmpeg.path]
         }
-        args.append("https://youtu.be/\(videoID)")
+        args.append(videoURL)
         process.arguments = args
         try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.path)
 
@@ -236,7 +240,7 @@ class YtDlpManager: ObservableObject {
             }
         }
         downloadProgress = nil
-        process.waitUntilExit()
+        await awaitTermination(of: process)
         activeDownloadProcess = nil
 
         guard process.terminationStatus == 0 else {
@@ -266,7 +270,7 @@ class YtDlpManager: ObservableObject {
     // MARK: - Private helpers
 
     /// Runs `yt-dlp --version` and returns true if it exits 0.
-    private func isBinaryWorking(_ bin: URL) -> Bool {
+    private func isBinaryWorking(_ bin: URL) async -> Bool {
         let p = Process()
         p.executableURL = bin
         p.arguments = ["--version"]
@@ -274,8 +278,21 @@ class YtDlpManager: ObservableObject {
         p.standardError = Pipe()
         try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.path)
         guard (try? p.run()) != nil else { return false }
-        p.waitUntilExit()
+        await awaitTermination(of: p)
         return p.terminationStatus == 0
+    }
+
+    /// Waits for a Process to exit without blocking the current thread.
+    private nonisolated func awaitTermination(of process: Process) async {
+        await withCheckedContinuation { continuation in
+            if !process.isRunning {
+                continuation.resume()
+                return
+            }
+            process.terminationHandler = { _ in
+                continuation.resume()
+            }
+        }
     }
 
     /// Strips ANSI escape sequences (e.g. \u{1B}[K) produced by PTY output.
@@ -476,6 +493,7 @@ private final class FileDownloadDelegate: NSObject, URLSessionDownloadDelegate {
         } catch {
             completion(.failure(error))
         }
+        self.session?.finishTasksAndInvalidate()
         self.session = nil
     }
 
@@ -490,6 +508,7 @@ private final class FileDownloadDelegate: NSObject, URLSessionDownloadDelegate {
         guard let error, !finished else { return }
         finished = true
         completion(.failure(error))
+        self.session?.invalidateAndCancel()
         self.session = nil
     }
 }

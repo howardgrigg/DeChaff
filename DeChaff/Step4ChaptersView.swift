@@ -77,7 +77,7 @@ extension ContentView {
         switch idx {
         case 0: outputTime = 0
         case 1: outputTime = 120
-        default: outputTime = max(0, model.playheadSeconds - model.trimInSeconds)
+        default: outputTime = max(0, model.playback.playheadSeconds - model.trimInSeconds)
         }
         let title: String
         switch idx {
@@ -92,10 +92,16 @@ extension ContentView {
     }
 
     func chapterBinding(for chapter: Chapter) -> Binding<Chapter> {
-        guard let idx = model.chapters.firstIndex(where: { $0.id == chapter.id }) else {
-            fatalError("Chapter not found in model")
-        }
-        return $model.chapters[idx]
+        Binding(
+            get: {
+                model.chapters.first(where: { $0.id == chapter.id }) ?? chapter
+            },
+            set: { newValue in
+                if let idx = model.chapters.firstIndex(where: { $0.id == chapter.id }) {
+                    model.chapters[idx] = newValue
+                }
+            }
+        )
     }
 }
 

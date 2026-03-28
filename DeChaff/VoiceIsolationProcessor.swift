@@ -335,10 +335,15 @@ class VoiceIsolationProcessor {
 
         do {
             try process.run()
-            process.waitUntilExit()
         } catch {
             logHandler("❌ LAME failed to launch: \(error.localizedDescription)"); return false
         }
+
+        // Drain the pipe before waitUntilExit to prevent deadlock:
+        // if LAME writes enough to fill the pipe buffer (~64 KB), it blocks
+        // waiting for the reader, but waitUntilExit blocks waiting for LAME.
+        let pipeData = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
 
         if process.terminationStatus == 0 {
             // Get output file size for logging
@@ -347,7 +352,7 @@ class VoiceIsolationProcessor {
             progressHandler(1.0)
             return true
         } else {
-            let errOutput = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            let errOutput = String(data: pipeData, encoding: .utf8) ?? ""
             logHandler("❌ LAME error: \(errOutput.trimmingCharacters(in: .whitespacesAndNewlines))")
             return false
         }
@@ -528,21 +533,24 @@ class VoiceIsolationProcessor {
         }
     }
 
-    private func renderAU(_ au: AudioUnit, from input: AVAudioPCMBuffer,
-                           into output: AVAudioPCMBuffer, sampleTime: Float64) -> Bool {
-        let cb: AURenderCallback = { inRefCon, _, _, _, _, ioData in
-            guard let ioData else { return -1 }
-            let src = inRefCon.assumingMemoryBound(to: AudioBufferList.self)
-            return withUnsafePointer(to: &src.pointee.mBuffers) { srcPtr in
-                let s = UnsafeBufferPointer<AudioBuffer>(start: srcPtr, count: Int(src.pointee.mNumberBuffers))
-                return withUnsafeMutablePointer(to: &ioData.pointee.mBuffers) { dstPtr in
-                    let d = UnsafeMutableBufferPointer<AudioBuffer>(start: dstPtr, count: Int(ioData.pointee.mNumberBuffers))
-                    for i in 0..<min(s.count, d.count) { d[i].mData = s[i].mData; d[i].mDataByteSize = s[i].mDataByteSize }
-                    return noErr
-                }
+    /// Static render callback — avoids a closure allocation per chunk.
+    /// The refcon is updated via AudioUnitSetProperty before each render call.
+    private static let auRenderCallback: AURenderCallback = { inRefCon, _, _, _, _, ioData in
+        guard let ioData else { return -1 }
+        let src = inRefCon.assumingMemoryBound(to: AudioBufferList.self)
+        return withUnsafePointer(to: &src.pointee.mBuffers) { srcPtr in
+            let s = UnsafeBufferPointer<AudioBuffer>(start: srcPtr, count: Int(src.pointee.mNumberBuffers))
+            return withUnsafeMutablePointer(to: &ioData.pointee.mBuffers) { dstPtr in
+                let d = UnsafeMutableBufferPointer<AudioBuffer>(start: dstPtr, count: Int(ioData.pointee.mNumberBuffers))
+                for i in 0..<min(s.count, d.count) { d[i].mData = s[i].mData; d[i].mDataByteSize = s[i].mDataByteSize }
+                return noErr
             }
         }
-        var cbs = AURenderCallbackStruct(inputProc: cb,
+    }
+
+    private func renderAU(_ au: AudioUnit, from input: AVAudioPCMBuffer,
+                           into output: AVAudioPCMBuffer, sampleTime: Float64) -> Bool {
+        var cbs = AURenderCallbackStruct(inputProc: Self.auRenderCallback,
                                          inputProcRefCon: UnsafeMutableRawPointer(mutating: input.audioBufferList))
         guard AudioUnitSetProperty(au, kAudioUnitProperty_SetRenderCallback,
                                    kAudioUnitScope_Input, 0, &cbs,
@@ -583,7 +591,17 @@ class VoiceIsolationProcessor {
 
             let chunkSize: AVAudioFrameCount = 4096
             guard let buf = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: chunkSize) else { return nil }
-            var kw = Array(repeating: [Float](), count: nch)
+
+            let blockSize = max(1, Int(sr * 0.4))
+            let hopSize   = max(1, Int(sr * 0.1))
+
+            // Streaming buffer: holds only enough K-weighted samples to form overlapping
+            // 400ms blocks. Peak size is bounded to ~blockSize + chunkSize per channel
+            // (~93 KB for stereo 48 kHz) instead of the entire file (~2 GB for 90 min).
+            var kwBuf = Array(repeating: [Float](), count: nch)
+            var kwOffset = 0
+            var blocks = [Double]()
+
             let inFrame  = AVAudioFramePosition(options.trimInSeconds * sr)
             let outFrame = min(options.trimOutSeconds > 0
                 ? AVAudioFramePosition(options.trimOutSeconds * sr)
@@ -600,32 +618,36 @@ class VoiceIsolationProcessor {
                 for ch in 0..<nch {
                     guard let data = buf.floatChannelData?[ch] else { continue }
                     let samples = Array(UnsafeBufferPointer(start: data, count: Int(buf.frameLength)))
-                    kw[ch].append(contentsOf: filters[ch].apply(input: samples))
-
+                    kwBuf[ch].append(contentsOf: filters[ch].apply(input: samples))
                 }
                 readFrames += buf.frameLength
+
+                // Compute loudness blocks as soon as enough samples are available
+                while kwBuf[0].count - kwOffset >= blockSize {
+                    var sumMS = 0.0
+                    for ch in 0..<nch {
+                        var ms: Float = 0
+                        kwBuf[ch].withUnsafeBufferPointer { ptr in
+                            vDSP_measqv(ptr.baseAddress! + kwOffset, 1, &ms, vDSP_Length(blockSize))
+                        }
+                        sumMS += Double(ms)
+                    }
+                    blocks.append(-0.691 + 10.0 * log10(max(sumMS, 1e-10)))
+                    kwOffset += hopSize
+                }
+
+                // Trim consumed samples to keep memory bounded
+                if kwOffset > blockSize {
+                    for ch in 0..<nch {
+                        kwBuf[ch].removeSubrange(0..<kwOffset)
+                    }
+                    kwOffset = 0
+                }
+
                 progressHandler(progressStart + (progressEnd - progressStart) * 0.7 * Double(readFrames) / Double(trimLength))
             }
 
-            let total = kw[0].count
-            let blockSize = max(1, Int(sr * 0.4))
-            let hopSize   = max(1, Int(sr * 0.1))
-            var blocks = [Double]()
-            var pos = 0
-            while pos + blockSize <= total {
-                var sumMS = 0.0
-                for ch in 0..<nch {
-                    var ms: Float = 0
-                    kw[ch].withUnsafeBufferPointer { ptr in
-                        vDSP_measqv(ptr.baseAddress! + pos, 1, &ms, vDSP_Length(blockSize))
-                    }
-                    sumMS += Double(ms)
-                }
-                blocks.append(-0.691 + 10.0 * log10(max(sumMS, 1e-10)))
-                pos += hopSize
-            }
-
-            guard !blocks.isEmpty else { logHandler("⚠️ EBU R128: no blocks — \(total) samples read (file too short?)"); return nil }
+            guard !blocks.isEmpty else { logHandler("⚠️ EBU R128: no blocks — \(readFrames) samples read (file too short?)"); return nil }
             progressHandler(progressStart + (progressEnd - progressStart) * 0.9)
 
             // Absolute gate −70 LUFS
@@ -924,10 +946,13 @@ class VoiceIsolationProcessor {
     // MARK: - Helpers
 
     private func convertToMono(src: AVAudioPCMBuffer, dst: AVAudioPCMBuffer) {
-        let n = Int(src.frameLength)
+        let n = vDSP_Length(src.frameLength)
         guard Int(src.format.channelCount) > 1,
               let s = src.floatChannelData, let d = dst.floatChannelData else { return }
-        memcpy(d[0], s[min(1, Int(src.format.channelCount) - 1)], n * MemoryLayout<Float>.size)
+        // Average L+R instead of discarding a channel
+        vDSP_vadd(s[0], 1, s[1], 1, d[0], 1, n)
+        var divisor: Float = 2.0
+        vDSP_vsdiv(d[0], 1, &divisor, d[0], 1, n)
         dst.frameLength = src.frameLength
     }
 

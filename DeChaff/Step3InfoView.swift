@@ -33,7 +33,7 @@ extension ContentView {
 
     var artworkDropZone: some View {
         ZStack {
-            if let data = model.tagArtwork, let nsImg = NSImage(data: data) {
+            if model.tagArtwork != nil, let nsImg = model.cachedArtworkImage {
                 Image(nsImage: nsImg)
                     .resizable().aspectRatio(contentMode: .fill)
                     .clipShape(RoundedRectangle(cornerRadius: 12))

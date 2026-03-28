@@ -10,7 +10,7 @@ extension ContentView {
             .trimmingCharacters(in: .init(charactersIn: "/"))
             .replacingOccurrences(of: "/videos", with: "")
             .replacingOccurrences(of: "/streams", with: "")
-        let suffix = ytTab == 1 ? "/streams" : "/videos"
+        let suffix = ytTab == 2 ? "/streams" : "/videos"
         return base + suffix
     }
 
@@ -22,17 +22,18 @@ extension ContentView {
                     .font(.headline)
                 Spacer()
                 Picker("", selection: $ytTab) {
-                    Text("Videos").tag(0)
-                    Text("Live Streams").tag(1)
+                    Text("YouTube URL").tag(0)
+                    Text("Videos").tag(1)
+                    Text("Live Streams").tag(2)
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 180)
+                .frame(width: 280)
                 .controlSize(.small)
                 .opacity(0.7)
                 .onChange(of: ytTab) { _ in
                     youtube.videos = []
                     youtube.listError = nil
-                    if !ytChannelURL.isEmpty && ytManager.binaryURL != nil {
+                    if ytTab != 0 && !ytChannelURL.isEmpty && ytManager.binaryURL != nil {
                         youtube.refresh(manager: ytManager, channelURL: tabbedChannelURL, limit: ytVideoLimit)
                     }
                 }
@@ -47,56 +48,89 @@ extension ContentView {
                         Image(systemName: "arrow.clockwise")
                     }
                     .buttonStyle(.borderless)
-                    .disabled(ytChannelURL.isEmpty || ytManager.binaryURL == nil || youtube.isFetchingList)
+                    .disabled(ytTab == 0 || ytChannelURL.isEmpty || ytManager.binaryURL == nil || youtube.isFetchingList)
                     .help("Refresh video list")
                     .opacity(youtube.isFetchingList ? 0 : 1)
                 }
                 .frame(width: 20, height: 20)
+                .opacity(ytTab == 0 ? 0 : 1)
             }
 
             // Body
             VStack(spacing: 0) {
-                if ytManager.binaryURL == nil {
-                    emptyState(
-                        icon: "arrow.down.circle",
-                        text: "yt-dlp not installed",
-                        detail: "Open Settings and tap \"Check for Updates\" to install."
-                    )
-                } else if ytChannelURL.isEmpty {
-                    emptyState(
-                        icon: "gear",
-                        text: "No channel configured",
-                        detail: "Open Settings and enter a YouTube channel URL or handle."
-                    )
-                } else if let err = youtube.listError {
-                    errorBanner(err) { youtube.listError = nil }
-                } else if youtube.isFetchingList && youtube.videos.isEmpty {
-                    HStack {
-                        Spacer()
-                        VStack(spacing: 8) {
-                            ProgressView()
-                            Text("Loading videos…").font(.caption).foregroundStyle(.secondary)
-                        }
-                        .padding(.vertical, 24)
-                        Spacer()
-                    }
-                    .background(Color(NSColor.controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
-                } else if youtube.videos.isEmpty {
-                    emptyState(
-                        icon: "list.bullet",
-                        text: "No videos loaded",
-                        detail: "Tap the refresh button to fetch recent videos."
-                    )
-                } else {
-                    VStack(spacing: 0) {
-                        ForEach(youtube.videos) { entry in
-                            videoRow(entry)
-                            if entry.id != youtube.videos.last?.id {
-                                Divider().padding(.leading, 60)
+                if ytTab == 0 {
+                    // Direct YouTube URL input
+                    VStack(spacing: 12) {
+                        HStack(spacing: 8) {
+                            TextField("Paste any YouTube URL…", text: $ytDirectURL)
+                                .textFieldStyle(.roundedBorder)
+                                .controlSize(.small)
+                                .onSubmit { downloadDirectURL() }
+                            if youtube.downloadingVideoID == "direct-url" {
+                                ProgressView().scaleEffect(0.65).frame(width: 20, height: 20)
+                            } else {
+                                Button {
+                                    downloadDirectURL()
+                                } label: {
+                                    Image(systemName: "arrow.down.circle.fill")
+                                }
+                                .buttonStyle(.borderless)
+                                .disabled(ytDirectURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                          || youtube.downloadingVideoID != nil
+                                          || ytManager.binaryURL == nil)
                             }
                         }
+                        if ytManager.binaryURL == nil {
+                            emptyState(
+                                icon: "arrow.down.circle",
+                                text: "yt-dlp not installed",
+                                detail: "Open Settings and tap \"Check for Updates\" to install."
+                            )
+                        }
                     }
-                    .background(Color(NSColor.controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+                } else {
+                    if ytManager.binaryURL == nil {
+                        emptyState(
+                            icon: "arrow.down.circle",
+                            text: "yt-dlp not installed",
+                            detail: "Open Settings and tap \"Check for Updates\" to install."
+                        )
+                    } else if ytChannelURL.isEmpty {
+                        emptyState(
+                            icon: "gear",
+                            text: "No channel configured",
+                            detail: "Open Settings and enter a YouTube channel URL or handle."
+                        )
+                    } else if let err = youtube.listError {
+                        errorBanner(err) { youtube.listError = nil }
+                    } else if youtube.isFetchingList && youtube.videos.isEmpty {
+                        HStack {
+                            Spacer()
+                            VStack(spacing: 8) {
+                                ProgressView()
+                                Text("Loading videos…").font(.caption).foregroundStyle(.secondary)
+                            }
+                            .padding(.vertical, 24)
+                            Spacer()
+                        }
+                        .background(Color(NSColor.controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+                    } else if youtube.videos.isEmpty {
+                        emptyState(
+                            icon: "list.bullet",
+                            text: "No videos loaded",
+                            detail: "Tap the refresh button to fetch recent videos."
+                        )
+                    } else {
+                        VStack(spacing: 0) {
+                            ForEach(youtube.videos) { entry in
+                                videoRow(entry)
+                                if entry.id != youtube.videos.last?.id {
+                                    Divider().padding(.leading, 60)
+                                }
+                            }
+                        }
+                        .background(Color(NSColor.controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+                    }
                 }
             }
 
@@ -106,7 +140,7 @@ extension ContentView {
             }
         }
         .onAppear {
-            if youtube.videos.isEmpty && !ytChannelURL.isEmpty && ytManager.binaryURL != nil {
+            if ytTab != 0 && youtube.videos.isEmpty && !ytChannelURL.isEmpty && ytManager.binaryURL != nil {
                 youtube.refresh(manager: ytManager, channelURL: tabbedChannelURL, limit: ytVideoLimit)
             }
         }
@@ -202,6 +236,16 @@ extension ContentView {
             }
         }
         .opacity(anyDownloading && !isDownloading ? 0.5 : 1)
+    }
+
+    // MARK: - Direct URL download
+
+    private func downloadDirectURL() {
+        youtube.selectURL(ytDirectURL, manager: ytManager) { url in
+            model.loadFile(url: url)
+            ytDirectURL = ""
+            withAnimation(.easeInOut(duration: 0.2)) { currentStep = 1 }
+        }
     }
 
     // MARK: - Helpers

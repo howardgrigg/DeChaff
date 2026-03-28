@@ -61,6 +61,30 @@ class YouTubeViewModel: ObservableObject {
         }
     }
 
+    /// Downloads audio from an arbitrary YouTube URL (not from the channel list).
+    func selectURL(_ rawURL: String, manager: YtDlpManager,
+                   onLoaded: @escaping (URL) -> Void) {
+        let trimmed = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, downloadingVideoID == nil else { return }
+        downloadingVideoID = "direct-url"
+        downloadError = nil
+        downloadCancelled = false
+        Task {
+            do {
+                let url = try await manager.downloadAudio(url: trimmed)
+                downloadingVideoID = nil
+                downloadCancelled = false
+                onLoaded(url)
+            } catch {
+                downloadingVideoID = nil
+                if !downloadCancelled {
+                    downloadError = error.localizedDescription
+                }
+                downloadCancelled = false
+            }
+        }
+    }
+
     func cancel(manager: YtDlpManager) {
         downloadCancelled = true
         manager.cancelDownload()
