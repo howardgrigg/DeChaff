@@ -24,6 +24,12 @@
 		DC00000000000000000000F2 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC00000000000000000000F1 /* SettingsView.swift */; };
 		DC00000000000000000000F4 /* SermonMetadataExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC00000000000000000000F3 /* SermonMetadataExtractor.swift */; };
 		DC00000000000000000000F6 /* WaveformTileCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC00000000000000000000F5 /* WaveformTileCache.swift */; };
+		DC0000000000000000000101 /* AudioProcessingModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000100 /* AudioProcessingModels.swift */; };
+		DC0000000000000000000103 /* AudioUnitPass.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000102 /* AudioUnitPass.swift */; };
+		DC0000000000000000000105 /* LoudnessProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000104 /* LoudnessProcessor.swift */; };
+		DC0000000000000000000107 /* SilenceProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000106 /* SilenceProcessor.swift */; };
+		DC0000000000000000000109 /* MP3Encoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000108 /* MP3Encoder.swift */; };
+		DC000000000000000000010B /* ID3Tagger.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC000000000000000000010A /* ID3Tagger.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -45,6 +51,12 @@
 		DC00000000000000000000F1 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		DC00000000000000000000F3 /* SermonMetadataExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SermonMetadataExtractor.swift; sourceTree = "<group>"; };
 		DC00000000000000000000F5 /* WaveformTileCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaveformTileCache.swift; sourceTree = "<group>"; };
+		DC0000000000000000000100 /* AudioProcessingModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioProcessingModels.swift; sourceTree = "<group>"; };
+		DC0000000000000000000102 /* AudioUnitPass.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioUnitPass.swift; sourceTree = "<group>"; };
+		DC0000000000000000000104 /* LoudnessProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoudnessProcessor.swift; sourceTree = "<group>"; };
+		DC0000000000000000000106 /* SilenceProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SilenceProcessor.swift; sourceTree = "<group>"; };
+		DC0000000000000000000108 /* MP3Encoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MP3Encoder.swift; sourceTree = "<group>"; };
+		DC000000000000000000010A /* ID3Tagger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ID3Tagger.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -74,12 +86,26 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		DC000000000000000000010C /* AudioProcessing */ = {
+			isa = PBXGroup;
+			children = (
+				DC0000000000000000000100 /* AudioProcessingModels.swift */,
+				DC0000000000000000000102 /* AudioUnitPass.swift */,
+				DC0000000000000000000104 /* LoudnessProcessor.swift */,
+				DC0000000000000000000106 /* SilenceProcessor.swift */,
+				DC0000000000000000000108 /* MP3Encoder.swift */,
+				DC000000000000000000010A /* ID3Tagger.swift */,
+			);
+			path = AudioProcessing;
+			sourceTree = "<group>";
+		};
 		AA00000000000000000000B5 /* DeChaff */ = {
 			isa = PBXGroup;
 			children = (
 				AA00000000000000000000AF /* DeChaffApp.swift */,
 				AA00000000000000000000B0 /* ContentView.swift */,
 				AA00000000000000000000B1 /* VoiceIsolationProcessor.swift */,
+				DC000000000000000000010C /* AudioProcessing */,
 				DC00000000000000000000E1 /* Step1LoadView.swift */,
 				DC00000000000000000000E3 /* Step2TrimView.swift */,
 				DC00000000000000000000E5 /* Step3InfoView.swift */,
@@ -206,6 +232,12 @@
 				DC00000000000000000000F2 /* SettingsView.swift in Sources */,
 				DC00000000000000000000F4 /* SermonMetadataExtractor.swift in Sources */,
 				DC00000000000000000000F6 /* WaveformTileCache.swift in Sources */,
+				DC0000000000000000000101 /* AudioProcessingModels.swift in Sources */,
+				DC0000000000000000000103 /* AudioUnitPass.swift in Sources */,
+				DC0000000000000000000105 /* LoudnessProcessor.swift in Sources */,
+				DC0000000000000000000107 /* SilenceProcessor.swift in Sources */,
+				DC0000000000000000000109 /* MP3Encoder.swift in Sources */,
+				DC000000000000000000010B /* ID3Tagger.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
