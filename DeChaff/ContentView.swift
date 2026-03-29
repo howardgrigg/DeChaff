@@ -34,6 +34,14 @@ class ProcessingModel: ObservableObject {
     @Published var transcriptError: String? = nil
     private var transcriptionTask: Task<Void, Never>?
 
+    // AI Assistant state
+    @AppStorage("dechaff.ai.enabled") var aiAssistantEnabled = false
+    @AppStorage("dechaff.ai.prompt") var aiAssistantPrompt = AIAssistantSettingsView.defaultPrompt
+    @Published var aiAssistantResponse = ""
+    @Published var isAIAssistantLoading = false
+    @Published var aiAssistantError: String? = nil
+    private var aiAssistantTask: Task<Void, Never>?
+
     @Published var tagSermonTitle  = ""
     @Published var tagBibleReading = ""
     @Published var tagPreacher = "" {
@@ -122,6 +130,8 @@ class ProcessingModel: ObservableObject {
         waveformZoom = 1.0; waveformVisibleStart = 0.0
         transcriptionTask?.cancel()
         transcriptText = ""; transcriptError = nil; isTranscribing = false
+        aiAssistantTask?.cancel()
+        aiAssistantResponse = ""; aiAssistantError = nil; isAIAssistantLoading = false
 
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
@@ -236,6 +246,36 @@ class ProcessingModel: ObservableObject {
         waveformVisibleStart = max(0, min(anchor - newVD / 2, inputDuration - newVD))
     }
 
+    func startAIAssistant() {
+        guard aiAssistantEnabled, !transcriptText.isEmpty else { return }
+        guard let keyData = KeychainHelper.load(account: "claude-api-key"),
+              let apiKey = String(data: keyData, encoding: .utf8), !apiKey.isEmpty else {
+            aiAssistantError = ClaudeAPIError.noAPIKey.localizedDescription
+            return
+        }
+        aiAssistantTask?.cancel()
+        aiAssistantResponse = ""; aiAssistantError = nil; isAIAssistantLoading = true
+
+        let systemPrompt = aiAssistantPrompt
+            .replacingOccurrences(of: "{title}", with: tagSermonTitle)
+            .replacingOccurrences(of: "{preacher}", with: tagPreacher)
+            .replacingOccurrences(of: "{series}", with: tagSeries)
+            .replacingOccurrences(of: "{reading}", with: tagBibleReading)
+        let transcript = transcriptText
+
+        aiAssistantTask = Task {
+            do {
+                let response = try await ClaudeAPIClient.sendMessage(
+                    apiKey: apiKey, systemPrompt: systemPrompt, transcript: transcript
+                )
+                self.aiAssistantResponse = response
+            } catch {
+                self.aiAssistantError = error.localizedDescription
+            }
+            self.isAIAssistantLoading = false
+        }
+    }
+
     func startTranscription(trimIn: Double, trimOut: Double) {
         guard let url = inputURL else { return }
         transcriptionTask?.cancel()
@@ -292,7 +332,10 @@ class ProcessingModel: ObservableObject {
                     await MainActor.run { [weak self] in self?.transcriptText = display }
                 }
                 // Results loop finished — clear spinner before awaiting analysis cleanup
-                await MainActor.run { [weak self] in self?.isTranscribing = false }
+                await MainActor.run { [weak self] in
+                    self?.isTranscribing = false
+                    if self?.aiAssistantEnabled == true { self?.startAIAssistant() }
+                }
                 _ = try await analysis
             } catch is CancellationError {
                 // cancelled — leave text as-is
@@ -1033,9 +1076,70 @@ struct ContentView: View {
                         }
                     }
                     .padding(.horizontal, 36)
-                    .padding(.bottom, 28)
+                }
+
+                if model.aiAssistantEnabled {
+                    Divider().padding(.horizontal, 36)
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .center) {
+                            Text("AI Assistant").font(.headline)
+                            Spacer()
+                            if !model.aiAssistantResponse.isEmpty && model.aiAssistantError == nil {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(.green).font(.caption)
+                                    Text("Done").font(.caption).foregroundStyle(.secondary)
+                                }
+                            } else if model.isAIAssistantLoading {
+                                HStack(spacing: 6) {
+                                    ProgressView().scaleEffect(0.65)
+                                    Text("Thinking…").font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            if !model.aiAssistantResponse.isEmpty {
+                                Button {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(model.aiAssistantResponse, forType: .string)
+                                } label: { Label("Copy", systemImage: "doc.on.doc") }
+                                .buttonStyle(.bordered).controlSize(.small)
+                            }
+                            if !model.isAIAssistantLoading {
+                                Button {
+                                    model.startAIAssistant()
+                                } label: { Label("Retry", systemImage: "arrow.clockwise") }
+                                .buttonStyle(.bordered).controlSize(.small)
+                                .disabled(model.transcriptText.isEmpty)
+                            }
+                        }
+                        if let error = model.aiAssistantError {
+                            Text(error).font(.subheadline).foregroundStyle(.red)
+                        } else if model.aiAssistantResponse.isEmpty {
+                            if model.isAIAssistantLoading {
+                                Text("Sending transcript to Claude…")
+                                    .font(.subheadline).foregroundStyle(.secondary)
+                            } else if model.transcriptText.isEmpty {
+                                Text("Waiting for transcript…")
+                                    .font(.subheadline).foregroundStyle(.secondary)
+                            } else {
+                                Text("Click Retry to send transcript to Claude.")
+                                    .font(.subheadline).foregroundStyle(.secondary)
+                            }
+                        } else {
+                            ScrollView {
+                                Text(model.aiAssistantResponse)
+                                    .textSelection(.enabled).font(.subheadline)
+                                    .frame(maxWidth: .infinity, alignment: .leading).padding(12)
+                            }
+                            .frame(maxHeight: 300)
+                            .background(Color(NSColor.textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(Color.secondary.opacity(0.15), lineWidth: 1))
+                        }
+                    }
+                    .padding(.horizontal, 36)
                 }
             }
+            .padding(.bottom, 28)
         }
         .frame(maxWidth: .infinity)
     }
