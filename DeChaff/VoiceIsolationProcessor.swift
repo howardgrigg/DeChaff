@@ -636,11 +636,14 @@ class VoiceIsolationProcessor {
             }
 
             // ── Build gain map ────────────────────────────────────────────────
-            let noiseFloor: Float = Float(pow(10.0, -50.0 / 20.0))   // –50 dBFS
+            // –40 dBFS gate: excludes room noise / breath noise after voice isolation,
+            // which typically sits at –40 to –45 dBFS. Only windows with meaningful
+            // speech content drive the gain map.
+            let noiseFloor: Float = Float(pow(10.0, -40.0 / 20.0))
             let maxLinear  = Float(pow(10.0, Double(maxGainDB) / 20.0))
             let minLinear  = 1.0 / maxLinear
 
-            // Reference: median RMS of windows above the noise floor
+            // Reference: median RMS of voiced windows
             let voiced = windowRMS.filter { $0 > noiseFloor }
             guard !voiced.isEmpty else {
                 logHandler("⚠️ Slow leveler: signal below noise floor, skipping")
@@ -649,9 +652,24 @@ class VoiceIsolationProcessor {
             }
             let reference = voiced.sorted()[voiced.count / 2]
 
-            var gainMap = [Float](repeating: 1.0, count: nWindows)
+            // Compute target gain for voiced windows; leave silent windows as -1 sentinel.
+            var gainMap = [Float](repeating: -1.0, count: nWindows)
             for w in 0..<nWindows where windowRMS[w] > noiseFloor {
                 gainMap[w] = max(minLinear, min(maxLinear, reference / max(windowRMS[w], 1e-10)))
+            }
+
+            // Fill silent windows by holding the nearest voiced gain rather than
+            // snapping back to unity — this prevents the gain envelope from drifting
+            // down through quiet gaps (the "pumping" artefact).
+            // Forward pass: propagate last voiced gain into following silence.
+            var hold: Float = 1.0
+            for i in 0..<nWindows {
+                if gainMap[i] >= 0 { hold = gainMap[i] } else { gainMap[i] = hold }
+            }
+            // Backward pass: fill any leading silence before the first voiced window.
+            hold = 1.0
+            for i in stride(from: nWindows - 1, through: 0, by: -1) {
+                if windowRMS[i] > noiseFloor { hold = gainMap[i] } else if gainMap[i] == 1.0 { gainMap[i] = hold }
             }
 
             // ── Smooth: zero-phase forward + backward EMA (~3 s time constant) ──
