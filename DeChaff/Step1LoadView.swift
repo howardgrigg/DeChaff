@@ -79,6 +79,11 @@ extension ContentView {
             return loadDroppedFile(from: providers, advanceStep: true)
         }
         .opacity(youtube.downloadingVideoID != nil ? 0.4 : 1)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(model.inputURL != nil
+            ? "Audio loaded: \(model.inputURL!.lastPathComponent)"
+            : "Audio file drop zone")
+        .accessibilityHint("Drop an audio file or activate to choose a file")
     }
 
     func fileInfoRow(url: URL) -> some View {

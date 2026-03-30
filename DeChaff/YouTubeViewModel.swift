@@ -46,7 +46,9 @@ class YouTubeViewModel: ObservableObject {
 
                 let url     = try await audioURL
                 let details = await metadata
-                let date    = parseYouTubeUploadDate(entry.uploadDate)
+                // Prefer date extracted from title, fall back to yt-dlp upload_date
+                let date = details.flatMap { parseExtractedDate($0.date) }
+                    ?? parseYouTubeUploadDate(entry.uploadDate)
 
                 downloadingVideoID = nil
                 downloadCancelled = false
@@ -96,12 +98,14 @@ class YouTubeViewModel: ObservableObject {
 // MARK: - Date helpers
 
 /// Parses a yt-dlp upload date string like "20240317" into a Date, or nil if unparseable.
+/// Uses the local calendar at noon so DatePicker shows the correct day regardless of timezone.
 func parseYouTubeUploadDate(_ raw: String) -> Date? {
-    guard raw.count == 8 else { return nil }
-    let formatter = DateFormatter()
-    formatter.dateFormat = "yyyyMMdd"
-    formatter.timeZone = TimeZone(identifier: "UTC")
-    return formatter.date(from: raw)
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.count == 8,
+          let year  = Int(trimmed.prefix(4)),
+          let month = Int(trimmed.dropFirst(4).prefix(2)), (1...12).contains(month),
+          let day   = Int(trimmed.suffix(2)), (1...31).contains(day) else { return nil }
+    return Calendar.current.date(from: DateComponents(year: year, month: month, day: day, hour: 12))
 }
 
 func formatYouTubeDate(_ raw: String) -> String {

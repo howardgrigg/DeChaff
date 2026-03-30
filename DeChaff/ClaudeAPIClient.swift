@@ -27,7 +27,7 @@ enum ClaudeAPIClient {
         request.setValue("application/json", forHTTPHeaderField: "content-type")
 
         let body: [String: Any] = [
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-latest",
             "max_tokens": 4096,
             "system": systemPrompt,
             "messages": [

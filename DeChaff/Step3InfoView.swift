@@ -40,7 +40,11 @@ extension ContentView {
                 VStack {
                     HStack {
                         Spacer()
-                        Button { model.tagArtwork = nil } label: {
+                        Button {
+                            let old = model.tagArtwork
+                            model.tagArtwork = nil
+                            registerArtworkUndo(oldArtwork: old)
+                        } label: {
                             Image(systemName: "xmark.circle.fill").foregroundStyle(.white).shadow(radius: 2)
                         }
                         .buttonStyle(.borderless).padding(6)
@@ -118,6 +122,8 @@ extension ContentView {
               let bitmap = NSBitmapImageRep(data: tiff),
               let jpeg   = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.85])
         else { return }
+        let old = model.tagArtwork
         model.tagArtwork = jpeg
+        registerArtworkUndo(oldArtwork: old)
     }
 }

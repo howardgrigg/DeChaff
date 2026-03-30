@@ -279,6 +279,6 @@ extension ContentView {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+        .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
     }
 }

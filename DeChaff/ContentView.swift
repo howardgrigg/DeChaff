@@ -5,6 +5,7 @@ import AVFoundation
 import Accelerate
 import Speech
 import CoreMedia
+import UserNotifications
 
 @MainActor
 class ProcessingModel: ObservableObject {
@@ -115,6 +116,9 @@ class ProcessingModel: ObservableObject {
             try? FileManager.default.removeItem(at: old)
         }
         inputURL = url
+        if !url.lastPathComponent.hasPrefix("dechaff-yt-") {
+            NSDocumentController.shared.noteNewRecentDocumentURL(url)
+        }
         inputDuration = 0
         waveformSamples = []
         waveformData = nil
@@ -128,6 +132,8 @@ class ProcessingModel: ObservableObject {
         outputURL = nil
         stopPlayback()
         waveformZoom = 1.0; waveformVisibleStart = 0.0
+        tagSermonTitle = ""; tagBibleReading = ""
+        tagDate = Date()
         transcriptionTask?.cancel()
         transcriptText = ""; transcriptError = nil; isTranscribing = false
         aiAssistantTask?.cancel()
@@ -201,7 +207,10 @@ class ProcessingModel: ObservableObject {
                 inputPath: inputPath,
                 outputPath: outputPath,
                 options: options,
-                progressHandler: { p in DispatchQueue.main.async { self?.progress = p } },
+                progressHandler: { p in DispatchQueue.main.async {
+                    self?.progress = p
+                    Self.updateDockProgress(p)
+                } },
                 logHandler:      { m in DispatchQueue.main.async { self?.logs.append(m) } }
             )
             let segments = processor.detectedSilenceSegments
@@ -224,6 +233,8 @@ class ProcessingModel: ObservableObject {
                 self?.isDone = success
                 if !success { self?.outputURL = nil }
                 if success { self?.chapters = outputChapters }
+                Self.clearDockProgress()
+                if success { self?.postFinishNotification() }
             }
         }
     }
@@ -244,6 +255,76 @@ class ProcessingModel: ObservableObject {
         if waveformZoom != oldZoom { tileCache.invalidateAll() }
         let newVD = inputDuration / waveformZoom
         waveformVisibleStart = max(0, min(anchor - newVD / 2, inputDuration - newVD))
+    }
+
+    // MARK: - Dock icon progress
+
+    private static var dockProgressView: DockProgressView?
+
+    static func updateDockProgress(_ value: Double) {
+        let dockTile = NSApp.dockTile
+        if dockProgressView == nil {
+            let size = dockTile.size
+            let view = DockProgressView(frame: NSRect(origin: .zero, size: size))
+            view.icon = NSApp.applicationIconImage
+            dockTile.contentView = view
+            dockProgressView = view
+        }
+        dockProgressView?.progress = value
+        dockTile.display()
+    }
+
+    static func clearDockProgress() {
+        NSApp.dockTile.contentView = nil
+        NSApp.dockTile.badgeLabel = nil
+        NSApp.dockTile.display()
+        dockProgressView = nil
+    }
+
+    // MARK: - Finish notification
+}
+
+/// Custom NSView that draws the app icon with a progress bar overlay for the dock tile.
+private class DockProgressView: NSView {
+    var icon: NSImage?
+    var progress: Double = 0
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        icon?.draw(in: bounds)
+
+        let barHeight: CGFloat = 12
+        let barInset: CGFloat = 8
+        let barY: CGFloat = 4
+        let barRect = NSRect(x: barInset, y: barY, width: bounds.width - barInset * 2, height: barHeight)
+
+        // Track background
+        NSColor.black.withAlphaComponent(0.6).setFill()
+        NSBezierPath(roundedRect: barRect, xRadius: barHeight / 2, yRadius: barHeight / 2).fill()
+
+        // Filled portion
+        let fillWidth = max(barHeight, barRect.width * CGFloat(progress))
+        let fillRect = NSRect(x: barRect.origin.x, y: barRect.origin.y, width: fillWidth, height: barHeight)
+        NSColor.white.setFill()
+        NSBezierPath(roundedRect: fillRect, xRadius: barHeight / 2, yRadius: barHeight / 2).fill()
+    }
+}
+
+extension ProcessingModel {
+
+    static func requestNotificationPermission() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
+
+    private func postFinishNotification() {
+        guard !NSApp.isActive else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "Processing Complete"
+        let filename = outputURL?.lastPathComponent ?? "sermon"
+        content.body = "Your sermon is ready: \(filename)"
+        content.sound = .default
+        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
     }
 
     func startAIAssistant() {
@@ -392,6 +473,8 @@ struct WaveformView: View {
     let trimInOffset: Double
     var onSeek: (Double) -> Void
     var onChapterMove: ((UUID, Double) -> Void)?
+    var onTrimDragEnd: ((_ oldIn: Double, _ oldOut: Double) -> Void)?
+    var onChapterDragEnd: ((_ id: UUID, _ oldTime: Double) -> Void)?
     @Binding var zoom: Double
     @Binding var visibleStart: Double
     var onViewWidth: ((CGFloat) -> Void)?
@@ -399,6 +482,9 @@ struct WaveformView: View {
 
     @State private var dragHandle: Int? = nil
     @State private var dragChapterID: UUID? = nil
+    @State private var dragStartTrimIn: Double = 0
+    @State private var dragStartTrimOut: Double = 0
+    @State private var dragStartChapterTime: Double = 0
     @State private var lastMagnification: Double = 1.0
     @State private var viewportWidth: CGFloat = 700
 
@@ -464,15 +550,16 @@ struct WaveformView: View {
                                 let x = fullXFor(inputTime)
                                 guard x >= 0 && x <= fw else { continue }
                                 let isDragging = chapter.id == dragChapterID
+                                let chapterColor = Color.accentColor
                                 ctx.stroke(Path { p in p.move(to: CGPoint(x: x, y: 0)); p.addLine(to: CGPoint(x: x, y: fh)) },
-                                           with: .color(isDragging ? Color.yellow : Color.purple.opacity(0.8)),
+                                           with: .color(isDragging ? Color.yellow : chapterColor.opacity(0.8)),
                                            lineWidth: isDragging ? 2 : 1.5)
                                 ctx.fill(Path(ellipseIn: CGRect(x: x - 4, y: fh * 0.5 - 4, width: 8, height: 8)),
-                                         with: .color(isDragging ? Color.yellow : Color.purple.opacity(0.7)))
+                                         with: .color(isDragging ? Color.yellow : chapterColor.opacity(0.7)))
                                 if x - lastLabelX >= 30 {
                                     let label = chapter.title.isEmpty ? "●" : String(chapter.title.prefix(12))
                                     ctx.draw(Text(label).font(.system(size: 9, weight: isDragging ? .bold : .regular))
-                                                .foregroundStyle(isDragging ? Color.yellow : Color.purple),
+                                                .foregroundStyle(isDragging ? Color.yellow : chapterColor),
                                              at: CGPoint(x: x + 3, y: 8), anchor: .leading)
                                     lastLabelX = x
                                 }
@@ -523,6 +610,8 @@ struct WaveformView: View {
                                             let dOut = abs(startX - outX)
                                             if dIn <= 12 || dOut <= 12 {
                                                 dragHandle = dIn < dOut ? 0 : 1
+                                                dragStartTrimIn = trimIn
+                                                dragStartTrimOut = trimOut
                                             } else {
                                                 var best: (dist: CGFloat, id: UUID)? = nil
                                                 for ch in chapters {
@@ -532,6 +621,7 @@ struct WaveformView: View {
                                                 }
                                                 if let hit = best {
                                                     dragHandle = -2; dragChapterID = hit.id
+                                                    dragStartChapterTime = chapters.first(where: { $0.id == hit.id })?.timeSeconds ?? 0
                                                 } else {
                                                     dragHandle = -1
                                                 }
@@ -553,6 +643,17 @@ struct WaveformView: View {
                                         if dragHandle == -1 && abs(value.translation.width) < 5 {
                                             let time = max(0, min(duration, Double(value.location.x / fullWidth) * duration))
                                             onSeek(time)
+                                        }
+                                        if dragHandle == 0 || dragHandle == 1 {
+                                            if trimIn != dragStartTrimIn || trimOut != dragStartTrimOut {
+                                                onTrimDragEnd?(dragStartTrimIn, dragStartTrimOut)
+                                            }
+                                        }
+                                        if dragHandle == -2, let id = dragChapterID {
+                                            let currentTime = chapters.first(where: { $0.id == id })?.timeSeconds ?? 0
+                                            if currentTime != dragStartChapterTime {
+                                                onChapterDragEnd?(id, dragStartChapterTime)
+                                            }
                                         }
                                         dragHandle = nil; dragChapterID = nil
                                     }
@@ -750,7 +851,6 @@ struct ContentView: View {
     @State var currentStep = 0
     @State var isTargeted = false
     @State var isArtworkTargeted = false
-    @State private var keyMonitor: Any?
     @State private var scrollMonitor: Any?
     @State private var clickMonitor: Any?
     @State private var showLog = false
@@ -758,6 +858,7 @@ struct ContentView: View {
     @AppStorage("dechaff.youtube.videoLimit") var ytVideoLimit = 10
     @State var ytTab: Int = 2   // 0 = YouTube URL, 1 = Videos, 2 = Live Streams
     @State var ytDirectURL: String = ""
+    @Environment(\.undoManager) var undoManager
 
     let stepTitles = ["Load", "Trim", "Info", "Chapters", "Output"]
 
@@ -797,11 +898,24 @@ struct ContentView: View {
         }
         .frame(width: 760)
         .frame(minHeight: 520)
+        .focusedSceneValue(\.processingModel, model)
+        .focusedSceneValue(\.currentStep, $currentStep)
+        .focusedSceneValue(\.appActions, AppActions(
+            openFile: { openFilePicker() },
+            addChapter: { addChapterAtPlayhead() },
+            startProcessing: { startProcessing() }
+        ))
+        .focusedSceneValue(\.windowUndoManager, undoManager)
         .onAppear {
             setupMonitors()
             Task { await ytManager.checkAndUpdate() }
         }
         .onDisappear { teardownMonitors() }
+        .onReceive(NotificationCenter.default.publisher(for: .openAudioFile)) { notif in
+            guard let url = notif.object as? URL else { return }
+            model.loadFile(url: url)
+            withAnimation { currentStep = 1 }
+        }
     }
 
     // MARK: - App Header
@@ -867,6 +981,10 @@ struct ContentView: View {
                 .foregroundStyle(isCurrent ? .primary : .secondary)
         }
         .animation(.easeInOut(duration: 0.25), value: currentStep)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Step \(step + 1): \(stepTitles[step])")
+        .accessibilityValue(isCompleted ? "completed" : isCurrent ? "current" : "upcoming")
+        .accessibilityAddTraits(isCurrent ? .isSelected : [])
     }
 
     // MARK: - Navigation Footer
@@ -999,6 +1117,9 @@ struct ContentView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Processing audio")
+        .accessibilityValue("\(Int(model.progress * 100)) percent, \(model.processingStageLabel)")
     }
 
     // MARK: - Done View
@@ -1014,6 +1135,8 @@ struct ContentView: View {
                         Text(url.lastPathComponent)
                             .font(.subheadline).foregroundStyle(.secondary)
                             .lineLimit(2).multilineTextAlignment(.center).padding(.horizontal, 48)
+                            .draggable(url)
+                            .help("Drag to export the file")
                     }
                 }
                 .padding(.top, 28)
@@ -1024,6 +1147,11 @@ struct ContentView: View {
                             NSWorkspace.shared.selectFile(url.path, inFileViewerRootedAtPath: "")
                         } label: { Label("Reveal in Finder", systemImage: "folder") }
                         .buttonStyle(.borderedProminent).controlSize(.large)
+
+                        ShareLink(item: url) {
+                            Label("Share", systemImage: "square.and.arrow.up")
+                        }
+                        .buttonStyle(.bordered).controlSize(.large)
                     }
                     Button("Process Another") {
                         model.isDone = false; model.outputURL = nil
@@ -1175,6 +1303,12 @@ struct ContentView: View {
                             model.chapters[idx].timeSeconds = newTime
                         }
                     } : nil,
+                    onTrimDragEnd: { oldIn, oldOut in
+                        registerTrimUndo(oldIn: oldIn, oldOut: oldOut)
+                    },
+                    onChapterDragEnd: showChapters ? { id, oldTime in
+                        registerChapterMoveUndo(id: id, oldTime: oldTime)
+                    } : nil,
                     zoom: $model.waveformZoom,
                     visibleStart: $model.waveformVisibleStart,
                     onViewWidth: { model.waveformViewWidth = $0 },
@@ -1185,6 +1319,11 @@ struct ContentView: View {
         .frame(height: 120)
         .background(Color(NSColor.controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.secondary.opacity(0.12), lineWidth: 1))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Waveform editor")
+        .accessibilityValue(model.inputDuration > 0
+            ? "Duration \(formatPlaybackTime(model.inputDuration)), trim \(formatPlaybackTime(model.trimInSeconds)) to \(formatPlaybackTime(model.trimOutSeconds))"
+            : "No audio loaded")
     }
 
     func playbackControls(showSetInOut: Bool) -> some View {
@@ -1194,7 +1333,10 @@ struct ContentView: View {
             Spacer()
             if showSetInOut {
                 Button("Set In") {
+                    let oldIn = model.trimInSeconds
+                    let oldOut = model.trimOutSeconds
                     model.trimInSeconds = min(model.playback.playheadSeconds, model.trimOutSeconds - 0.5)
+                    registerTrimUndo(oldIn: oldIn, oldOut: oldOut)
                 }
                 .buttonStyle(.bordered).controlSize(.small).disabled(model.waveformSamples.isEmpty)
 
@@ -1202,7 +1344,10 @@ struct ContentView: View {
                     .font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
 
                 Button("Set Out") {
+                    let oldIn = model.trimInSeconds
+                    let oldOut = model.trimOutSeconds
                     model.trimOutSeconds = max(model.playback.playheadSeconds, model.trimInSeconds + 0.5)
+                    registerTrimUndo(oldIn: oldIn, oldOut: oldOut)
                 }
                 .buttonStyle(.bordered).controlSize(.small).disabled(model.waveformSamples.isEmpty)
             }
@@ -1234,32 +1379,79 @@ struct ContentView: View {
         .padding(.bottom, 14)
     }
 
+    // MARK: - Undo/Redo
+
+    func registerTrimUndo(oldIn: Double, oldOut: Double) {
+        let newIn = model.trimInSeconds
+        let newOut = model.trimOutSeconds
+        undoManager?.registerUndo(withTarget: model) { m in
+            m.trimInSeconds = oldIn
+            m.trimOutSeconds = oldOut
+            self.undoManager?.registerUndo(withTarget: m) { m in
+                m.trimInSeconds = newIn
+                m.trimOutSeconds = newOut
+            }
+            self.undoManager?.setActionName("Trim")
+        }
+        undoManager?.setActionName("Trim")
+    }
+
+    func registerChapterMoveUndo(id: UUID, oldTime: Double) {
+        guard let idx = model.chapters.firstIndex(where: { $0.id == id }) else { return }
+        let newTime = model.chapters[idx].timeSeconds
+        undoManager?.registerUndo(withTarget: model) { m in
+            if let i = m.chapters.firstIndex(where: { $0.id == id }) {
+                m.chapters[i].timeSeconds = oldTime
+            }
+            self.undoManager?.registerUndo(withTarget: m) { m in
+                if let i = m.chapters.firstIndex(where: { $0.id == id }) {
+                    m.chapters[i].timeSeconds = newTime
+                }
+            }
+            self.undoManager?.setActionName("Move Chapter")
+        }
+        undoManager?.setActionName("Move Chapter")
+    }
+
+    func registerChapterAddUndo(chapter: Chapter) {
+        undoManager?.registerUndo(withTarget: model) { m in
+            m.chapters.removeAll { $0.id == chapter.id }
+            self.undoManager?.registerUndo(withTarget: m) { m in
+                m.chapters.append(chapter)
+                m.chapters.sort { $0.timeSeconds < $1.timeSeconds }
+            }
+            self.undoManager?.setActionName("Add Chapter")
+        }
+        undoManager?.setActionName("Add Chapter")
+    }
+
+    func registerChapterRemoveUndo(chapter: Chapter) {
+        undoManager?.registerUndo(withTarget: model) { m in
+            m.chapters.append(chapter)
+            m.chapters.sort { $0.timeSeconds < $1.timeSeconds }
+            self.undoManager?.registerUndo(withTarget: m) { m in
+                m.chapters.removeAll { $0.id == chapter.id }
+            }
+            self.undoManager?.setActionName("Remove Chapter")
+        }
+        undoManager?.setActionName("Remove Chapter")
+    }
+
+    func registerArtworkUndo(oldArtwork: Data?) {
+        let newArtwork = model.tagArtwork
+        undoManager?.registerUndo(withTarget: model) { m in
+            m.tagArtwork = oldArtwork
+            self.undoManager?.registerUndo(withTarget: m) { m in
+                m.tagArtwork = newArtwork
+            }
+            self.undoManager?.setActionName("Artwork")
+        }
+        undoManager?.setActionName("Artwork")
+    }
+
     // MARK: - Event Monitors
 
     private func setupMonitors() {
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            let responder = NSApp.keyWindow?.firstResponder
-            let isTyping = responder is NSTextView || responder is NSTextField
-            guard !isTyping else { return event }
-            switch event.keyCode {
-            case 49: // Spacebar — play/pause on trim or chapters step
-                if self.currentStep == 1 || self.currentStep == 3 {
-                    self.model.togglePlayback(); return nil
-                }
-            case 34: // I — set mark-in on trim step
-                if self.currentStep == 1 && !self.model.waveformSamples.isEmpty {
-                    self.model.trimInSeconds = min(self.model.playback.playheadSeconds, self.model.trimOutSeconds - 0.5)
-                    return nil
-                }
-            case 31: // O — set mark-out on trim step
-                if self.currentStep == 1 && !self.model.waveformSamples.isEmpty {
-                    self.model.trimOutSeconds = max(self.model.playback.playheadSeconds, self.model.trimInSeconds + 0.5)
-                    return nil
-                }
-            default: break
-            }
-            return event
-        }
         clickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
             if let window = NSApp.keyWindow,
                let hit = window.contentView?.hitTest(event.locationInWindow),
@@ -1280,7 +1472,6 @@ struct ContentView: View {
     }
 
     private func teardownMonitors() {
-        if let m = keyMonitor    { NSEvent.removeMonitor(m); keyMonitor = nil }
         if let m = scrollMonitor { NSEvent.removeMonitor(m); scrollMonitor = nil }
         if let m = clickMonitor  { NSEvent.removeMonitor(m); clickMonitor = nil }
     }

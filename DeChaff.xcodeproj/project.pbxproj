@@ -32,6 +32,7 @@
 		DC000000000000000000010B /* ID3Tagger.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC000000000000000000010A /* ID3Tagger.swift */; };
 		DC000000000000000000010E /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC000000000000000000010D /* KeychainHelper.swift */; };
 		DC0000000000000000000110 /* ClaudeAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC000000000000000000010F /* ClaudeAPIClient.swift */; };
+		DC0000000000000000000112 /* AppCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000111 /* AppCommands.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -61,6 +62,7 @@
 		DC000000000000000000010A /* ID3Tagger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ID3Tagger.swift; sourceTree = "<group>"; };
 		DC000000000000000000010D /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
 		DC000000000000000000010F /* ClaudeAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeAPIClient.swift; sourceTree = "<group>"; };
+		DC0000000000000000000111 /* AppCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCommands.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -122,6 +124,7 @@
 				DC00000000000000000000F3 /* SermonMetadataExtractor.swift */,
 				DC000000000000000000010D /* KeychainHelper.swift */,
 				DC000000000000000000010F /* ClaudeAPIClient.swift */,
+				DC0000000000000000000111 /* AppCommands.swift */,
 				DC00000000000000000000F5 /* WaveformTileCache.swift */,
 				AA00000000000000000000C3 /* lame */,
 				AA00000000000000000000C6 /* Wheat.png */,
@@ -239,6 +242,7 @@
 				DC00000000000000000000F4 /* SermonMetadataExtractor.swift in Sources */,
 				DC000000000000000000010E /* KeychainHelper.swift in Sources */,
 				DC0000000000000000000110 /* ClaudeAPIClient.swift in Sources */,
+				DC0000000000000000000112 /* AppCommands.swift in Sources */,
 				DC00000000000000000000F6 /* WaveformTileCache.swift in Sources */,
 				DC0000000000000000000101 /* AudioProcessingModels.swift in Sources */,
 				DC0000000000000000000103 /* AudioUnitPass.swift in Sources */,
@@ -373,6 +377,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = DeChaff/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = DeChaff;
 				INFOPLIST_KEY_CFBundleIconFile = DeChaffIcon;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
@@ -404,6 +409,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = DeChaff/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = DeChaff;
 				INFOPLIST_KEY_CFBundleIconFile = DeChaffIcon;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";

@@ -56,7 +56,9 @@ extension ContentView {
                     VStack(spacing: 0) {
                         ForEach(model.chapters) { chapter in
                             ChapterRow(chapter: chapterBinding(for: chapter)) {
+                                let removed = chapter
                                 withAnimation { model.chapters.removeAll { $0.id == chapter.id } }
+                                registerChapterRemoveUndo(chapter: removed)
                             }
                             if chapter.id != model.chapters.last?.id {
                                 Divider().padding(.leading, 16)
@@ -85,10 +87,12 @@ extension ContentView {
         case 1: title = model.tagSermonTitle.isEmpty   ? "Sermon"        : "Sermon: \(model.tagSermonTitle)"
         default: title = "Chapter \(idx + 1)"
         }
+        let newChapter = Chapter(timeSeconds: outputTime, title: title)
         withAnimation {
-            model.chapters.append(Chapter(timeSeconds: outputTime, title: title))
+            model.chapters.append(newChapter)
             model.chapters.sort { $0.timeSeconds < $1.timeSeconds }
         }
+        registerChapterAddUndo(chapter: newChapter)
     }
 
     func chapterBinding(for chapter: Chapter) -> Binding<Chapter> {
@@ -138,6 +142,9 @@ struct ChapterRow: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Chapter: \(chapter.title.isEmpty ? "Untitled" : chapter.title)")
+        .accessibilityValue("at \(formatChapterTime(chapter.timeSeconds))")
     }
 
     private func commitTime() {
