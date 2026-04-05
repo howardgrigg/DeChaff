@@ -42,7 +42,8 @@ class YouTubeViewModel: ObservableObject {
                 // Run AI metadata extraction concurrently with the audio download.
                 // Inference on a short title finishes long before the download completes.
                 async let audioURL = manager.downloadAudio(videoID: entry.id)
-                async let metadata = extractSermonMetadata(from: entry.title)
+                let titleFormat = UserDefaults.standard.string(forKey: "dechaff.titleFormat") ?? defaultTitleFormat
+                async let metadata = extractSermonMetadata(from: entry.title, titleFormat: titleFormat)
 
                 let url     = try await audioURL
                 let details = await metadata

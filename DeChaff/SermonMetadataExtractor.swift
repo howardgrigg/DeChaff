@@ -21,42 +21,52 @@ struct SermonMetadata {
     var date: String
 }
 
+// MARK: - Defaults
+
+let defaultTitleFormat    = "{title}, {reading} | {preacher} | {series} | {date}"
+let defaultFilenameTemplate = "{date} {title}, {reading} | {preacher} | {series}"
+
 // MARK: - Three-tier extraction
 
-private let systemInstructions = """
+/// Builds the system instructions string for metadata extraction, injecting the user's title format.
+private func systemInstructions(titleFormat: String) -> String {
+    """
     You extract structured metadata from church sermon YouTube video titles.
 
-    A common format is: "Title, Bible Reading | Preacher | Series | Date"
-    For example: "The Good Shepherd, John 10:1–18 | Rev. James Hart | Foundations Series | 23 Mar 2025"
+    The expected format for this church is: "\(titleFormat)"
+    where {title} is the sermon title or topic, {reading} is the Bible reading or passage, \
+    {preacher} is the speaker or preacher name, {series} is the sermon series name, \
+    and {date} is the date of the sermon.
 
-    Fields are separated by pipe characters (|). Within a segment, a comma often separates the \
-    sermon title from the Bible reading. Not all fields are always present — the format is entered \
+    Fields may be separated by pipe characters (|), commas, dashes, or other delimiters \
+    as shown in the format above. Not all fields are always present — the format is entered \
     by hand and may vary or be incomplete.
 
-    The date segment may appear in various formats (e.g. "23 Mar 2025", "15/3/26", "March 15, 2025"). \
+    The date may appear in various formats (e.g. "23 Mar 2025", "15/3/26", "March 15, 2025"). \
     Always normalise it to "dd MMM yyyy" format (e.g. "23 Mar 2025").
 
     Only populate fields you are confident about. Use empty string for anything not clearly present. \
     Never invent information.
     """
+}
 
 /// Extracts sermon metadata using a three-tier fallback:
 /// 1. On-device Apple Intelligence (FoundationModels)
 /// 2. Claude API (if API key is configured)
-/// 3. Regex/string parsing
-func extractSermonMetadata(from youtubeTitle: String) async -> SermonMetadata? {
+/// 3. Template-aware string parsing
+func extractSermonMetadata(from youtubeTitle: String, titleFormat: String = defaultTitleFormat) async -> SermonMetadata? {
     // Tier 1: Apple Intelligence
-    if let result = await extractViaAppleIntelligence(from: youtubeTitle) {
+    if let result = await extractViaAppleIntelligence(from: youtubeTitle, titleFormat: titleFormat) {
         return result
     }
 
     // Tier 2: Claude API
-    if let result = await extractViaClaudeAPI(from: youtubeTitle) {
+    if let result = await extractViaClaudeAPI(from: youtubeTitle, titleFormat: titleFormat) {
         return result
     }
 
-    // Tier 3: Regex/string parsing
-    return extractViaRegex(from: youtubeTitle)
+    // Tier 3: Template-aware parsing
+    return extractViaTemplate(from: youtubeTitle, format: titleFormat)
 }
 
 /// Parses a date string from metadata extraction into a Date.
@@ -86,12 +96,12 @@ func parseExtractedDate(_ raw: String) -> Date? {
 
 // MARK: - Tier 1: Apple Intelligence
 
-private func extractViaAppleIntelligence(from title: String) async -> SermonMetadata? {
+private func extractViaAppleIntelligence(from title: String, titleFormat: String) async -> SermonMetadata? {
     guard case .available = SystemLanguageModel.default.availability else { return nil }
 
     let session = LanguageModelSession(
         model: SystemLanguageModel.default,
-        instructions: systemInstructions
+        instructions: systemInstructions(titleFormat: titleFormat)
     )
 
     do {
@@ -107,16 +117,18 @@ private func extractViaAppleIntelligence(from title: String) async -> SermonMeta
 
 // MARK: - Tier 2: Claude API
 
-private func extractViaClaudeAPI(from title: String) async -> SermonMetadata? {
+private func extractViaClaudeAPI(from title: String, titleFormat: String) async -> SermonMetadata? {
     guard let keyData = KeychainHelper.load(account: "claude-api-key"),
           let apiKey = String(data: keyData, encoding: .utf8), !apiKey.isEmpty else {
         return nil
     }
 
     do {
+        let model = UserDefaults.standard.string(forKey: "dechaff.ai.model") ?? ClaudeModel.defaultID
         let response = try await ClaudeAPIClient.sendMessage(
             apiKey: apiKey,
-            systemPrompt: systemInstructions + """
+            model: model,
+            systemPrompt: systemInstructions(titleFormat: titleFormat) + """
 
                 Respond with ONLY a JSON object, no markdown fencing, no explanation:
                 {"title": "...", "bibleReading": "...", "speaker": "...", "series": "...", "date": "..."}
@@ -142,68 +154,71 @@ private func extractViaClaudeAPI(from title: String) async -> SermonMetadata? {
     }
 }
 
-// MARK: - Tier 3: Regex / string parsing
+// MARK: - Tier 3: Template-aware string parsing
 
-/// Parses titles in the common format:
-///   "Sermon Title, Bible Reading | Preacher | Series | Date"
-/// Pipe-delimited segments, with an optional comma separating title from reading in the first segment.
-private func extractViaRegex(from title: String) -> SermonMetadata? {
-    let segments = title.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
-    guard !segments.isEmpty else { return nil }
+/// Parses a YouTube title using the user-defined format template.
+/// The template uses {title}, {reading}, {preacher}, {series}, {date} placeholders.
+/// Groups are separated by | and fields within a group by the literal separator in the template.
+private func extractViaTemplate(from title: String, format: String) -> SermonMetadata? {
+    // Split template and title on pipe
+    let templateGroups = format.components(separatedBy: "|")
+        .map { $0.trimmingCharacters(in: .whitespaces) }
+    let titleGroups = title.components(separatedBy: "|")
+        .map { $0.trimmingCharacters(in: .whitespaces) }
 
-    var sermonTitle = ""
-    var bibleReading = ""
-    var speaker = ""
-    var series = ""
-    var date = ""
+    var values: [String: String] = [:]
 
-    // First segment: "Title, Bible Reading" or just "Title"
-    let first = segments[0]
-    // Look for a Bible reference pattern after a comma: e.g. "Title, John 3:16"
-    // Bible ref pattern: optional book number, book name, chapter:verse(s)
-    let biblePattern = #",\s*((?:\d\s+)?[A-Z][a-z]+(?:\s[A-Z][a-z]+)*\s+\d+(?:[:\.\-–]\d+)*(?:\s*[\-–]\s*\d+(?:[:\.\-–]\d+)*)?)"#
-    if let match = first.range(of: biblePattern, options: .regularExpression) {
-        let fullMatch = String(first[match])
-        bibleReading = fullMatch.trimmingCharacters(in: .whitespaces)
-        if bibleReading.hasPrefix(",") {
-            bibleReading = String(bibleReading.dropFirst()).trimmingCharacters(in: .whitespaces)
-        }
-        sermonTitle = String(first[first.startIndex..<match.lowerBound]).trimmingCharacters(in: .whitespaces)
-        if sermonTitle.hasSuffix(",") {
-            sermonTitle = String(sermonTitle.dropLast()).trimmingCharacters(in: .whitespaces)
-        }
-    } else if first.contains(",") {
-        // Fallback: split on last comma
-        let parts = first.components(separatedBy: ",")
-        sermonTitle = parts.dropLast().joined(separator: ",").trimmingCharacters(in: .whitespaces)
-        bibleReading = parts.last?.trimmingCharacters(in: .whitespaces) ?? ""
-    } else {
-        sermonTitle = first
-    }
+    for (i, templateGroup) in templateGroups.enumerated() {
+        guard i < titleGroups.count else { break }
+        let segment = titleGroups[i]
+        let fields = placeholders(in: templateGroup)
+        guard !fields.isEmpty else { continue }
 
-    // Remaining segments: identify date vs non-date fields
-    // Date patterns: "23 Mar 2025", "15 March 2025", "23 Mar 25", "15/3/26", etc.
-    let datePattern = #"^\d{1,2}\s+\w+\s+\d{2,4}$|^\d{1,2}/\d{1,2}/\d{2,4}$|^\w+\s+\d{1,2},?\s+\d{4}$"#
-    var nonDateSegments: [String] = []
-    for segment in segments.dropFirst() where !segment.isEmpty {
-        if segment.range(of: datePattern, options: .regularExpression) != nil {
-            date = segment
+        if fields.count == 1 {
+            values[fields[0]] = segment
         } else {
-            nonDateSegments.append(segment)
+            // Derive the separator between the first two fields from the template
+            let sep = separator(in: templateGroup, between: fields[0], and: fields[1])
+            let parts = segment.components(separatedBy: sep)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+            for (j, field) in fields.enumerated() {
+                values[field] = j < parts.count ? parts[j] : ""
+            }
         }
     }
 
-    if nonDateSegments.count >= 1 { speaker = nonDateSegments[0] }
-    if nonDateSegments.count >= 2 { series = nonDateSegments[1] }
-
-    // Only return if we got at least a title
-    guard !sermonTitle.isEmpty else { return nil }
+    guard !values.isEmpty,
+          !(values["title"] ?? "").isEmpty || !(values["preacher"] ?? "").isEmpty else {
+        return nil
+    }
 
     return SermonMetadata(
-        title: sermonTitle,
-        bibleReading: bibleReading,
-        speaker: speaker,
-        series: series,
-        date: date
+        title:        values["title"]    ?? "",
+        bibleReading: values["reading"]  ?? "",
+        speaker:      values["preacher"] ?? "",
+        series:       values["series"]   ?? "",
+        date:         values["date"]     ?? ""
     )
+}
+
+/// Returns the ordered list of placeholder names (without braces) in a template string.
+private func placeholders(in template: String) -> [String] {
+    guard let regex = try? NSRegularExpression(pattern: #"\{(\w+)\}"#) else { return [] }
+    return regex.matches(in: template, range: NSRange(template.startIndex..., in: template))
+        .compactMap { match -> String? in
+            guard let range = Range(match.range(at: 1), in: template) else { return nil }
+            return String(template[range])
+        }
+}
+
+/// Finds the literal separator text between two named placeholders in a template string.
+private func separator(in template: String, between first: String, and second: String) -> String {
+    let pattern = #"\{\#(first)\}(.+?)\{\#(second)\}"#
+    guard let regex = try? NSRegularExpression(pattern: pattern),
+          let match = regex.firstMatch(in: template, range: NSRange(template.startIndex..., in: template)),
+          let range = Range(match.range(at: 1), in: template) else {
+        return ","
+    }
+    let sep = String(template[range]).trimmingCharacters(in: .whitespaces)
+    return sep.isEmpty ? "," : sep
 }

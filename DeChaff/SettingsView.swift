@@ -11,8 +11,10 @@ struct SettingsView: View {
                 .tabItem { Label("General", systemImage: "gear") }
             AIAssistantSettingsView()
                 .tabItem { Label("AI Assistant", systemImage: "sparkles") }
+            TemplatesSettingsView()
+                .tabItem { Label("Templates", systemImage: "doc.text") }
         }
-        .frame(width: 480, height: 480)
+        .frame(width: 480, height: 520)
     }
 }
 
@@ -207,9 +209,12 @@ struct GeneralSettingsView: View {
 struct AIAssistantSettingsView: View {
     @AppStorage("dechaff.ai.enabled") private var aiEnabled = false
     @AppStorage("dechaff.ai.prompt") private var promptTemplate = Self.defaultPrompt
+    @AppStorage("dechaff.ai.model") private var storedModel = ClaudeModel.defaultID
 
     @State private var apiKeyInput = ""
     @State private var hasStoredKey = false
+    @State private var pickerValue = ""       // tracks picker selection; "custom" or a known model ID
+    @State private var customModelInput = ""  // text field content when custom is selected
 
     static let defaultPrompt = """
         You are a helpful church media assistant. Given the following sermon transcript, please suggest:
@@ -276,6 +281,57 @@ struct AIAssistantSettingsView: View {
                         .padding(.vertical, 10)
                     }
 
+                    settingsGroup("Claude Model") {
+                        VStack(alignment: .leading, spacing: 0) {
+                            HStack {
+                                Text("Model").font(.subheadline)
+                                Spacer()
+                                Picker("", selection: $pickerValue) {
+                                    ForEach(ClaudeModel.knownModels, id: \.id) { m in
+                                        Text(m.name).tag(m.id)
+                                    }
+                                    Divider()
+                                    Text("Custom…").tag("custom")
+                                }
+                                .labelsHidden()
+                                .frame(width: 240)
+                                .onChange(of: pickerValue) { newValue in
+                                    if newValue != "custom" {
+                                        storedModel = newValue
+                                    }
+                                    // When switching to custom, pre-fill with current storedModel
+                                    // if it's already a custom value
+                                    if newValue == "custom" && !ClaudeModel.knownModels.contains(where: { $0.id == storedModel }) {
+                                        customModelInput = storedModel
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+
+                            if pickerValue == "custom" {
+                                Divider().padding(.leading, 16)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Model ID").font(.subheadline)
+                                    HStack {
+                                        TextField("e.g. claude-sonnet-4-6", text: $customModelInput)
+                                            .textFieldStyle(.roundedBorder)
+                                        Button("Save") {
+                                            let trimmed = customModelInput.trimmingCharacters(in: .whitespaces)
+                                            if !trimmed.isEmpty { storedModel = trimmed }
+                                        }
+                                        .buttonStyle(.borderedProminent).controlSize(.small)
+                                        .disabled(customModelInput.trimmingCharacters(in: .whitespaces).isEmpty)
+                                    }
+                                    Text("Find model IDs at [docs.anthropic.com/en/docs/about-claude/models](https://docs.anthropic.com/en/docs/about-claude/models)")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                            }
+                        }
+                    }
+
                     settingsGroup("Prompt Template") {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("The transcript is sent as the user message. This template becomes the system prompt.")
@@ -306,6 +362,121 @@ struct AIAssistantSettingsView: View {
         }
         .onAppear {
             hasStoredKey = KeychainHelper.load(account: "claude-api-key") != nil
+            let isKnown = ClaudeModel.knownModels.contains(where: { $0.id == storedModel })
+            pickerValue = isKnown ? storedModel : "custom"
+            if !isKnown { customModelInput = storedModel }
+        }
+    }
+}
+
+// MARK: - Templates tab
+
+struct TemplatesSettingsView: View {
+    @AppStorage("dechaff.titleFormat")      private var titleFormat      = defaultTitleFormat
+    @AppStorage("dechaff.filenameTemplate") private var filenameTemplate = defaultFilenameTemplate
+
+    // Example values used for the filename live preview
+    private let exampleValues: [String: String] = [
+        "date":     "2026-04-06",
+        "title":    "The Good Shepherd",
+        "reading":  "John 10:1–18",
+        "preacher": "Rev. James Hart",
+        "series":   "Foundations",
+    ]
+
+    private func previewFilename(template: String) -> String {
+        let segments = template.components(separatedBy: "|")
+        let resolved = segments.compactMap { segment -> String? in
+            var s = segment
+            for (key, value) in exampleValues { s = s.replacingOccurrences(of: "{\(key)}", with: value) }
+            let stripped = s.trimmingCharacters(in: .whitespaces)
+                .trimmingCharacters(in: CharacterSet(charactersIn: ",-–"))
+                .trimmingCharacters(in: .whitespaces)
+            return stripped.isEmpty ? nil : s.trimmingCharacters(in: .whitespaces)
+        }
+        var result = resolved.joined(separator: " | ")
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+            .trimmingCharacters(in: .whitespaces)
+        return (result.isEmpty ? "sermon_dechaff" : result) + ".mp3"
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+
+                settingsGroup("YouTube Title Format") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Tell DeChaff the format your church uses for YouTube titles. The AI will use this to extract sermon metadata.")
+                            .font(.caption).foregroundStyle(.secondary)
+
+                        TextField("Format template", text: $titleFormat)
+                            .textFieldStyle(.roundedBorder)
+
+                        PlaceholderChipsView(text: $titleFormat,
+                                            placeholders: ["{title}", "{reading}", "{preacher}", "{series}", "{date}"])
+
+                        HStack {
+                            Spacer()
+                            Button("Reset to Default") { titleFormat = defaultTitleFormat }
+                                .buttonStyle(.bordered).controlSize(.small)
+                                .disabled(titleFormat == defaultTitleFormat)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                }
+
+                settingsGroup("Output Filename") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Template for the exported file name. The file extension is added automatically.")
+                            .font(.caption).foregroundStyle(.secondary)
+
+                        TextField("Filename template", text: $filenameTemplate)
+                            .textFieldStyle(.roundedBorder)
+
+                        PlaceholderChipsView(text: $filenameTemplate,
+                                            placeholders: ["{date}", "{title}", "{reading}", "{preacher}", "{series}"])
+
+                        HStack(alignment: .top) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Preview:").font(.caption).foregroundStyle(.secondary)
+                                Text(previewFilename(template: filenameTemplate))
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer()
+                            Button("Reset to Default") { filenameTemplate = defaultFilenameTemplate }
+                                .buttonStyle(.bordered).controlSize(.small)
+                                .disabled(filenameTemplate == defaultFilenameTemplate)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                }
+            }
+            .padding(24)
+        }
+    }
+}
+
+// MARK: - Reusable placeholder chip strip
+
+struct PlaceholderChipsView: View {
+    @Binding var text: String
+    let placeholders: [String]
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text("Insert:").font(.caption).foregroundStyle(.secondary)
+            ForEach(placeholders, id: \.self) { chip in
+                Button(chip) { text += chip }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                    .font(.system(.caption, design: .monospaced))
+            }
         }
     }
 }

@@ -69,6 +69,7 @@ struct DechaffCommands: Commands {
             .keyboardShortcut("k", modifiers: [])
             .disabled(model?.inputURL == nil || !isPlaybackStep)
 
+
             Divider()
 
             Button("Scrub Back 5s") {

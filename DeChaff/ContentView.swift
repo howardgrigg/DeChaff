@@ -38,6 +38,9 @@ class ProcessingModel: ObservableObject {
     // AI Assistant state
     @AppStorage("dechaff.ai.enabled") var aiAssistantEnabled = false
     @AppStorage("dechaff.ai.prompt") var aiAssistantPrompt = AIAssistantSettingsView.defaultPrompt
+    @AppStorage("dechaff.ai.model") var aiModel = ClaudeModel.defaultID
+    @AppStorage("dechaff.titleFormat") var titleFormat = defaultTitleFormat
+    @AppStorage("dechaff.filenameTemplate") var filenameTemplate = defaultFilenameTemplate
     @Published var aiAssistantResponse = ""
     @Published var isAIAssistantLoading = false
     @Published var aiAssistantError: String? = nil
@@ -93,6 +96,8 @@ class ProcessingModel: ObservableObject {
     @Published var waveformZoom: Double = 1.0
     @Published var waveformVisibleStart: Double = 0.0
     var waveformViewWidth: CGFloat = 700
+    /// Cursor position as fraction [0,1] across the visible viewport — used as zoom anchor.
+    var waveformCursorFraction: Double = 0.5
 
     init() {
         tagSeries   = UserDefaults.standard.string(forKey: "dechaff.series") ?? ""
@@ -161,12 +166,8 @@ class ProcessingModel: ObservableObject {
         let dir = isYouTubeDownload
             ? (FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first?.path ?? url.deletingLastPathComponent().path)
             : url.deletingLastPathComponent().path
-        let titleParts = [tagSermonTitle, tagBibleReading].filter { !$0.isEmpty }.joined(separator: ", ")
-        let pipeParts  = [titleParts, tagPreacher, tagSeries].filter { !$0.isEmpty }.joined(separator: " | ")
-        let namePart   = pipeParts.isEmpty
-            ? "\(baseName)_dechaff"
-            : pipeParts.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
-        let outputPath = "\(dir)/\(tagDatePrefix) \(namePart).\(outputFormat.fileExtension)"
+        let namePart = resolveFilename(template: filenameTemplate, fallback: baseName)
+        let outputPath = "\(dir)/\(namePart).\(outputFormat.fileExtension)"
 
         let trimIn  = trimInSeconds
         let trimOut = trimOutSeconds > trimIn ? trimOutSeconds : inputDuration
@@ -246,15 +247,61 @@ class ProcessingModel: ObservableObject {
     func stopPlayback()   { playback.stop() }
     func seekPlayback(to time: Double) { playback.seek(to: time) }
 
-    /// Zoom centred on the playhead position.
-    func waveformZoomScroll(dy: Double) {
+    /// Resolves the filename template into a sanitised file name (without extension).
+    /// Empty placeholder segments are collapsed so the result is clean.
+    func resolveFilename(template: String, fallback: String) -> String {
+        let values: [String: String] = [
+            "date":     tagDatePrefix,
+            "title":    tagSermonTitle,
+            "reading":  tagBibleReading,
+            "preacher": tagPreacher,
+            "series":   tagSeries,
+        ]
+
+        // Split template on | so we can drop empty pipe-segments entirely
+        let segments = template.components(separatedBy: "|")
+        let resolved = segments.compactMap { segment -> String? in
+            var s = segment
+            for (key, value) in values {
+                s = s.replacingOccurrences(of: "{\(key)}", with: value)
+            }
+            // If this segment is now only whitespace and punctuation (no real content), drop it
+            let stripped = s.trimmingCharacters(in: .whitespaces)
+                .trimmingCharacters(in: CharacterSet(charactersIn: ",-–"))
+                .trimmingCharacters(in: .whitespaces)
+            return stripped.isEmpty ? nil : s.trimmingCharacters(in: .whitespaces)
+        }
+
+        var result = resolved.joined(separator: " | ")
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+            .trimmingCharacters(in: .whitespaces)
+
+        return result.isEmpty ? "\(fallback)_dechaff" : result
+    }
+
+    /// Pan by a horizontal scroll delta (points).
+    func waveformPanScroll(dx: Double, isPrecise: Bool) {
+        guard inputDuration > 0, waveformZoom > 1.0 else { return }
+        let visibleDuration = inputDuration / waveformZoom
+        // Scale: how much time one viewport-pixel represents
+        let secondsPerPixel = visibleDuration / Double(waveformViewWidth)
+        // Trackpad sends precise deltas in points; mouse wheel sends line-based deltas (larger steps)
+        let pixelDelta = isPrecise ? dx : dx * 8
+        waveformVisibleStart = max(0, min(waveformVisibleStart + pixelDelta * secondsPerPixel, inputDuration - visibleDuration))
+    }
+
+    /// Zoom anchored on the cursor position within the visible range.
+    func waveformZoomScroll(dy: Double, isPrecise: Bool) {
         guard inputDuration > 0 else { return }
-        let anchor = playback.playheadSeconds
+        let visibleDuration = inputDuration / waveformZoom
+        let anchor = waveformVisibleStart + waveformCursorFraction * visibleDuration
+        let factor = isPrecise ? 0.012 : 0.06
         let oldZoom = waveformZoom
-        waveformZoom = max(1.0, min(40.0, waveformZoom * (1.0 + dy * 0.025)))
+        waveformZoom = max(1.0, min(40.0, waveformZoom * (1.0 + dy * factor)))
         if waveformZoom != oldZoom { tileCache.invalidateAll() }
         let newVD = inputDuration / waveformZoom
-        waveformVisibleStart = max(0, min(anchor - newVD / 2, inputDuration - newVD))
+        waveformVisibleStart = max(0, min(anchor - waveformCursorFraction * newVD, inputDuration - newVD))
     }
 
     // MARK: - Dock icon progress
@@ -347,7 +394,7 @@ extension ProcessingModel {
         aiAssistantTask = Task {
             do {
                 let response = try await ClaudeAPIClient.sendMessage(
-                    apiKey: apiKey, systemPrompt: systemPrompt, transcript: transcript
+                    apiKey: apiKey, model: self.aiModel, systemPrompt: systemPrompt, transcript: transcript
                 )
                 self.aiAssistantResponse = response
             } catch {
@@ -461,7 +508,7 @@ func extractTrimmedAudio(from sourceURL: URL, trimIn: Double, trimOut: Double) t
 
 // MARK: - Waveform generation (moved to WaveformTileCache.swift)
 
-// MARK: - WaveformView (ScrollView + tiled CGImage + overlay)
+// MARK: - WaveformView (viewport-rendered waveform with pan + zoom)
 
 struct WaveformView: View {
     let waveformData: WaveformData
@@ -478,13 +525,15 @@ struct WaveformView: View {
     @Binding var zoom: Double
     @Binding var visibleStart: Double
     var onViewWidth: ((CGFloat) -> Void)?
+    var onCursorFraction: ((Double) -> Void)?
     let tileCache: WaveformTileCache
 
-    @State private var dragHandle: Int? = nil
+    @State private var dragHandle: Int? = nil   // 0=trimIn 1=trimOut -1=tap -2=chapter -3=pan
     @State private var dragChapterID: UUID? = nil
     @State private var dragStartTrimIn: Double = 0
     @State private var dragStartTrimOut: Double = 0
     @State private var dragStartChapterTime: Double = 0
+    @State private var dragStartVisibleStart: Double = 0
     @State private var lastMagnification: Double = 1.0
     @State private var viewportWidth: CGFloat = 700
 
@@ -492,16 +541,15 @@ struct WaveformView: View {
     private var fullWidth: CGFloat { viewportWidth * CGFloat(zoom) }
 
     private func clampStart(_ s: Double) -> Double { max(0, min(s, duration - visibleDuration)) }
-    /// Map time to x-coordinate within the full scrollable width.
-    private func fullXFor(_ t: Double) -> CGFloat {
-        CGFloat(t / duration) * fullWidth
+
+    /// Map a time value to an x-coordinate in viewport space.
+    private func viewportX(_ t: Double) -> CGFloat {
+        CGFloat((t - visibleStart) / visibleDuration) * viewportWidth
     }
-    /// Map x in viewport to time (for gesture handling via visibleStart).
-    private func xForViewport(_ t: Double, width: CGFloat) -> CGFloat {
-        CGFloat((t - visibleStart) / visibleDuration) * width
-    }
-    private func timeForViewport(_ x: CGFloat, width: CGFloat) -> Double {
-        max(0, min(duration, visibleStart + Double(x / width) * visibleDuration))
+
+    /// Map an x-coordinate in viewport space to a time value.
+    private func timeAt(_ x: CGFloat) -> Double {
+        max(0, min(duration, visibleStart + Double(x / viewportWidth) * visibleDuration))
     }
 
     var body: some View {
@@ -510,173 +558,171 @@ struct WaveformView: View {
             let h = geo.size.height
             let _ = DispatchQueue.main.async { viewportWidth = w; onViewWidth?(w) }
 
-            ZStack {
-                // Layer 1: Scrollable tiled waveform with overlays drawn in content
-                ScrollView(.horizontal, showsIndicators: zoom > 1.01) {
-                    ZStack(alignment: .topLeading) {
-                        // Waveform tiles
-                        WaveformTiledContent(
-                            waveformData: waveformData,
-                            duration: duration,
-                            trimIn: trimIn,
-                            trimOut: trimOut,
-                            tileCache: tileCache,
-                            viewportWidth: w,
-                            height: h,
-                            zoom: zoom
-                        )
+            ZStack(alignment: .topLeading) {
+                // Layer 1: Tiled waveform — only renders the visible slice
+                WaveformTiledContent(
+                    waveformData: waveformData,
+                    duration: duration,
+                    trimIn: trimIn,
+                    trimOut: trimOut,
+                    tileCache: tileCache,
+                    viewportWidth: w,
+                    visibleStart: visibleStart,
+                    visibleDuration: visibleDuration,
+                    height: h,
+                    zoom: zoom
+                )
 
-                        // Overlay: dim regions, handles, chapters, playhead — all at time positions
-                        Canvas { ctx, size in
-                            let fw = size.width
-                            let fh = size.height
-                            guard duration > 0 else { return }
+                // Layer 2: Overlay — dim regions, handles, chapters, playhead in viewport coords
+                Canvas { ctx, size in
+                    let vw = size.width
+                    let fh = size.height
+                    guard duration > 0 else { return }
 
-                            // Dim outside trim
-                            let trimInX  = fullXFor(trimIn)
-                            let trimOutX = fullXFor(trimOut)
-                            let dimColor = Color.black.opacity(0.35)
-                            if trimInX > 0 {
-                                ctx.fill(Path(CGRect(x: 0, y: 0, width: trimInX, height: fh)), with: .color(dimColor))
-                            }
-                            if trimOutX < fw {
-                                ctx.fill(Path(CGRect(x: trimOutX, y: 0, width: fw - trimOutX, height: fh)), with: .color(dimColor))
-                            }
+                    // Dim outside trim
+                    let trimInX  = viewportX(trimIn)
+                    let trimOutX = viewportX(trimOut)
+                    let dimColor = Color.black.opacity(0.35)
+                    if trimInX > 0 {
+                        ctx.fill(Path(CGRect(x: 0, y: 0, width: min(trimInX, vw), height: fh)), with: .color(dimColor))
+                    }
+                    if trimOutX < vw {
+                        ctx.fill(Path(CGRect(x: max(0, trimOutX), y: 0, width: vw - max(0, trimOutX), height: fh)), with: .color(dimColor))
+                    }
 
-                            // Chapter markers
-                            var lastLabelX: CGFloat = -100
-                            for chapter in chapters.sorted(by: { $0.timeSeconds < $1.timeSeconds }) {
-                                let inputTime = chapter.timeSeconds + trimInOffset
-                                let x = fullXFor(inputTime)
-                                guard x >= 0 && x <= fw else { continue }
-                                let isDragging = chapter.id == dragChapterID
-                                let chapterColor = Color.accentColor
-                                ctx.stroke(Path { p in p.move(to: CGPoint(x: x, y: 0)); p.addLine(to: CGPoint(x: x, y: fh)) },
-                                           with: .color(isDragging ? Color.yellow : chapterColor.opacity(0.8)),
-                                           lineWidth: isDragging ? 2 : 1.5)
-                                ctx.fill(Path(ellipseIn: CGRect(x: x - 4, y: fh * 0.5 - 4, width: 8, height: 8)),
-                                         with: .color(isDragging ? Color.yellow : chapterColor.opacity(0.7)))
-                                if x - lastLabelX >= 30 {
-                                    let label = chapter.title.isEmpty ? "●" : String(chapter.title.prefix(12))
-                                    ctx.draw(Text(label).font(.system(size: 9, weight: isDragging ? .bold : .regular))
-                                                .foregroundStyle(isDragging ? Color.yellow : chapterColor),
-                                             at: CGPoint(x: x + 3, y: 8), anchor: .leading)
-                                    lastLabelX = x
+                    // Chapter markers
+                    var lastLabelX: CGFloat = -100
+                    for chapter in chapters.sorted(by: { $0.timeSeconds < $1.timeSeconds }) {
+                        let inputTime = chapter.timeSeconds + trimInOffset
+                        let x = viewportX(inputTime)
+                        guard x >= 0 && x <= vw else { continue }
+                        let isDragging = chapter.id == dragChapterID
+                        let chapterColor = Color.accentColor
+                        ctx.stroke(Path { p in p.move(to: CGPoint(x: x, y: 0)); p.addLine(to: CGPoint(x: x, y: fh)) },
+                                   with: .color(isDragging ? Color.yellow : chapterColor.opacity(0.8)),
+                                   lineWidth: isDragging ? 2 : 1.5)
+                        ctx.fill(Path(ellipseIn: CGRect(x: x - 4, y: fh * 0.5 - 4, width: 8, height: 8)),
+                                 with: .color(isDragging ? Color.yellow : chapterColor.opacity(0.7)))
+                        if x - lastLabelX >= 30 {
+                            let label = chapter.title.isEmpty ? "●" : String(chapter.title.prefix(12))
+                            ctx.draw(Text(label).font(.system(size: 9, weight: isDragging ? .bold : .regular))
+                                        .foregroundStyle(isDragging ? Color.yellow : chapterColor),
+                                     at: CGPoint(x: x + 3, y: 8), anchor: .leading)
+                            lastLabelX = x
+                        }
+                    }
+
+                    // Trim handles
+                    func drawHandle(x: CGFloat) {
+                        guard x >= -9 && x <= vw + 9 else { return }
+                        ctx.stroke(Path { p in p.move(to: CGPoint(x: x, y: 0)); p.addLine(to: CGPoint(x: x, y: fh)) },
+                                   with: .color(.white.opacity(0.35)), lineWidth: 6)
+                        ctx.stroke(Path { p in p.move(to: CGPoint(x: x, y: 0)); p.addLine(to: CGPoint(x: x, y: fh)) },
+                                   with: .color(.orange), lineWidth: 2)
+                        ctx.fill(Path { p in
+                            p.move(to: CGPoint(x: x - 9, y: 0)); p.addLine(to: CGPoint(x: x + 9, y: 0))
+                            p.addLine(to: CGPoint(x: x, y: 14)); p.closeSubpath()
+                        }, with: .color(.orange))
+                        ctx.fill(Path { p in
+                            p.move(to: CGPoint(x: x - 9, y: fh)); p.addLine(to: CGPoint(x: x + 9, y: fh))
+                            p.addLine(to: CGPoint(x: x, y: fh - 14)); p.closeSubpath()
+                        }, with: .color(.orange))
+                    }
+                    drawHandle(x: trimInX)
+                    drawHandle(x: trimOutX)
+
+                    // Playhead
+                    let phX = viewportX(playhead)
+                    if phX >= 0 && phX <= vw {
+                        ctx.stroke(Path { p in p.move(to: CGPoint(x: phX, y: 0)); p.addLine(to: CGPoint(x: phX, y: fh)) },
+                                   with: .color(Color(red: 1.0, green: 0.78, blue: 0.0)), lineWidth: 1.5)
+                    }
+                }
+                .allowsHitTesting(false)
+
+                // Layer 3: Gesture capture
+                Color.clear
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                guard duration > 0 else { return }
+                                let startX = value.startLocation.x
+                                let curX   = value.location.x
+                                let dx = value.translation.width
+                                let dy = value.translation.height
+
+                                if dragHandle == nil {
+                                    // Decide what was grabbed at the initial touch point
+                                    let inX  = viewportX(trimIn)
+                                    let outX = viewportX(trimOut)
+                                    let dIn  = abs(startX - inX)
+                                    let dOut = abs(startX - outX)
+                                    if dIn <= 12 || dOut <= 12 {
+                                        dragHandle = dIn < dOut ? 0 : 1
+                                        dragStartTrimIn = trimIn
+                                        dragStartTrimOut = trimOut
+                                    } else {
+                                        var best: (dist: CGFloat, id: UUID)? = nil
+                                        for ch in chapters {
+                                            let cx = viewportX(ch.timeSeconds + trimInOffset)
+                                            let d  = abs(startX - cx)
+                                            if d <= 10, best == nil || d < best!.dist { best = (d, ch.id) }
+                                        }
+                                        if let hit = best {
+                                            dragHandle = -2; dragChapterID = hit.id
+                                            dragStartChapterTime = chapters.first(where: { $0.id == hit.id })?.timeSeconds ?? 0
+                                        } else if abs(dx) > 4 && abs(dx) >= abs(dy) && zoom > 1.0 {
+                                            // Horizontal pan — only when zoomed in and clearly horizontal
+                                            dragHandle = -3
+                                            dragStartVisibleStart = visibleStart
+                                        } else if abs(dx) > 4 || abs(dy) > 4 {
+                                            dragHandle = -1  // unrecognised drag — ignore
+                                        }
+                                        // if movement < 4pt in any direction, leave dragHandle nil (possible tap)
+                                    }
+                                }
+
+                                switch dragHandle {
+                                case 0:
+                                    trimIn = min(timeAt(curX), trimOut - 0.5); onSeek(trimIn)
+                                case 1:
+                                    trimOut = max(timeAt(curX), trimIn + 0.5); onSeek(trimOut)
+                                case -2:
+                                    if let id = dragChapterID {
+                                        let time = timeAt(curX)
+                                        onChapterMove?(id, max(0, time - trimInOffset))
+                                        onSeek(time)
+                                    }
+                                case -3:
+                                    // Pan: shift visibleStart opposite to drag direction
+                                    let timeDelta = Double(-dx / viewportWidth) * visibleDuration
+                                    visibleStart = clampStart(dragStartVisibleStart + timeDelta)
+                                default: break
                                 }
                             }
-
-                            // Trim handles
-                            func drawHandle(x: CGFloat) {
-                                guard x >= -9 && x <= fw + 9 else { return }
-                                ctx.stroke(Path { p in p.move(to: CGPoint(x: x, y: 0)); p.addLine(to: CGPoint(x: x, y: fh)) },
-                                           with: .color(.white.opacity(0.35)), lineWidth: 6)
-                                ctx.stroke(Path { p in p.move(to: CGPoint(x: x, y: 0)); p.addLine(to: CGPoint(x: x, y: fh)) },
-                                           with: .color(.orange), lineWidth: 2)
-                                ctx.fill(Path { p in
-                                    p.move(to: CGPoint(x: x - 9, y: 0)); p.addLine(to: CGPoint(x: x + 9, y: 0))
-                                    p.addLine(to: CGPoint(x: x, y: 14)); p.closeSubpath()
-                                }, with: .color(.orange))
-                                ctx.fill(Path { p in
-                                    p.move(to: CGPoint(x: x - 9, y: fh)); p.addLine(to: CGPoint(x: x + 9, y: fh))
-                                    p.addLine(to: CGPoint(x: x, y: fh - 14)); p.closeSubpath()
-                                }, with: .color(.orange))
-                            }
-                            drawHandle(x: trimInX)
-                            drawHandle(x: trimOutX)
-
-                            // Playhead
-                            let phX = fullXFor(playhead)
-                            if phX >= 0 && phX <= fw {
-                                ctx.stroke(Path { p in p.move(to: CGPoint(x: phX, y: 0)); p.addLine(to: CGPoint(x: phX, y: fh)) },
-                                           with: .color(Color(red: 1.0, green: 0.78, blue: 0.0)), lineWidth: 1.5)
-                            }
-                        }
-                        .allowsHitTesting(false)
-
-                        // Gesture layer — inside scroll content so positions map to time
-                        Color.clear
-                            .contentShape(Rectangle())
-                            .gesture(
-                                DragGesture(minimumDistance: 0)
-                                    .onChanged { value in
-                                        guard duration > 0 else { return }
-                                        // Positions are in scroll content coordinates (0...fullWidth)
-                                        let startX = value.startLocation.x
-                                        let curX   = value.location.x
-                                        if dragHandle == nil {
-                                            let inX  = fullXFor(trimIn)
-                                            let outX = fullXFor(trimOut)
-                                            let dIn  = abs(startX - inX)
-                                            let dOut = abs(startX - outX)
-                                            if dIn <= 12 || dOut <= 12 {
-                                                dragHandle = dIn < dOut ? 0 : 1
-                                                dragStartTrimIn = trimIn
-                                                dragStartTrimOut = trimOut
-                                            } else {
-                                                var best: (dist: CGFloat, id: UUID)? = nil
-                                                for ch in chapters {
-                                                    let cx = fullXFor(ch.timeSeconds + trimInOffset)
-                                                    let d  = abs(startX - cx)
-                                                    if d <= 10, best == nil || d < best!.dist { best = (d, ch.id) }
-                                                }
-                                                if let hit = best {
-                                                    dragHandle = -2; dragChapterID = hit.id
-                                                    dragStartChapterTime = chapters.first(where: { $0.id == hit.id })?.timeSeconds ?? 0
-                                                } else {
-                                                    dragHandle = -1
-                                                }
-                                            }
-                                        }
-                                        let time = max(0, min(duration, Double(curX / fullWidth) * duration))
-                                        switch dragHandle {
-                                        case 0: trimIn = min(time, trimOut - 0.5); onSeek(trimIn)
-                                        case 1: trimOut = max(time, trimIn + 0.5); onSeek(trimOut)
-                                        case -2:
-                                            if let id = dragChapterID {
-                                                onChapterMove?(id, max(0, time - trimInOffset))
-                                                onSeek(time)
-                                            }
-                                        default: break
-                                        }
+                            .onEnded { value in
+                                let totalMove = abs(value.translation.width) + abs(value.translation.height)
+                                if dragHandle == nil || (dragHandle == -1 && totalMove < 5) {
+                                    // Tap — seek to tapped position
+                                    onSeek(timeAt(value.startLocation.x))
+                                }
+                                if dragHandle == 0 || dragHandle == 1 {
+                                    if trimIn != dragStartTrimIn || trimOut != dragStartTrimOut {
+                                        onTrimDragEnd?(dragStartTrimIn, dragStartTrimOut)
                                     }
-                                    .onEnded { value in
-                                        if dragHandle == -1 && abs(value.translation.width) < 5 {
-                                            let time = max(0, min(duration, Double(value.location.x / fullWidth) * duration))
-                                            onSeek(time)
-                                        }
-                                        if dragHandle == 0 || dragHandle == 1 {
-                                            if trimIn != dragStartTrimIn || trimOut != dragStartTrimOut {
-                                                onTrimDragEnd?(dragStartTrimIn, dragStartTrimOut)
-                                            }
-                                        }
-                                        if dragHandle == -2, let id = dragChapterID {
-                                            let currentTime = chapters.first(where: { $0.id == id })?.timeSeconds ?? 0
-                                            if currentTime != dragStartChapterTime {
-                                                onChapterDragEnd?(id, dragStartChapterTime)
-                                            }
-                                        }
-                                        dragHandle = nil; dragChapterID = nil
+                                }
+                                if dragHandle == -2, let id = dragChapterID {
+                                    let currentTime = chapters.first(where: { $0.id == id })?.timeSeconds ?? 0
+                                    if currentTime != dragStartChapterTime {
+                                        onChapterDragEnd?(id, dragStartChapterTime)
                                     }
-                            )
-                    }
-                    .frame(width: fullWidth, height: h)
-                    .background(GeometryReader { inner in
-                        Color.clear.preference(
-                            key: ScrollOffsetKey.self,
-                            value: inner.frame(in: .named("waveformScroll")).minX
-                        )
-                    })
-                }
-                .coordinateSpace(name: "waveformScroll")
-                .onPreferenceChange(ScrollOffsetKey.self) { offset in
-                    let newStart = Double(-offset / fullWidth) * duration
-                    let clamped = clampStart(newStart)
-                    if abs(clamped - visibleStart) > 0.001 {
-                        visibleStart = clamped
-                    }
-                }
+                                }
+                                dragHandle = nil; dragChapterID = nil
+                            }
+                    )
 
-                // Fixed viewport overlay: zoom indicator only
+                // Zoom level indicator
                 if zoom > 1.01 {
                     VStack {
                         HStack {
@@ -692,6 +738,7 @@ struct WaveformView: View {
                     .allowsHitTesting(false)
                 }
             }
+            .clipped()
             .gesture(
                 MagnificationGesture()
                     .onChanged { value in
@@ -709,6 +756,11 @@ struct WaveformView: View {
                 withAnimation(.easeOut(duration: 0.2)) { zoom = 1.0; visibleStart = 0 }
                 tileCache.invalidateAll()
             }
+            .onContinuousHover { phase in
+                if case .active(let loc) = phase, viewportWidth > 0 {
+                    onCursorFraction?(Double(loc.x / viewportWidth))
+                }
+            }
             .onChange(of: playhead) { ph in
                 guard zoom > 1.0 else { return }
                 let vEnd = visibleStart + visibleDuration
@@ -721,13 +773,7 @@ struct WaveformView: View {
     }
 }
 
-// Preference key to read scroll offset
-private struct ScrollOffsetKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
-}
-
-// MARK: - Tiled waveform content (inside ScrollView)
+// MARK: - Tiled waveform content (viewport-only rendering)
 
 private struct WaveformTiledContent: View {
     let waveformData: WaveformData
@@ -736,20 +782,24 @@ private struct WaveformTiledContent: View {
     let trimOut: Double
     let tileCache: WaveformTileCache
     let viewportWidth: CGFloat
+    let visibleStart: Double
+    let visibleDuration: Double
     let height: CGFloat
     let zoom: Double
 
     var body: some View {
         Canvas { ctx, size in
-            let fullW = size.width
+            let vw = size.width
             let h = size.height
-            guard duration > 0, fullW > 0 else { return }
+            guard duration > 0, vw > 0, visibleDuration > 0 else { return }
 
             let (peaks, fpp) = waveformData.peaks(forZoom: zoom, viewportWidth: viewportWidth)
             guard !peaks.isEmpty else { return }
 
+            // Full virtual content width at this zoom level
+            let fullW = viewportWidth * CGFloat(zoom)
             let tileW = tileCache.tileWidth
-            let tileCount = Int(ceil(fullW / tileW))
+            let totalTiles = Int(ceil(fullW / tileW))
             let quantZoom = WaveformTileCache.quantiseZoom(zoom)
             let trimInHash = Int(trimIn * 100)
             let trimOutHash = Int(trimOut * 100)
@@ -757,10 +807,20 @@ private struct WaveformTiledContent: View {
             let accentCG = NSColor.controlAccentColor.cgColor
             let dimCG = NSColor.secondaryLabelColor.withAlphaComponent(0.4).cgColor
 
-            for ti in 0..<tileCount {
-                let tileX = CGFloat(ti) * tileW
-                let tileOriginSec = Double(tileX / fullW) * duration
-                let tileDurSec = Double(tileW / fullW) * duration
+            // Pixel offset of the visible window within the full virtual content
+            let visibleStartPx = CGFloat(visibleStart / duration) * fullW
+
+            // Only render tiles that overlap the visible viewport
+            let firstTile = max(0, Int(visibleStartPx / tileW))
+            let lastTile  = min(totalTiles - 1, Int((visibleStartPx + vw) / tileW))
+            guard firstTile <= lastTile else { return }
+
+            for ti in firstTile...lastTile {
+                let tileOriginPx  = CGFloat(ti) * tileW
+                let tileOriginSec = Double(tileOriginPx / fullW) * duration
+                let tileDurSec    = Double(tileW / fullW) * duration
+                let drawX         = tileOriginPx - visibleStartPx  // x in viewport space
+
                 let key = WaveformTileCache.TileKey(
                     zoomLevel: quantZoom, tileIndex: ti,
                     trimInHash: trimInHash, trimOutHash: trimOutHash
@@ -780,7 +840,7 @@ private struct WaveformTiledContent: View {
                 }
 
                 if let image {
-                    let rect = CGRect(x: tileX, y: 0, width: tileW, height: h)
+                    let rect = CGRect(x: drawX, y: 0, width: tileW, height: h)
                     ctx.draw(Image(decorative: image, scale: 1), in: rect)
                 }
             }
@@ -853,6 +913,7 @@ struct ContentView: View {
     @State var isArtworkTargeted = false
     @State private var scrollMonitor: Any?
     @State private var clickMonitor: Any?
+    @State private var keyMonitor: Any?
     @State private var showLog = false
     @AppStorage("dechaff.youtube.channelURL") var ytChannelURL = "https://www.youtube.com/@cityonahillnz"
     @AppStorage("dechaff.youtube.videoLimit") var ytVideoLimit = 10
@@ -1312,6 +1373,7 @@ struct ContentView: View {
                     zoom: $model.waveformZoom,
                     visibleStart: $model.waveformVisibleStart,
                     onViewWidth: { model.waveformViewWidth = $0 },
+                    onCursorFraction: { model.waveformCursorFraction = $0 },
                     tileCache: model.tileCache
                 )
             }
@@ -1452,6 +1514,21 @@ struct ContentView: View {
     // MARK: - Event Monitors
 
     private func setupMonitors() {
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // Let text fields handle their own keys
+            if let responder = NSApp.keyWindow?.firstResponder,
+               responder is NSTextView || responder is NSTextField {
+                return event
+            }
+            // Spacebar — play/pause on waveform steps
+            if event.keyCode == 49,
+               self.model.inputURL != nil,
+               self.currentStep == 1 || self.currentStep == 3 {
+                self.model.togglePlayback()
+                return nil
+            }
+            return event
+        }
         clickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
             if let window = NSApp.keyWindow,
                let hit = window.contentView?.hitTest(event.locationInWindow),
@@ -1462,16 +1539,24 @@ struct ContentView: View {
         }
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
             guard self.model.inputURL != nil, self.currentStep == 1 || self.currentStep == 3 else { return event }
-            // Only consume vertical scroll for zoom; let horizontal pass through to the native ScrollView
             let dy = Double(event.scrollingDeltaY)
-            guard abs(dy) > abs(Double(event.scrollingDeltaX)) else { return event }
-            guard abs(dy) > 0.5 else { return event }
-            self.model.waveformZoomScroll(dy: dy)
+            let dx = Double(event.scrollingDeltaX)
+            let precise = event.hasPreciseScrollingDeltas
+            if abs(dy) > abs(dx) {
+                // Vertical — zoom
+                guard abs(dy) > 0.5 else { return event }
+                self.model.waveformZoomScroll(dy: dy, isPrecise: precise)
+            } else {
+                // Horizontal — pan (only when zoomed in)
+                guard abs(dx) > 0.5, self.model.waveformZoom > 1.0 else { return event }
+                self.model.waveformPanScroll(dx: dx, isPrecise: precise)
+            }
             return nil
         }
     }
 
     private func teardownMonitors() {
+        if let m = keyMonitor    { NSEvent.removeMonitor(m); keyMonitor = nil }
         if let m = scrollMonitor { NSEvent.removeMonitor(m); scrollMonitor = nil }
         if let m = clickMonitor  { NSEvent.removeMonitor(m); clickMonitor = nil }
     }

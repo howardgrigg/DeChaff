@@ -17,8 +17,19 @@ enum ClaudeAPIError: LocalizedError {
     }
 }
 
+enum ClaudeModel {
+    static let knownModels: [(name: String, id: String)] = [
+        ("Claude Sonnet 4.6 (recommended)", "claude-sonnet-4-6"),
+        ("Claude Haiku 4.5",                "claude-haiku-4-5-20251001"),
+        ("Claude Opus 4.6",                 "claude-opus-4-6"),
+        ("Claude 3.5 Sonnet",               "claude-3-5-sonnet-20241022"),
+        ("Claude 3.5 Haiku",                "claude-3-5-haiku-20241022"),
+    ]
+    static let defaultID = "claude-sonnet-4-6"
+}
+
 enum ClaudeAPIClient {
-    static func sendMessage(apiKey: String, systemPrompt: String, transcript: String) async throws -> String {
+    static func sendMessage(apiKey: String, model: String, systemPrompt: String, transcript: String) async throws -> String {
         let url = URL(string: "https://api.anthropic.com/v1/messages")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -27,7 +38,7 @@ enum ClaudeAPIClient {
         request.setValue("application/json", forHTTPHeaderField: "content-type")
 
         let body: [String: Any] = [
-            "model": "claude-sonnet-4-latest",
+            "model": model.isEmpty ? ClaudeModel.defaultID : model,
             "max_tokens": 4096,
             "system": systemPrompt,
             "messages": [
