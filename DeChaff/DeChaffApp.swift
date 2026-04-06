@@ -18,9 +18,17 @@ struct DeChaffApp: App {
                 }
                 .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
                 .onOpenURL { url in
-                    guard url.isFileURL else { return }
-                    NSDocumentController.shared.noteNewRecentDocumentURL(url)
-                    NotificationCenter.default.post(name: .openAudioFile, object: url)
+                    if url.isFileURL {
+                        NSDocumentController.shared.noteNewRecentDocumentURL(url)
+                        NotificationCenter.default.post(name: .openAudioFile, object: url)
+                    } else if url.scheme == "dechaff",
+                              url.host == "download",
+                              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+                              let sourceURL = components.queryItems?.first(where: { $0.name == "url" })?.value,
+                              !sourceURL.isEmpty {
+                        NSApp.activate(ignoringOtherApps: true)
+                        NotificationCenter.default.post(name: .downloadFromURL, object: sourceURL)
+                    }
                 }
         }
         .handlesExternalEvents(matching: ["*"])
@@ -39,5 +47,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 extension Notification.Name {
-    static let openAudioFile = Notification.Name("openAudioFile")
+    static let openAudioFile   = Notification.Name("openAudioFile")
+    static let downloadFromURL = Notification.Name("downloadFromURL")
 }

@@ -977,6 +977,13 @@ struct ContentView: View {
             model.loadFile(url: url)
             withAnimation { currentStep = 1 }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .downloadFromURL)) { notif in
+            guard let rawURL = notif.object as? String else { return }
+            youtube.selectURL(rawURL, manager: ytManager) { fileURL in
+                model.loadFile(url: fileURL)
+                withAnimation { currentStep = 1 }
+            }
+        }
     }
 
     // MARK: - App Header
