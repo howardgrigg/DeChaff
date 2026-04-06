@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DeChaff — Sermon Audio for Podcasting</title>
+  <meta name="description" content="DeChaff is a free macOS app that prepares church sermon recordings for podcast distribution. Voice isolation, AI metadata, chapter markers, and one-click processing." />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --blue:    #2563eb;
+      --blue-lt: #3b82f6;
+      --dark:    #0f172a;
+      --dark2:   #1e293b;
+      --mid:     #334155;
+      --muted:   #64748b;
+      --border:  #e2e8f0;
+      --light:   #f8fafc;
+      --white:   #ffffff;
+      --radius:  14px;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      background: var(--white);
+      color: var(--dark);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── NAV ── */
+    nav {
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(255,255,255,0.85);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-inner {
+      max-width: 1100px; margin: 0 auto;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 24px;
+    }
+    .nav-logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .nav-logo img { width: 32px; height: 32px; border-radius: 7px; }
+    .nav-logo span { font-size: 17px; font-weight: 700; color: var(--dark); }
+    .nav-links { display: flex; gap: 28px; list-style: none; }
+    .nav-links a { color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 500; transition: color .15s; }
+    .nav-links a:hover { color: var(--dark); }
+    .nav-cta {
+      background: var(--blue); color: var(--white);
+      padding: 8px 18px; border-radius: 8px;
+      font-size: 14px; font-weight: 600; text-decoration: none;
+      transition: background .15s;
+    }
+    .nav-cta:hover { background: var(--blue-lt); }
+
+    /* ── HERO ── */
+    .hero {
+      background: linear-gradient(160deg, var(--dark) 0%, #1a2d5a 100%);
+      color: var(--white);
+      text-align: center;
+      padding: 96px 24px 72px;
+      overflow: hidden;
+    }
+    .hero-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 100px; padding: 5px 14px;
+      font-size: 13px; font-weight: 500; color: rgba(255,255,255,0.8);
+      margin-bottom: 28px;
+    }
+    .hero-badge span { color: #93c5fd; font-weight: 600; }
+    .hero-icon { width: 96px; height: 96px; border-radius: 22px; margin: 0 auto 24px; display: block; box-shadow: 0 24px 48px rgba(0,0,0,0.4); }
+    .hero h1 { font-size: clamp(36px, 6vw, 60px); font-weight: 800; letter-spacing: -1.5px; line-height: 1.1; margin-bottom: 20px; }
+    .hero h1 em { font-style: normal; color: #93c5fd; }
+    .hero p { font-size: clamp(16px, 2.5vw, 20px); color: rgba(255,255,255,0.7); max-width: 600px; margin: 0 auto 36px; }
+    .hero-actions { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+    .btn-primary {
+      background: var(--blue-lt); color: var(--white);
+      padding: 14px 28px; border-radius: 10px;
+      font-size: 16px; font-weight: 700; text-decoration: none;
+      display: inline-flex; align-items: center; gap: 8px;
+      transition: background .15s, transform .15s;
+    }
+    .btn-primary:hover { background: #60a5fa; transform: translateY(-1px); }
+    .btn-secondary {
+      background: rgba(255,255,255,0.1); color: var(--white);
+      border: 1px solid rgba(255,255,255,0.25);
+      padding: 14px 28px; border-radius: 10px;
+      font-size: 16px; font-weight: 600; text-decoration: none;
+      transition: background .15s;
+    }
+    .btn-secondary:hover { background: rgba(255,255,255,0.18); }
+    .hero-req { margin-top: 20px; font-size: 13px; color: rgba(255,255,255,0.4); }
+
+    /* ── SCREENSHOTS ── */
+    .screenshots {
+      background: var(--dark);
+      padding: 0 24px 80px;
+      overflow: hidden;
+    }
+    .screenshot-scroll {
+      max-width: 1100px; margin: 0 auto;
+      display: flex; gap: 24px; justify-content: center; flex-wrap: wrap;
+    }
+    .screenshot-card {
+      flex: 0 0 auto;
+      border-radius: 16px; overflow: hidden;
+      box-shadow: 0 32px 80px rgba(0,0,0,0.6);
+      border: 1px solid rgba(255,255,255,0.08);
+      transition: transform .2s;
+      max-width: 320px;
+    }
+    .screenshot-card:hover { transform: translateY(-4px); }
+    .screenshot-card img { width: 100%; display: block; }
+    .screenshot-caption {
+      background: rgba(255,255,255,0.05);
+      padding: 12px 16px;
+      font-size: 13px; color: rgba(255,255,255,0.5); text-align: center;
+    }
+
+    /* ── SECTIONS ── */
+    section { padding: 88px 24px; }
+    .section-inner { max-width: 1100px; margin: 0 auto; }
+    .section-label {
+      display: inline-block;
+      font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+      color: var(--blue); margin-bottom: 12px;
+    }
+    .section-title { font-size: clamp(28px, 4vw, 42px); font-weight: 800; letter-spacing: -.5px; line-height: 1.15; margin-bottom: 16px; }
+    .section-sub { font-size: 18px; color: var(--muted); max-width: 560px; }
+
+    /* ── STEPS ── */
+    #how { background: var(--light); }
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 2px; margin-top: 56px;
+      background: var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .step {
+      background: var(--white);
+      padding: 32px 24px;
+    }
+    .step-num {
+      width: 36px; height: 36px; border-radius: 50%;
+      background: var(--blue); color: var(--white);
+      font-size: 15px; font-weight: 800;
+      display: flex; align-items: center; justify-content: center;
+      margin-bottom: 16px;
+    }
+    .step h3 { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+    .step p { font-size: 14px; color: var(--muted); line-height: 1.5; }
+
+    /* ── FEATURES ── */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 24px; margin-top: 56px;
+    }
+    .feature-card {
+      background: var(--light);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .feature-card:hover { border-color: #bfdbfe; box-shadow: 0 4px 24px rgba(37,99,235,0.08); }
+    .feature-icon {
+      width: 44px; height: 44px; border-radius: 10px;
+      background: #dbeafe; display: flex; align-items: center; justify-content: center;
+      margin-bottom: 16px;
+    }
+    .feature-icon svg { width: 22px; height: 22px; stroke: var(--blue); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .feature-card h3 { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+    .feature-card p { font-size: 14px; color: var(--muted); line-height: 1.55; }
+
+    /* ── KEYBOARD ── */
+    #shortcuts { background: var(--dark2); color: var(--white); }
+    #shortcuts .section-title { color: var(--white); }
+    #shortcuts .section-sub { color: rgba(255,255,255,0.5); }
+    .keys-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px; margin-top: 48px;
+    }
+    .key-row {
+      display: flex; align-items: center; gap: 12px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 10px; padding: 12px 16px;
+    }
+    .key-row .keys { display: flex; gap: 4px; flex-shrink: 0; }
+    kbd {
+      background: rgba(255,255,255,0.12);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 5px; padding: 3px 8px;
+      font-family: -apple-system, monospace;
+      font-size: 12px; font-weight: 600; color: var(--white);
+      white-space: nowrap;
+    }
+    .key-row .key-label { font-size: 13px; color: rgba(255,255,255,0.6); }
+
+    /* ── AI ── */
+    #ai { background: linear-gradient(135deg, #eff6ff 0%, #f0fdf4 100%); }
+    .ai-grid {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 48px; margin-top: 56px; align-items: center;
+    }
+    @media (max-width: 720px) { .ai-grid { grid-template-columns: 1fr; } }
+    .ai-points { list-style: none; display: flex; flex-direction: column; gap: 20px; }
+    .ai-point { display: flex; gap: 14px; align-items: flex-start; }
+    .ai-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--blue);
+      flex-shrink: 0; margin-top: 7px;
+    }
+    .ai-point strong { display: block; font-size: 15px; margin-bottom: 2px; }
+    .ai-point p { font-size: 14px; color: var(--muted); }
+    .ai-visual {
+      background: var(--white); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 24px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.06);
+    }
+    .ai-visual-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 14px;
+    }
+    .ai-visual-row:last-child { border-bottom: none; }
+    .ai-visual-row .label { color: var(--muted); font-weight: 500; }
+    .ai-visual-row .value { font-weight: 600; color: var(--dark); }
+    .ai-visual-title {
+      font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+      color: var(--muted); margin-bottom: 12px;
+    }
+    .ai-tag {
+      display: inline-flex; align-items: center; gap: 5px;
+      background: #dbeafe; color: var(--blue);
+      padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700;
+      margin-left: 6px; vertical-align: middle;
+    }
+
+    /* ── FOOTER ── */
+    footer {
+      background: var(--dark);
+      color: rgba(255,255,255,0.4);
+      text-align: center; padding: 48px 24px;
+      font-size: 14px;
+    }
+    footer a { color: rgba(255,255,255,0.5); text-decoration: none; }
+    footer a:hover { color: var(--white); }
+    footer .footer-logo { display: flex; align-items: center; gap: 8px; justify-content: center; margin-bottom: 16px; }
+    footer .footer-logo img { width: 28px; height: 28px; border-radius: 6px; opacity: 0.8; }
+    footer .footer-logo span { font-size: 16px; font-weight: 700; color: rgba(255,255,255,0.7); }
+    footer p { margin-top: 8px; }
+
+    /* ── UTIL ── */
+    @media (max-width: 600px) {
+      .nav-links { display: none; }
+      .steps { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="nav-inner">
+    <a class="nav-logo" href="#">
+      <img src="images/DeChaff-iOS-Default-1024x1024@1x.png" alt="DeChaff icon" />
+      <span>DeChaff</span>
+    </a>
+    <ul class="nav-links">
+      <li><a href="#how">How it works</a></li>
+      <li><a href="#features">Features</a></li>
+      <li><a href="#ai">AI</a></li>
+      <li><a href="#shortcuts">Shortcuts</a></li>
+    </ul>
+    <a class="nav-cta" href="https://github.com/howardgrigg/DeChaff" target="_blank" rel="noopener">View on GitHub</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-badge">Free &amp; open source &nbsp;·&nbsp; <span>macOS 13+</span></div>
+  <img class="hero-icon" src="images/DeChaff-iOS-Default-1024x1024@1x.png" alt="DeChaff app icon" />
+  <h1>Sermon audio,<br /><em>ready to publish.</em></h1>
+  <p>DeChaff takes your raw church recording and turns it into a clean, tagged, chapter-marked podcast episode — in five steps.</p>
+  <div class="hero-actions">
+    <a class="btn-primary" href="https://github.com/howardgrigg/DeChaff" target="_blank" rel="noopener">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.477 2 2 6.477 2 12c0 4.418 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.009-.868-.013-1.703-2.782.604-3.369-1.342-3.369-1.342-.454-1.154-1.11-1.462-1.11-1.462-.908-.62.069-.608.069-.608 1.003.07 1.531 1.031 1.531 1.031.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0 1 12 6.836a9.59 9.59 0 0 1 2.504.337c1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.202 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.163 22 16.418 22 12c0-5.523-4.477-10-10-10z"/></svg>
+      Download on GitHub
+    </a>
+    <a class="btn-secondary" href="#how">See how it works</a>
+  </div>
+  <p class="hero-req">Requires macOS 13 or later &nbsp;·&nbsp; Free, no account needed</p>
+</section>
+
+<!-- SCREENSHOTS -->
+<div class="screenshots">
+  <div class="screenshot-scroll">
+    <div class="screenshot-card">
+      <img src="images/InputTab.png" alt="DeChaff load step showing YouTube browser" />
+      <div class="screenshot-caption">Load from file or YouTube browser</div>
+    </div>
+    <div class="screenshot-card">
+      <img src="images/ChapterTab.png" alt="DeChaff chapter step showing waveform with markers" />
+      <div class="screenshot-caption">Waveform editor with chapter markers</div>
+    </div>
+    <div class="screenshot-card">
+      <img src="images/ExportTab.png" alt="DeChaff output step showing processing options" />
+      <div class="screenshot-caption">Processing options and one-click export</div>
+    </div>
+  </div>
+</div>
+
+<!-- HOW IT WORKS -->
+<section id="how">
+  <div class="section-inner">
+    <span class="section-label">How it works</span>
+    <h2 class="section-title">Five steps to a finished episode</h2>
+    <p class="section-sub">DeChaff guides you through a simple wizard. No audio engineering knowledge required.</p>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <h3>Load</h3>
+        <p>Drop a recording or pick a video from the built-in YouTube browser. AI fills in the sermon details automatically.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <h3>Trim</h3>
+        <p>Drag the orange handles to cut pre-service noise and dead air. Zoom in for precision with scroll-to-zoom.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <h3>Info</h3>
+        <p>Review the sermon title, Bible reading, preacher, series, date, and cover art — already filled in when loaded from YouTube.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <h3>Chapters</h3>
+        <p>Navigate to key moments and tap + to drop a chapter marker. Drag markers to fine-tune. Podcast apps show these as chapters.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">5</div>
+        <h3>Process</h3>
+        <p>Hit Process. DeChaff cleans the audio, normalises loudness, encodes MP3, and embeds all tags automatically.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section id="features">
+  <div class="section-inner">
+    <span class="section-label">Features</span>
+    <h2 class="section-title">Everything a church AV team needs</h2>
+    <p class="section-sub">Built by volunteers for volunteers — no complex settings to learn.</p>
+
+    <div class="features-grid">
+
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+        </div>
+        <h3>Voice Isolation</h3>
+        <p>Apple's built-in voice isolation engine strips background noise, room reverb, and crowd sounds — leaving only the speaker's voice.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        </div>
+        <h3>Loudness Normalisation</h3>
+        <p>Targets −16 LUFS (EBU R128) with dynamic compression and a soft limiter — consistent podcast volume every time.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+        </div>
+        <h3>YouTube Browser</h3>
+        <p>Browse your church's YouTube channel and download audio with one click. yt-dlp is bundled and updated automatically.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        </div>
+        <h3>AI Metadata Extraction</h3>
+        <p>Uses on-device Apple Intelligence to parse YouTube titles into sermon title, Bible reading, preacher, and series — before the download even finishes.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        </div>
+        <h3>AI Assistant</h3>
+        <p>Optionally sends the transcript to Claude after processing to draft a podcast episode title, description, and key themes. Powered by the Anthropic API.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+        </div>
+        <h3>Chapter Markers</h3>
+        <p>Drop chapter markers on the waveform at Bible reading, sermon, and other key moments. Embedded as ID3 CTOC/CHAP frames — compatible with all major podcast apps.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+        </div>
+        <h3>On-Device Transcription</h3>
+        <p>Generates a full text transcript using macOS speech recognition — entirely on-device, no data sent anywhere. Available on macOS 26+.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+        </div>
+        <h3>Waveform Editor</h3>
+        <p>Multi-resolution tiled waveform with scroll-to-zoom anchored on your cursor. Pan by scrolling horizontally or dragging. Double-tap to reset.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
+        </div>
+        <h3>Customisable Templates</h3>
+        <p>Tell DeChaff how your church formats YouTube titles so AI extraction works correctly. Customise the output filename format too — with a live preview.</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- AI SECTION -->
+<section id="ai">
+  <div class="section-inner">
+    <div class="ai-grid">
+      <div>
+        <span class="section-label">Powered by AI</span>
+        <h2 class="section-title">Metadata fills itself in</h2>
+        <p class="section-sub">From YouTube title to fully-tagged podcast episode — without typing a word.</p>
+        <ul class="ai-points" style="margin-top: 32px;">
+          <li class="ai-point">
+            <div class="ai-dot"></div>
+            <div>
+              <strong>On-device Apple Intelligence <span class="ai-tag">Tier 1</span></strong>
+              <p>Uses FoundationModels on macOS 26+ — private, instant, no API key needed.</p>
+            </div>
+          </li>
+          <li class="ai-point">
+            <div class="ai-dot"></div>
+            <div>
+              <strong>Claude API fallback <span class="ai-tag">Tier 2</span></strong>
+              <p>If Apple Intelligence isn't available, falls back to Anthropic's Claude API with your key.</p>
+            </div>
+          </li>
+          <li class="ai-point">
+            <div class="ai-dot"></div>
+            <div>
+              <strong>Built-in text parsing <span class="ai-tag">Tier 3</span></strong>
+              <p>A template-aware parser handles common formats even without any AI model.</p>
+            </div>
+          </li>
+          <li class="ai-point">
+            <div class="ai-dot"></div>
+            <div>
+              <strong>Your format, your rules</strong>
+              <p>Set your church's title format once in Settings so every extraction is accurate.</p>
+            </div>
+          </li>
+        </ul>
+      </div>
+      <div class="ai-visual">
+        <div class="ai-visual-title">Auto-extracted from YouTube title</div>
+        <div class="ai-visual-row">
+          <span class="label">Sermon Title</span>
+          <span class="value">The Good Shepherd</span>
+        </div>
+        <div class="ai-visual-row">
+          <span class="label">Bible Reading</span>
+          <span class="value">John 10:1–18</span>
+        </div>
+        <div class="ai-visual-row">
+          <span class="label">Preacher</span>
+          <span class="value">Rev. James Hart</span>
+        </div>
+        <div class="ai-visual-row">
+          <span class="label">Series</span>
+          <span class="value">Foundations</span>
+        </div>
+        <div class="ai-visual-row">
+          <span class="label">Date</span>
+          <span class="value">6 Apr 2026</span>
+        </div>
+        <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border);">
+          <div class="ai-visual-title">Output filename</div>
+          <code style="font-size: 12px; color: var(--blue); word-break: break-all;">2026-04-06 The Good Shepherd, John 10:1–18 | Rev. James Hart | Foundations.mp3</code>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- SHORTCUTS -->
+<section id="shortcuts">
+  <div class="section-inner">
+    <span class="section-label" style="color: #93c5fd;">Keyboard shortcuts</span>
+    <h2 class="section-title">Built for keyboard-first workflows</h2>
+    <p class="section-sub">Every step of the editing process has a keyboard shortcut — stay in the flow.</p>
+
+    <div class="keys-grid">
+      <div class="key-row">
+        <div class="keys"><kbd>Space</kbd> <kbd>K</kbd></div>
+        <span class="key-label">Play / pause</span>
+      </div>
+      <div class="key-row">
+        <div class="keys"><kbd>J</kbd> <kbd>←</kbd></div>
+        <span class="key-label">Scrub back 5 s</span>
+      </div>
+      <div class="key-row">
+        <div class="keys"><kbd>L</kbd> <kbd>→</kbd></div>
+        <span class="key-label">Scrub forward 5 s</span>
+      </div>
+      <div class="key-row">
+        <div class="keys"><kbd>I</kbd></div>
+        <span class="key-label">Set trim in point</span>
+      </div>
+      <div class="key-row">
+        <div class="keys"><kbd>O</kbd></div>
+        <span class="key-label">Set trim out point</span>
+      </div>
+      <div class="key-row">
+        <div class="keys"><kbd>M</kbd></div>
+        <span class="key-label">Add chapter marker</span>
+      </div>
+      <div class="key-row">
+        <div class="keys"><kbd>⌘1</kbd> – <kbd>⌘5</kbd></div>
+        <span class="key-label">Navigate steps</span>
+      </div>
+      <div class="key-row">
+        <div class="keys"><kbd>⌘↩</kbd></div>
+        <span class="key-label">Start processing</span>
+      </div>
+      <div class="key-row">
+        <div class="keys"><kbd>⌘Z</kbd></div>
+        <span class="key-label">Undo trim / chapter</span>
+      </div>
+      <div class="key-row">
+        <div class="keys"><kbd>⌘,</kbd></div>
+        <span class="key-label">Open Settings</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-logo">
+    <img src="images/DeChaff-iOS-Default-1024x1024@1x.png" alt="DeChaff icon" />
+    <span>DeChaff</span>
+  </div>
+  <p>Built for the AV team at <a href="https://www.cityonahill.co.nz" target="_blank" rel="noopener">City On a Hill</a> &nbsp;·&nbsp; <a href="https://github.com/howardgrigg/DeChaff" target="_blank" rel="noopener">Open source on GitHub</a></p>
+  <p style="margin-top: 8px;">Free to use &nbsp;·&nbsp; MIT licence &nbsp;·&nbsp; macOS 13+</p>
+</footer>
+
+</body>
+</html>
