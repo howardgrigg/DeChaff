@@ -19,7 +19,9 @@ Built for the AV team at [City On a Hill](https://www.cityonahill.co.nz).
 ## Features
 
 - **YouTube browser** — browse and download audio from a YouTube channel directly inside the app; yt-dlp is bundled and kept up to date automatically
-- **AI metadata extraction** — automatically parses YouTube video titles into sermon title, Bible reading, preacher, and series fields using on-device Apple Intelligence (FoundationModels); runs concurrently with the audio download so fields are pre-filled by the time you reach the Info step
+- **AI metadata extraction** — automatically parses YouTube video titles into sermon title, Bible reading, preacher, and series fields using on-device Apple Intelligence (FoundationModels); falls back to Claude API or regex parsing if unavailable; runs concurrently with audio download so fields are pre-filled by the time you reach the Info step
+- **AI Assistant** — optionally sends the transcript to the Claude API after processing to generate a podcast episode title, description, and key themes; response appears on the done screen with Retry and Copy buttons
+- **Customisable templates** — configure the YouTube title format your church uses so AI extraction works correctly; customise the output filename format with your own field order and separators
 - **Voice isolation** — Apple's built-in `AUSoundIsolation` engine removes background noise, room reverb, and crowd sounds
 - **Dynamic compression** — evens out volume differences between quiet and loud passages
 - **Long-term levelling** — slow AGC that smooths volume differences across the recording with a ~3-second time constant, applied between voice isolation and loudness normalisation
@@ -30,19 +32,23 @@ Built for the AV team at [City On a Hill](https://www.cityonahill.co.nz).
 - **ID3 tagging** — embeds title, artist, album, year, and cover artwork
 - **Chapter markers** — CTOC/CHAP ID3 frames, compatible with podcast apps
 - **On-device transcription** — generates a text transcript using macOS speech recognition (macOS 26+)
-- **Waveform editor** — multi-resolution peak display with tiled rendering, native macOS scrollbars with inertia, cursor-anchored zoom, trim with drag handles or I/O keys, draggable chapter markers
+- **Waveform editor** — multi-resolution tiled rendering; scroll-to-zoom anchored on cursor; horizontal scroll or drag to pan; double-tap to reset; draggable trim handles and chapter markers
+- **Keyboard shortcuts** — JKL shuttle control, I/O trim markers, M for chapter, ⌘1–5 to navigate steps, Space or K to play/pause
+- **Undo/redo** — full undo history for trim handle moves, chapter add/remove/drag, and artwork changes
+- **Dock progress** — live progress bar on the Dock icon during processing, with a notification when done
+- **Open Recent & drag-to-dock** — audio files register in File > Open Recent and can be dragged directly onto the Dock icon
 
 ## Quick start
 
 1. **Load** — drop an audio file onto the drop zone, or pick a recent video from the YouTube browser (metadata fields are filled automatically via AI)
-2. **Trim** — drag the orange handles or use the I / O keys to set start and end points
+2. **Trim** — drag the orange handles or use **I** / **O** to set start and end points; zoom in by scrolling and pan by dragging or scrolling horizontally
 3. **Info** — fill in sermon title, preacher, bible reading, series, date, and artwork
 4. **Chapters** — add chapter markers at key moments; first chapter defaults to the start, second to 2 minutes
-5. **Output** — review processing options, then click **Process**
+5. **Output** — review processing options, then click **Process** (or press **⌘↩**)
 
 ## Output filename
 
-Named automatically from the tag fields:
+Named automatically from the tag fields using a customisable template (Settings → Templates). The default is:
 
 ```
 YYYY-MM-DD Sermon Title, Bible Reading | Preacher | Series.mp3
@@ -50,11 +56,19 @@ YYYY-MM-DD Sermon Title, Bible Reading | Preacher | Series.mp3
 
 Saved to the same folder as the original file, or to `~/Downloads` when the source was downloaded from YouTube.
 
+## Settings
+
+| Tab | What you can configure |
+|-----|----------------------|
+| **General** | YouTube channel URL/handle, number of videos to show, yt-dlp status and updates, Apple Intelligence availability |
+| **AI Assistant** | Enable/disable Claude API assistant, API key, Claude model selection, customisable prompt template |
+| **Templates** | YouTube title format (teach DeChaff your church's naming convention), output filename format |
+
 ## Requirements
 
 - macOS 13.0 or later
 - Xcode 15+ to build
-- macOS 26+ for on-device transcription and AI metadata extraction
+- macOS 26+ for on-device transcription and Apple Intelligence metadata extraction
 
 ## Building
 
