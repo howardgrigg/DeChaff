@@ -322,6 +322,8 @@
     <a href="#claude-api">Tier 2 — Claude API</a>
     <a href="#template-parser">Tier 3 — Template parser</a>
     <a href="#audio-pipeline">Audio processing pipeline</a>
+    <a href="#transcription">Transcription</a>
+    <a href="#ai-assistant">AI Assistant</a>
   </div>
 </div>
 
@@ -1176,6 +1178,140 @@ date     = <span class="str">""</span>               <span class="comment">← n
       </div>
 
     </div><!-- /pass-cards -->
+  </div>
+</section>
+
+
+<!-- ── TRANSCRIPTION ──────────────────────────────────────────────── -->
+<section id="transcription" class="tech-section">
+  <div class="tech-inner">
+    <span class="section-label">Transcription</span>
+    <h2 class="section-title">On-device speech-to-text</h2>
+    <p class="section-sub">
+      After processing completes, DeChaff can generate a full transcript of the sermon using Apple's
+      on-device speech recognition — privately, with no audio sent anywhere.
+    </p>
+
+    <div class="subsection" style="margin-top:0;">
+      <h3>How it works</h3>
+      <p class="prose">
+        Transcription uses <strong>SpeechTranscriber</strong> and <strong>SpeechAnalyzer</strong> from
+        Apple's Speech framework, introduced in macOS 26. These APIs replaced the older
+        <code>SFSpeechRecognizer</code> and run entirely on-device using Apple Silicon's Neural Engine.
+        Requires an Apple Silicon Mac running macOS 26+; the feature is hidden on unsupported hardware.
+      </p>
+      <p class="prose" style="margin-top:12px;">
+        Before transcribing, DeChaff extracts only the trimmed region of the audio — the same window
+        defined by the trim handles on the waveform — to a temporary CAF file. This avoids transcribing
+        dead air or content that was cut. The temp file is deleted once the transcription task finishes.
+      </p>
+      <p class="prose" style="margin-top:12px;">
+        The speech model may need to be downloaded the first time — macOS handles this automatically and
+        it only happens once. DeChaff shows a status message while the download is in progress.
+      </p>
+    </div>
+
+    <div class="subsection">
+      <h3>Progressive results</h3>
+      <p class="prose">
+        The <code>SpeechTranscriber</code> emits an async stream of results as it works through the audio.
+        Each result has an <code>isFinal</code> flag: <code>false</code> results are tentative (the model
+        is still deciding), while <code>true</code> results are committed and won't change. DeChaff
+        accumulates finalized text and appends the latest tentative chunk, so the transcript appears to
+        grow word-by-word in the UI as recognition progresses.
+      </p>
+      <pre><code><span class="kw">var</span> finalized = <span class="str">""</span>
+<span class="kw">var</span> volatile = <span class="str">""</span>
+
+<span class="kw">for try await</span> result <span class="kw">in</span> transcriber.results {
+    <span class="kw">try</span> Task.checkCancellation()
+    <span class="kw">let</span> chunk = String(result.text.characters)
+    <span class="kw">if</span> result.isFinal {
+        finalized += (finalized.isEmpty ? <span class="str">""</span> : <span class="str">" "</span>) + chunk
+        volatile = <span class="str">""</span>
+    } <span class="kw">else</span> {
+        volatile = chunk
+    }
+    <span class="comment">// Show committed text + current tentative chunk</span>
+    <span class="kw">let</span> display = finalized + (volatile.isEmpty ? <span class="str">""</span> : <span class="str">" "</span> + volatile)
+    <span class="kw">await</span> MainActor.run { self?.transcriptText = display }
+}</code></pre>
+      <p class="pre-caption">The results loop runs on a detached <code>.utility</code> priority Task so it doesn't block the UI.</p>
+    </div>
+
+    <div class="subsection">
+      <h3>What transcription is used for</h3>
+      <p class="prose">
+        The completed transcript is displayed in the <strong>Output</strong> step alongside the processed
+        audio, where it can be copied to the clipboard. If the AI Assistant is enabled, the transcript is
+        automatically sent to Claude as soon as transcription finishes — no manual step required.
+      </p>
+    </div>
+
+  </div>
+</section>
+
+
+<!-- ── AI ASSISTANT ───────────────────────────────────────────────── -->
+<section id="ai-assistant" class="tech-section">
+  <div class="tech-inner">
+    <span class="section-label">AI Assistant</span>
+    <h2 class="section-title">Automated post-production suggestions</h2>
+    <p class="section-sub">
+      Once a transcript is available, DeChaff can send it to Claude and ask for podcast titles,
+      episode descriptions, and key themes — saving the AV team the copywriting step.
+    </p>
+
+    <div class="subsection" style="margin-top:0;">
+      <h3>How it works</h3>
+      <p class="prose">
+        The AI Assistant is optional and off by default. When enabled in <strong>Settings → AI Assistant</strong>,
+        it triggers automatically the moment transcription finishes. It sends the transcript to the
+        Claude API using the same <code>ClaudeAPIClient</code> used by the metadata extraction Tier 2,
+        with a customisable system prompt that also injects the sermon's metadata fields.
+      </p>
+      <p class="prose" style="margin-top:12px;">
+        Requires a Claude API key stored in <strong>Settings → AI Assistant → Claude API Key</strong>
+        (saved securely in the macOS Keychain). The Claude model used is configurable — any model ID
+        can be entered; the default is Claude Sonnet 4.6.
+      </p>
+    </div>
+
+    <div class="subsection">
+      <h3>The system prompt</h3>
+      <p class="prose">
+        The system prompt is fully editable in Settings. Before the prompt is sent, DeChaff substitutes
+        four placeholders with the sermon's actual metadata:
+        <code>{title}</code>, <code>{preacher}</code>, <code>{series}</code>, and <code>{reading}</code>.
+        This gives the model context about the sermon without needing to infer it from the transcript alone.
+      </p>
+      <p class="prose" style="margin-top:12px;">The default prompt asks for:</p>
+      <ul style="margin:12px 0 0 20px; font-size:15px; color:var(--mid); line-height:1.9;">
+        <li>A short podcast episode title (distinct from the sermon title)</li>
+        <li>A 2–3 sentence podcast episode description</li>
+        <li>3–5 key themes or takeaways</li>
+      </ul>
+      <pre><code><span class="str">You are a helpful church media assistant. Given the following sermon transcript, please suggest:
+1. A short podcast episode title (not the same as the sermon title)
+2. A 2-3 sentence podcast episode description
+3. 3-5 key themes or takeaways
+
+Sermon: "{title}" by {preacher}
+Series: {series}
+Bible Reading: {reading}</span></code></pre>
+      <p class="pre-caption">Placeholders are replaced with live values before the prompt is sent. The transcript is passed as the user message.</p>
+    </div>
+
+    <div class="subsection">
+      <h3>Customising the prompt</h3>
+      <p class="prose">
+        The prompt can be changed to anything — some teams use it to draft social media captions,
+        generate sermon notes, or produce a summary for the church website. Because the transcript and
+        metadata are always available as context, the prompt is the only thing that needs to change.
+        A "Reset to Default" button in Settings restores the original prompt if needed.
+      </p>
+    </div>
+
   </div>
 </section>
 
