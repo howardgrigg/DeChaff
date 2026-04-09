@@ -260,8 +260,32 @@
     footer p { margin-top: 8px; }
 
     /* ── UTIL ── */
+    .nav-hamburger {
+      display: none;
+      flex-direction: column; justify-content: center; gap: 5px;
+      width: 36px; height: 36px; padding: 4px;
+      background: none; border: none; cursor: pointer; border-radius: 8px;
+    }
+    .nav-hamburger span {
+      display: block; width: 22px; height: 2px;
+      background: var(--dark); border-radius: 2px;
+      transition: transform .2s, opacity .2s;
+    }
+    .nav-hamburger.open span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+    .nav-hamburger.open span:nth-child(2) { opacity: 0; }
+    .nav-hamburger.open span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
     @media (max-width: 600px) {
-      .nav-links { display: none; }
+      .nav-links {
+        display: none; flex-direction: column; gap: 0;
+        position: absolute; top: 100%; left: 0; right: 0;
+        background: var(--white); border-bottom: 1px solid var(--border);
+        padding: 8px 0; list-style: none;
+      }
+      .nav-links.open { display: flex; }
+      .nav-links a { padding: 12px 24px; font-size: 15px; display: block; }
+      .nav-hamburger { display: flex; }
+      .nav-cta { display: none; }
       .steps { grid-template-columns: 1fr 1fr; }
     }
   </style>
@@ -269,13 +293,13 @@
 <body>
 
 <!-- NAV -->
-<nav>
+<nav style="position:relative;">
   <div class="nav-inner">
     <a class="nav-logo" href="#">
       <img src="images/DeChaff-iOS-Default-1024x1024@1x.png" alt="DeChaff icon" />
       <span>DeChaff</span>
     </a>
-    <ul class="nav-links">
+    <ul class="nav-links" id="nav-links">
       <li><a href="#how">How it works</a></li>
       <li><a href="#features">Features</a></li>
       <li><a href="#ai">AI</a></li>
@@ -284,8 +308,25 @@
       <li><a href="tech-details.html">Tech Details</a></li>
     </ul>
     <a class="nav-cta" href="https://github.com/howardgrigg/DeChaff/releases/latest/download/DeChaff.zip">Download</a>
+    <button class="nav-hamburger" id="nav-hamburger" aria-label="Menu" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
   </div>
 </nav>
+<script>
+  const btn = document.getElementById('nav-hamburger');
+  const links = document.getElementById('nav-links');
+  btn.addEventListener('click', () => {
+    const open = links.classList.toggle('open');
+    btn.classList.toggle('open', open);
+    btn.setAttribute('aria-expanded', open);
+  });
+  links.querySelectorAll('a').forEach(a => a.addEventListener('click', () => {
+    links.classList.remove('open');
+    btn.classList.remove('open');
+    btn.setAttribute('aria-expanded', false);
+  }));
+</script>
 
 <!-- HERO -->
 <section class="hero">
