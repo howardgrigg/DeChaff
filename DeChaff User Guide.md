@@ -20,6 +20,16 @@ Supported formats: WAV, MP3, M4A, AIFF, FLAC, CAF.
 
 The YouTube browser below the drop zone lists recent videos and live streams from your configured channel. Tap a video to download its audio — a progress bar shows download status, and a **Cancel** button lets you abort at any time. Once downloaded, the audio loads automatically and the app advances to Step 2.
 
+You can also paste any URL directly into the **YouTube URL** tab and click the download button — useful for videos not in the channel list.
+
+**From Safari (Share Extension)**
+
+On any YouTube page (or any site supported by yt-dlp), click the **Share** button in Safari's toolbar and choose **DeChaff**. The app opens, switches to the Load step, and starts downloading automatically — no copy-pasting needed. Download progress is shown in the YouTube URL tab.
+
+**From Apple Shortcuts or Siri**
+
+DeChaff includes a built-in *Download & Open in DeChaff* action in the Shortcuts app. Add it to a workflow, pass it a URL, and the app opens and starts downloading. You can also trigger it by voice: say "Download sermon in DeChaff" to Siri.
+
 While the audio downloads, DeChaff uses on-device Apple Intelligence to parse the YouTube video title into sermon title, Bible reading, preacher, and series fields. If Apple Intelligence isn't available, it falls back to the Claude API (if you have a key configured) and then to built-in text parsing. The tag date is also set automatically from the YouTube upload date. By the time you reach the Info step, these fields are already filled in — just review and adjust if needed.
 
 To configure the channel, open **Settings** (⌘,) and enter a YouTube channel URL or handle (e.g. `@YourChurch`). You can also change how many recent videos are shown (5, 10, or 20). yt-dlp — the download tool — is installed automatically on first launch and kept up to date.

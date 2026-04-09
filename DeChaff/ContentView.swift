@@ -26,7 +26,7 @@ class ProcessingModel: ObservableObject {
     @Published var chapters: [Chapter] = []
     @Published var shortenSilences: Bool = true
     @Published var maxSilenceDuration: Double = 1.0
-    @Published var doSlowLeveler: Bool = false
+    @Published var doSlowLeveler: Bool = true
     @Published var doTranscription = true
 
     // Transcription state
@@ -979,8 +979,12 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .downloadFromURL)) { notif in
             guard let rawURL = notif.object as? String else { return }
+            withAnimation { currentStep = 0 }
+            ytTab = 0
+            ytDirectURL = rawURL
             youtube.selectURL(rawURL, manager: ytManager) { fileURL in
                 model.loadFile(url: fileURL)
+                ytDirectURL = ""
                 withAnimation { currentStep = 1 }
             }
         }

@@ -3,11 +3,13 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 56;
+	objectVersion = 70;
 	objects = {
 
 /* Begin PBXBuildFile section */
 		5069CC312F64007A00F65B34 /* DeChaff.icon in Resources */ = {isa = PBXBuildFile; fileRef = 5069CC302F64007A00F65B34 /* DeChaff.icon */; };
+		50AE95E72F85C6B5006663EF /* DownloadSermonIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50AE95E62F85C6B5006663EF /* DownloadSermonIntent.swift */; };
+		50AE96272F875396006663EF /* DeChaffShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 50AE961B2F875395006663EF /* DeChaffShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		AA00000000000000000000B2 /* DeChaffApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000AF /* DeChaffApp.swift */; };
 		AA00000000000000000000B3 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000B0 /* ContentView.swift */; };
 		AA00000000000000000000B4 /* VoiceIsolationProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000B1 /* VoiceIsolationProcessor.swift */; };
@@ -35,8 +37,34 @@
 		DC0000000000000000000112 /* AppCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000111 /* AppCommands.swift */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		50AE96252F875396006663EF /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AA00000000000000000000A1 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 50AE961A2F875395006663EF;
+			remoteInfo = DeChaffShareExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		50AE962C2F875396006663EF /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				50AE96272F875396006663EF /* DeChaffShareExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		5069CC302F64007A00F65B34 /* DeChaff.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = DeChaff.icon; sourceTree = "<group>"; };
+		50AE95E62F85C6B5006663EF /* DownloadSermonIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadSermonIntent.swift; sourceTree = "<group>"; };
+		50AE961B2F875395006663EF /* DeChaffShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = DeChaffShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA00000000000000000000AE /* DeChaff.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DeChaff.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA00000000000000000000AF /* DeChaffApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeChaffApp.swift; sourceTree = "<group>"; };
 		AA00000000000000000000B0 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -65,7 +93,28 @@
 		DC0000000000000000000111 /* AppCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCommands.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		50AE96362F875681006663EF /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 50AE961A2F875395006663EF /* DeChaffShareExtension */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		50AE961C2F875396006663EF /* DeChaffShareExtension */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (50AE96362F875681006663EF /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = DeChaffShareExtension; sourceTree = "<group>"; };
+/* End PBXFileSystemSynchronizedRootGroup section */
+
 /* Begin PBXFrameworksBuildPhase section */
+		50AE96182F875395006663EF /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		AA00000000000000000000AC /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -80,6 +129,7 @@
 			isa = PBXGroup;
 			children = (
 				AA00000000000000000000B5 /* DeChaff */,
+				50AE961C2F875396006663EF /* DeChaffShareExtension */,
 				AA00000000000000000000A3 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -88,26 +138,15 @@
 			isa = PBXGroup;
 			children = (
 				AA00000000000000000000AE /* DeChaff.app */,
+				50AE961B2F875395006663EF /* DeChaffShareExtension.appex */,
 			);
 			name = Products;
-			sourceTree = "<group>";
-		};
-		DC000000000000000000010C /* AudioProcessing */ = {
-			isa = PBXGroup;
-			children = (
-				DC0000000000000000000100 /* AudioProcessingModels.swift */,
-				DC0000000000000000000102 /* AudioUnitPass.swift */,
-				DC0000000000000000000104 /* LoudnessProcessor.swift */,
-				DC0000000000000000000106 /* SilenceProcessor.swift */,
-				DC0000000000000000000108 /* MP3Encoder.swift */,
-				DC000000000000000000010A /* ID3Tagger.swift */,
-			);
-			path = AudioProcessing;
 			sourceTree = "<group>";
 		};
 		AA00000000000000000000B5 /* DeChaff */ = {
 			isa = PBXGroup;
 			children = (
+				50AE95E62F85C6B5006663EF /* DownloadSermonIntent.swift */,
 				AA00000000000000000000AF /* DeChaffApp.swift */,
 				AA00000000000000000000B0 /* ContentView.swift */,
 				AA00000000000000000000B1 /* VoiceIsolationProcessor.swift */,
@@ -133,9 +172,44 @@
 			path = DeChaff;
 			sourceTree = "<group>";
 		};
+		DC000000000000000000010C /* AudioProcessing */ = {
+			isa = PBXGroup;
+			children = (
+				DC0000000000000000000100 /* AudioProcessingModels.swift */,
+				DC0000000000000000000102 /* AudioUnitPass.swift */,
+				DC0000000000000000000104 /* LoudnessProcessor.swift */,
+				DC0000000000000000000106 /* SilenceProcessor.swift */,
+				DC0000000000000000000108 /* MP3Encoder.swift */,
+				DC000000000000000000010A /* ID3Tagger.swift */,
+			);
+			path = AudioProcessing;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		50AE961A2F875395006663EF /* DeChaffShareExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 50AE96292F875396006663EF /* Build configuration list for PBXNativeTarget "DeChaffShareExtension" */;
+			buildPhases = (
+				50AE96172F875395006663EF /* Sources */,
+				50AE96182F875395006663EF /* Frameworks */,
+				50AE96192F875395006663EF /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				50AE961C2F875396006663EF /* DeChaffShareExtension */,
+			);
+			name = DeChaffShareExtension;
+			packageProductDependencies = (
+			);
+			productName = DeChaffShareExtension;
+			productReference = 50AE961B2F875395006663EF /* DeChaffShareExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		AA00000000000000000000A4 /* DeChaff */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = AA00000000000000000000A6 /* Build configuration list for PBXNativeTarget "DeChaff" */;
@@ -144,10 +218,12 @@
 				AA00000000000000000000AC /* Frameworks */,
 				AA00000000000000000000AD /* Resources */,
 				AA00000000000000000000D0 /* Re-sign bundled lame with Hardened Runtime */,
+				50AE962C2F875396006663EF /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				50AE96262F875396006663EF /* PBXTargetDependency */,
 			);
 			name = DeChaff;
 			productName = DeChaff;
@@ -161,9 +237,12 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 1500;
+				LastSwiftUpdateCheck = 2640;
 				LastUpgradeCheck = 1500;
 				TargetAttributes = {
+					50AE961A2F875395006663EF = {
+						CreatedOnToolsVersion = 26.4;
+					};
 					AA00000000000000000000A4 = {
 						CreatedOnToolsVersion = 15.0;
 					};
@@ -176,6 +255,8 @@
 			knownRegions = (
 				en,
 				Base,
+				"Base 2",
+				"base 2",
 			);
 			mainGroup = AA00000000000000000000A2;
 			productRefGroup = AA00000000000000000000A3 /* Products */;
@@ -183,11 +264,19 @@
 			projectRoot = "";
 			targets = (
 				AA00000000000000000000A4 /* DeChaff */,
+				50AE961A2F875395006663EF /* DeChaffShareExtension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		50AE96192F875395006663EF /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		AA00000000000000000000AD /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -223,6 +312,13 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		50AE96172F875395006663EF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		AA00000000000000000000AB /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -238,6 +334,7 @@
 				DC00000000000000000000EC /* YtDlpManager.swift in Sources */,
 				DC00000000000000000000EE /* YouTubeViewModel.swift in Sources */,
 				DC00000000000000000000F0 /* YouTubeSectionView.swift in Sources */,
+				50AE95E72F85C6B5006663EF /* DownloadSermonIntent.swift in Sources */,
 				DC00000000000000000000F2 /* SettingsView.swift in Sources */,
 				DC00000000000000000000F4 /* SermonMetadataExtractor.swift in Sources */,
 				DC000000000000000000010E /* KeychainHelper.swift in Sources */,
@@ -255,7 +352,90 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		50AE96262F875396006663EF /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 50AE961A2F875395006663EF /* DeChaffShareExtension */;
+			targetProxy = 50AE96252F875396006663EF /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		50AE962A2F875396006663EF /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2R53HYKRFR;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = DeChaffShareExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = DeChaffShareExtension;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.dechaff.app.ShareExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		50AE962B2F875396006663EF /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2R53HYKRFR;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = DeChaffShareExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = DeChaffShareExtension;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.5;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				PRODUCT_BUNDLE_IDENTIFIER = com.dechaff.app.ShareExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 		AA00000000000000000000A7 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -370,6 +550,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = DeChaff;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 7;
@@ -402,6 +583,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = DeChaff;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 7;
@@ -432,6 +614,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		50AE96292F875396006663EF /* Build configuration list for PBXNativeTarget "DeChaffShareExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				50AE962A2F875396006663EF /* Debug */,
+				50AE962B2F875396006663EF /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		AA00000000000000000000A5 /* Build configuration list for PBXProject "DeChaff" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

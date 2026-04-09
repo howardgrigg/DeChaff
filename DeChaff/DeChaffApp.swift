@@ -15,6 +15,7 @@ struct DeChaffApp: App {
                 }
                 .onAppear {
                     ProcessingModel.requestNotificationPermission()
+                    DeChaffShortcuts.updateAppShortcutParameters()
                 }
                 .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
                 .onOpenURL { url in

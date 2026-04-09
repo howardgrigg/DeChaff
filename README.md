@@ -33,6 +33,8 @@ Built for the AV team at [City On a Hill](https://www.cityonahill.co.nz).
 - **Chapter markers** — CTOC/CHAP ID3 frames, compatible with podcast apps
 - **On-device transcription** — generates a text transcript using macOS speech recognition (macOS 26+)
 - **Waveform editor** — multi-resolution tiled rendering; scroll-to-zoom anchored on cursor; horizontal scroll or drag to pan; double-tap to reset; draggable trim handles and chapter markers
+- **Safari Share Extension** — share any YouTube (or yt-dlp-supported) page directly to DeChaff from Safari's share menu; the app opens, downloads the audio, and shows download progress automatically
+- **Apple Shortcuts action** — a built-in *Download & Open in DeChaff* action for Shortcuts workflows and Siri voice commands
 - **Keyboard shortcuts** — JKL shuttle control, I/O trim markers, M for chapter, ⌘1–5 to navigate steps, Space or K to play/pause
 - **Undo/redo** — full undo history for trim handle moves, chapter add/remove/drag, and artwork changes
 - **Dock progress** — live progress bar on the Dock icon during processing, with a notification when done
