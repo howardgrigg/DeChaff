@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DeChaff — User Guide</title>
+  <meta name="description" content="Complete guide to using DeChaff — load, trim, tag, chapter, and export your sermon recordings for podcast distribution." />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --blue:    #2563eb;
+      --blue-lt: #3b82f6;
+      --dark:    #0f172a;
+      --dark2:   #1e293b;
+      --mid:     #334155;
+      --muted:   #64748b;
+      --border:  #e2e8f0;
+      --light:   #f8fafc;
+      --white:   #ffffff;
+      --radius:  14px;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      background: var(--white);
+      color: var(--dark);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── NAV ── */
+    nav {
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(255,255,255,0.85);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-inner {
+      max-width: 1100px; margin: 0 auto;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 24px;
+    }
+    .nav-logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .nav-logo img { width: 32px; height: 32px; border-radius: 7px; }
+    .nav-logo span { font-size: 17px; font-weight: 700; color: var(--dark); }
+    .nav-links { display: flex; gap: 28px; list-style: none; }
+    .nav-links a { color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 500; transition: color .15s; }
+    .nav-links a:hover, .nav-links a.active { color: var(--dark); }
+    .nav-cta {
+      background: var(--blue); color: var(--white);
+      padding: 8px 18px; border-radius: 8px;
+      font-size: 14px; font-weight: 600; text-decoration: none;
+      transition: background .15s;
+    }
+    .nav-cta:hover { background: var(--blue-lt); }
+
+    /* ── HERO ── */
+    .hero {
+      background: linear-gradient(160deg, var(--dark) 0%, #1a2d5a 100%);
+      color: var(--white);
+      text-align: center;
+      padding: 64px 24px 56px;
+    }
+    .hero-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 100px; padding: 5px 14px;
+      font-size: 13px; font-weight: 500; color: rgba(255,255,255,0.8);
+      margin-bottom: 20px;
+    }
+    .hero h1 { font-size: clamp(28px, 5vw, 48px); font-weight: 800; letter-spacing: -1px; margin-bottom: 12px; }
+    .hero p { font-size: 18px; color: rgba(255,255,255,0.65); max-width: 500px; margin: 0 auto; }
+
+    /* ── TOC ── */
+    .toc {
+      background: var(--light);
+      border-bottom: 1px solid var(--border);
+      padding: 20px 24px;
+    }
+    .toc-inner {
+      max-width: 900px; margin: 0 auto;
+      display: flex; flex-wrap: wrap; gap: 8px;
+    }
+    .toc a {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: var(--white); border: 1px solid var(--border);
+      border-radius: 8px; padding: 6px 14px;
+      font-size: 13px; font-weight: 500; color: var(--mid);
+      text-decoration: none; transition: border-color .15s, color .15s;
+    }
+    .toc a:hover { border-color: var(--blue); color: var(--blue); }
+    .toc-num {
+      width: 20px; height: 20px; border-radius: 50%;
+      background: var(--blue); color: var(--white);
+      font-size: 11px; font-weight: 800;
+      display: inline-flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+
+    /* ── GUIDE SECTIONS ── */
+    .guide-section { padding: 72px 24px; }
+    .guide-section:nth-child(even) { background: var(--light); }
+    .guide-section.dark { background: var(--dark2); color: var(--white); }
+    .guide-inner { max-width: 900px; margin: 0 auto; }
+
+    .section-label {
+      display: inline-block;
+      font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+      color: var(--blue); margin-bottom: 10px;
+    }
+    .dark .section-label { color: #93c5fd; }
+    .section-title { font-size: clamp(24px, 3.5vw, 36px); font-weight: 800; letter-spacing: -.5px; line-height: 1.2; margin-bottom: 12px; }
+    .dark .section-title { color: var(--white); }
+    .section-sub { font-size: 17px; color: var(--muted); margin-bottom: 40px; }
+    .dark .section-sub { color: rgba(255,255,255,0.5); }
+
+    /* ── STEP BADGE ── */
+    .step-badge {
+      display: inline-flex; align-items: center; gap: 10px;
+      margin-bottom: 24px;
+    }
+    .step-badge .num {
+      width: 40px; height: 40px; border-radius: 50%;
+      background: var(--blue); color: var(--white);
+      font-size: 18px; font-weight: 800;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .step-badge .label { font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+
+    /* ── METHOD CARDS ── */
+    .method-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-top: 28px; }
+    .method-card {
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+    }
+    .guide-section:nth-child(even) .method-card { background: var(--white); }
+    .method-card h3 { font-size: 15px; font-weight: 700; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+    .method-card h3 svg { width: 18px; height: 18px; stroke: var(--blue); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+    .method-card p, .method-card li { font-size: 14px; color: var(--muted); line-height: 1.6; }
+    .method-card ul { padding-left: 18px; margin-top: 6px; }
+    .method-card li { margin-bottom: 4px; }
+
+    /* ── OPTION TABLE ── */
+    .option-table { width: 100%; border-collapse: collapse; margin-top: 28px; font-size: 14px; }
+    .option-table th { text-align: left; padding: 10px 16px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); border-bottom: 2px solid var(--border); }
+    .option-table td { padding: 14px 16px; border-bottom: 1px solid var(--border); vertical-align: top; line-height: 1.5; }
+    .option-table tr:last-child td { border-bottom: none; }
+    .option-table td:first-child { font-weight: 600; white-space: nowrap; }
+    .option-table td:nth-child(2) { color: var(--muted); font-size: 13px; white-space: nowrap; }
+    .dark .option-table th { color: rgba(255,255,255,0.4); border-bottom-color: rgba(255,255,255,0.1); }
+    .dark .option-table td { border-bottom-color: rgba(255,255,255,0.08); color: rgba(255,255,255,0.8); }
+    .dark .option-table td:nth-child(2) { color: rgba(255,255,255,0.4); }
+
+    /* ── PROSE ── */
+    .prose { font-size: 15px; color: var(--mid); line-height: 1.75; }
+    .prose + .prose { margin-top: 16px; }
+    .prose strong { color: var(--dark); font-weight: 600; }
+    .prose code {
+      background: #f1f5f9; border: 1px solid var(--border);
+      border-radius: 4px; padding: 1px 6px;
+      font-family: ui-monospace, monospace; font-size: 13px;
+    }
+    .dark .prose { color: rgba(255,255,255,0.65); }
+    .dark .prose strong { color: var(--white); }
+
+    .subsection { margin-top: 40px; }
+    .subsection h3 { font-size: 17px; font-weight: 700; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+    .dark .subsection h3 { border-bottom-color: rgba(255,255,255,0.1); color: var(--white); }
+
+    /* ── TIPS ── */
+    .tips-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-top: 28px; }
+    .tip-card {
+      background: var(--white);
+      border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 20px 24px;
+      border-left: 3px solid var(--blue);
+    }
+    .tip-card p { font-size: 14px; color: var(--muted); line-height: 1.6; }
+    .tip-card strong { display: block; font-size: 14px; font-weight: 700; color: var(--dark); margin-bottom: 4px; }
+
+    /* ── SHORTCUTS ── */
+    .keys-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px; margin-top: 40px;
+    }
+    .key-row {
+      display: flex; align-items: center; gap: 12px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 10px; padding: 12px 16px;
+    }
+    .key-row .keys { display: flex; gap: 4px; flex-shrink: 0; flex-wrap: wrap; }
+    kbd {
+      background: rgba(255,255,255,0.12);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 5px; padding: 3px 8px;
+      font-family: -apple-system, monospace;
+      font-size: 12px; font-weight: 600; color: var(--white);
+      white-space: nowrap;
+    }
+    .key-row .key-label { font-size: 13px; color: rgba(255,255,255,0.6); }
+
+    /* ── FOOTER ── */
+    footer {
+      background: var(--dark);
+      color: rgba(255,255,255,0.4);
+      text-align: center; padding: 48px 24px;
+      font-size: 14px;
+    }
+    footer a { color: rgba(255,255,255,0.5); text-decoration: none; }
+    footer a:hover { color: var(--white); }
+    footer .footer-logo { display: flex; align-items: center; gap: 8px; justify-content: center; margin-bottom: 16px; }
+    footer .footer-logo img { width: 28px; height: 28px; border-radius: 6px; opacity: 0.8; }
+    footer .footer-logo span { font-size: 16px; font-weight: 700; color: rgba(255,255,255,0.7); }
+    footer p { margin-top: 8px; }
+
+    @media (max-width: 600px) {
+      .nav-links { display: none; }
+      .method-cards { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="nav-inner">
+    <a class="nav-logo" href="index.html">
+      <img src="images/DeChaff-iOS-Default-1024x1024@1x.png" alt="DeChaff icon" />
+      <span>DeChaff</span>
+    </a>
+    <ul class="nav-links">
+      <li><a href="index.html#how">How it works</a></li>
+      <li><a href="index.html#features">Features</a></li>
+      <li><a href="index.html#ai">AI</a></li>
+      <li><a href="index.html#shortcuts">Shortcuts</a></li>
+      <li><a href="user-guide.html" class="active">User Guide</a></li>
+    </ul>
+    <a class="nav-cta" href="https://github.com/howardgrigg/DeChaff/releases/latest/download/DeChaff.zip">Download</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-badge">User Guide</div>
+  <h1>How to use DeChaff</h1>
+  <p>A complete walkthrough of every step, setting, and shortcut.</p>
+</section>
+
+<!-- TOC -->
+<div class="toc">
+  <div class="toc-inner">
+    <a href="#load"><span class="toc-num">1</span> Load</a>
+    <a href="#trim"><span class="toc-num">2</span> Trim</a>
+    <a href="#info"><span class="toc-num">3</span> Info</a>
+    <a href="#chapters"><span class="toc-num">4</span> Chapters</a>
+    <a href="#output"><span class="toc-num">5</span> Output</a>
+    <a href="#after">After processing</a>
+    <a href="#keyboard">Keyboard shortcuts</a>
+    <a href="#settings">Settings</a>
+    <a href="#tips">Tips</a>
+  </div>
+</div>
+
+<!-- STEP 1: LOAD -->
+<section id="load" class="guide-section">
+  <div class="guide-inner">
+    <div class="step-badge">
+      <div class="num">1</div>
+      <span class="label">Step one</span>
+    </div>
+    <h2 class="section-title">Load</h2>
+    <p class="section-sub">Get your audio into DeChaff. Four ways to do it.</p>
+
+    <div class="method-cards">
+      <div class="method-card">
+        <h3>
+          <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Drop or choose a file
+        </h3>
+        <p>Drag an audio file onto the drop zone, or click <strong>Choose File…</strong> Supported: WAV, MP3, M4A, AIFF, FLAC, CAF.</p>
+      </div>
+      <div class="method-card">
+        <h3>
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+          YouTube browser
+        </h3>
+        <p>Browse recent videos and live streams from your church's YouTube channel. Tap a video to download its audio. A progress bar shows status; Cancel aborts at any time. AI fills in metadata while the download runs.</p>
+      </div>
+      <div class="method-card">
+        <h3>
+          <svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+          Paste a URL
+        </h3>
+        <p>Switch to the <strong>YouTube URL</strong> tab, paste any URL supported by yt-dlp (YouTube, Vimeo, and thousands more), and click the download button.</p>
+      </div>
+      <div class="method-card">
+        <h3>
+          <svg viewBox="0 0 24 24"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+          Safari Share &amp; Shortcuts
+        </h3>
+        <p>On any YouTube page, tap Safari's <strong>Share</strong> button and choose DeChaff — the app opens and starts downloading immediately. Or use the <em>Download &amp; Open in DeChaff</em> action in the Shortcuts app, or say "Download sermon in DeChaff" to Siri.</p>
+      </div>
+    </div>
+
+    <div class="subsection">
+      <h3>AI metadata extraction</h3>
+      <p class="prose">When loading from YouTube, DeChaff uses on-device Apple Intelligence (macOS 26+) to parse the video title into sermon title, Bible reading, preacher, and series — concurrently with the download. If Apple Intelligence isn't available it falls back to the Claude API (if configured), then to built-in text parsing. By the time you reach the Info step, the fields are already filled in.</p>
+      <p class="prose" style="margin-top: 12px;">To make extraction accurate for your church, open <strong>Settings → Templates</strong> and set the YouTube title format your team uses (e.g. <code>{title}, {reading} | {preacher} | {series}</code>).</p>
+    </div>
+  </div>
+</section>
+
+<!-- STEP 2: TRIM -->
+<section id="trim" class="guide-section">
+  <div class="guide-inner">
+    <div class="step-badge">
+      <div class="num">2</div>
+      <span class="label">Step two</span>
+    </div>
+    <h2 class="section-title">Trim</h2>
+    <p class="section-sub">Cut pre-service noise and dead air at the end using the waveform editor.</p>
+
+    <div class="method-cards">
+      <div class="method-card">
+        <h3>
+          <svg viewBox="0 0 24 24"><polyline points="5 9 2 12 5 15"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
+          Setting trim points
+        </h3>
+        <ul>
+          <li>Drag the orange handles directly on the waveform</li>
+          <li>Move the playhead and press <strong>I</strong> (in) or <strong>O</strong> (out)</li>
+          <li>Click <strong>Set In / Set Out</strong> in the toolbar</li>
+          <li>Press <strong>⌘Z</strong> to undo any move</li>
+        </ul>
+      </div>
+      <div class="method-card">
+        <h3>
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+          Playback
+        </h3>
+        <ul>
+          <li>Click the waveform to jump to any position</li>
+          <li><strong>Space</strong> or <strong>K</strong> — play / pause</li>
+          <li><strong>J</strong> or <strong>←</strong> — back 5 s</li>
+          <li><strong>L</strong> or <strong>→</strong> — forward 5 s</li>
+        </ul>
+      </div>
+      <div class="method-card">
+        <h3>
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+          Zoom &amp; pan
+        </h3>
+        <ul>
+          <li><strong>Scroll vertically</strong> to zoom — anchored on cursor</li>
+          <li><strong>Scroll horizontally</strong> or drag to pan</li>
+          <li><strong>Double-tap</strong> to reset zoom to full view</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- STEP 3: INFO -->
+<section id="info" class="guide-section">
+  <div class="guide-inner">
+    <div class="step-badge">
+      <div class="num">3</div>
+      <span class="label">Step three</span>
+    </div>
+    <h2 class="section-title">Info</h2>
+    <p class="section-sub">These fields are embedded in the MP3 as ID3 tags and used to name the output file.</p>
+
+    <table class="option-table">
+      <thead><tr><th>Field</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Sermon Title</td><td>e.g. <em>The Saving Power of Jesus</em></td></tr>
+        <tr><td>Bible Reading</td><td>e.g. <em>Romans 1:16–17</em></td></tr>
+        <tr><td>Preacher</td><td>Remembered between sessions</td></tr>
+        <tr><td>Series</td><td>Remembered between sessions</td></tr>
+        <tr><td>Date</td><td>Defaults to today; the full date prefixes the output filename</td></tr>
+        <tr><td>Artwork</td><td>Drag an image or click to choose. Remembered between sessions.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="subsection">
+      <h3>Output filename</h3>
+      <p class="prose">Built from the tag fields using a customisable template. The default is:</p>
+      <pre style="margin-top: 12px; padding: 14px 18px; background: var(--light); border: 1px solid var(--border); border-radius: 10px; font-family: ui-monospace, monospace; font-size: 13px; color: var(--blue); overflow-x: auto;">YYYY-MM-DD Sermon Title, Bible Reading | Preacher | Series.mp3</pre>
+      <p class="prose" style="margin-top: 12px;">Change the format in <strong>Settings → Templates</strong>. Saved to the same folder as the source file, or to <code>~/Downloads</code> for YouTube downloads.</p>
+    </div>
+  </div>
+</section>
+
+<!-- STEP 4: CHAPTERS -->
+<section id="chapters" class="guide-section">
+  <div class="guide-inner">
+    <div class="step-badge">
+      <div class="num">4</div>
+      <span class="label">Step four</span>
+    </div>
+    <h2 class="section-title">Chapters</h2>
+    <p class="section-sub">Drop markers at key moments — podcast apps show these as a navigable chapter list.</p>
+
+    <div class="method-cards">
+      <div class="method-card">
+        <h3>
+          <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Adding chapters
+        </h3>
+        <ul>
+          <li>Scrub to the moment, then press <strong>M</strong> or click <strong>+ Add Chapter</strong></li>
+          <li>First chapter defaults to the start, labelled with the Bible reading</li>
+          <li>Second chapter defaults to 2 min in, labelled <em>Sermon</em></li>
+        </ul>
+      </div>
+      <div class="method-card">
+        <h3>
+          <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+          Editing chapters
+        </h3>
+        <ul>
+          <li>Drag a marker on the waveform to reposition</li>
+          <li>Click the time field and type a time (<code>m:ss</code> or <code>h:mm:ss</code>)</li>
+          <li>Click a title to rename it</li>
+          <li>Click <strong>−</strong> to delete; press <strong>⌘Z</strong> to undo</li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="prose" style="margin-top: 28px;">Chapter times are in <em>output time</em> — relative to the trim-in point. A chapter at <code>0:00</code> plays at the very start of the trimmed recording.</p>
+  </div>
+</section>
+
+<!-- STEP 5: OUTPUT -->
+<section id="output" class="guide-section">
+  <div class="guide-inner">
+    <div class="step-badge">
+      <div class="num">5</div>
+      <span class="label">Step five</span>
+    </div>
+    <h2 class="section-title">Output</h2>
+    <p class="section-sub">Review processing options, then click <strong>Process</strong> or press <strong>⌘↩</strong>.</p>
+
+    <div class="subsection">
+      <h3>Audio processing</h3>
+      <table class="option-table">
+        <thead><tr><th>Option</th><th>Default</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td>Voice Isolation</td><td>On</td><td>Apple's engine removes background noise, room reverb, and crowd sounds.</td></tr>
+          <tr><td>Dynamic Compression</td><td>On</td><td>Evens out volume — quieter passages up, peaks controlled.</td></tr>
+          <tr><td>Long-Term Levelling</td><td>On</td><td>Slow AGC that smooths volume differences across the recording (~3-second time constant, ±6 dB).</td></tr>
+          <tr><td>Loudness Normalisation</td><td>On</td><td>Targets −16 LUFS (EBU R128) with a soft limiter to prevent clipping.</td></tr>
+          <tr><td>Mono Output</td><td>On</td><td>Mixes to a single channel. Recommended — speech in stereo wastes file size.</td></tr>
+          <tr><td>Shorten Long Silences</td><td>On</td><td>Trims pauses longer than the threshold. Default maximum is 1.0 s.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subsection">
+      <h3>Output format</h3>
+      <table class="option-table">
+        <thead><tr><th>Option</th><th>Default</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>Format</td><td>MP3</td><td>WAV produces a larger uncompressed file.</td></tr>
+          <tr><td>Bitrate</td><td>128 kbps</td><td>64 kbps is fine for speech; 128 kbps+ if music quality matters.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subsection">
+      <h3>Extras</h3>
+      <table class="option-table">
+        <thead><tr><th>Option</th><th>Default</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>Transcribe Audio</td><td>On</td><td>On-device speech recognition. Requires macOS 26+. Transcript appears on the done screen.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- AFTER PROCESSING -->
+<section id="after" class="guide-section">
+  <div class="guide-inner">
+    <span class="section-label">After processing</span>
+    <h2 class="section-title">Done screen</h2>
+    <p class="section-sub">When processing finishes, the done screen shows everything you need.</p>
+
+    <div class="method-cards">
+      <div class="method-card">
+        <h3>
+          <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          Output file
+        </h3>
+        <p>The output filename with a <strong>Reveal in Finder</strong> button.</p>
+      </div>
+      <div class="method-card">
+        <h3>
+          <svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+          Transcript
+        </h3>
+        <p>Full text transcript (if transcription was enabled) with a <strong>Copy</strong> button.</p>
+      </div>
+      <div class="method-card">
+        <h3>
+          <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          AI Assistant
+        </h3>
+        <p>If enabled in Settings, a Claude-generated podcast title, episode description, and key themes — with <strong>Retry</strong> and <strong>Copy</strong> buttons.</p>
+      </div>
+    </div>
+
+    <p class="prose" style="margin-top: 28px;">To process another file, click <strong>Process Another</strong> or drop a new file onto the window.</p>
+  </div>
+</section>
+
+<!-- KEYBOARD SHORTCUTS -->
+<section id="keyboard" class="guide-section dark">
+  <div class="guide-inner">
+    <span class="section-label">Keyboard shortcuts</span>
+    <h2 class="section-title">Stay in the flow</h2>
+    <p class="section-sub">Every step of the editing process has a keyboard shortcut.</p>
+
+    <div class="keys-grid">
+      <div class="key-row">
+        <div class="keys"><kbd>Space</kbd> <kbd>K</kbd></div>
+        <span class="key-label">Play / pause</span>
+      </div>
+      <div class="key-row">
+        <div class="keys"><kbd>J</kbd> <kbd>←</kbd></div>
+        <span class="key-label">Scrub back 5 s</span>
+      </div>
+      <div class="key-row">
+        <div class="keys"><kbd>L</kbd> <kbd>→</kbd></div>
+        <span class="key-label">Scrub forward 5 s</span>
+      </div>
+      <div class="key-row">
+        <div class="keys"><kbd>I</kbd></div>
+        <span class="key-label">Set trim in point</span>
+      </div>
+      <div class="key-row">
+        <div class="keys"><kbd>O</kbd></div>
+        <span class="key-label">Set trim out point</span>
+      </div>
+      <div class="key-row">
+        <div class="keys"><kbd>M</kbd></div>
+        <span class="key-label">Add chapter marker</span>
+      </div>
+      <div class="key-row">
+        <div class="keys"><kbd>⌘1</kbd> – <kbd>⌘5</kbd></div>
+        <span class="key-label">Navigate steps</span>
+      </div>
+      <div class="key-row">
+        <div class="keys"><kbd>⌘↩</kbd></div>
+        <span class="key-label">Start processing</span>
+      </div>
+      <div class="key-row">
+        <div class="keys"><kbd>⌘Z</kbd></div>
+        <span class="key-label">Undo trim / chapter</span>
+      </div>
+      <div class="key-row">
+        <div class="keys"><kbd>⌘,</kbd></div>
+        <span class="key-label">Open Settings</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- SETTINGS -->
+<section id="settings" class="guide-section">
+  <div class="guide-inner">
+    <span class="section-label">Settings</span>
+    <h2 class="section-title">Configuration</h2>
+    <p class="section-sub">Open Settings with <kbd style="background:#f1f5f9; border:1px solid var(--border); border-radius:4px; padding:2px 7px; font-size:13px; font-family:monospace; color:var(--dark);">⌘,</kbd> or from the DeChaff menu.</p>
+
+    <div class="subsection">
+      <h3>General</h3>
+      <table class="option-table">
+        <thead><tr><th>Setting</th><th>Details</th></tr></thead>
+        <tbody>
+          <tr><td>YouTube channel</td><td>Enter a channel URL or <code>@handle</code> to populate the YouTube browser.</td></tr>
+          <tr><td>Videos to show</td><td>Number of recent videos to display: 5, 10, or 20.</td></tr>
+          <tr><td>Apple Intelligence</td><td>Shows availability; includes a shortcut to enable it in System Settings.</td></tr>
+          <tr><td>yt-dlp</td><td>Shows install status. Tap <strong>Check for Updates</strong> to install or update the download tool.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subsection">
+      <h3>AI Assistant</h3>
+      <table class="option-table">
+        <thead><tr><th>Setting</th><th>Details</th></tr></thead>
+        <tbody>
+          <tr><td>Enable AI Assistant</td><td>When on, sends the transcript to the Claude API after processing. Response appears on the done screen.</td></tr>
+          <tr><td>Claude API key</td><td>Stored securely in the macOS Keychain. Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>.</td></tr>
+          <tr><td>Claude model</td><td>Choose from known models or enter a custom model ID. Defaults to Claude Sonnet 4.6.</td></tr>
+          <tr><td>Prompt template</td><td>Customise the instructions sent to Claude. Use <code>{title}</code>, <code>{preacher}</code>, <code>{series}</code>, <code>{reading}</code> as placeholders.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subsection">
+      <h3>Templates</h3>
+      <table class="option-table">
+        <thead><tr><th>Setting</th><th>Details</th></tr></thead>
+        <tbody>
+          <tr><td>YouTube Title Format</td><td>Tells DeChaff your church's YouTube naming convention. Used to guide AI extraction. Example: <code>{title}, {reading} | {preacher} | {series} | {date}</code></td></tr>
+          <tr><td>Output Filename</td><td>Controls how the exported file is named. A live preview updates as you type. Same placeholders available.</td></tr>
+        </tbody>
+      </table>
+      <p class="prose" style="margin-top: 14px;">Tap any placeholder chip to append it to the template field.</p>
+    </div>
+  </div>
+</section>
+
+<!-- TIPS -->
+<section id="tips" class="guide-section">
+  <div class="guide-inner">
+    <span class="section-label">Tips</span>
+    <h2 class="section-title">Getting the best results</h2>
+    <p class="section-sub">A few habits that make the workflow faster.</p>
+
+    <div class="tips-grid">
+      <div class="tip-card">
+        <strong>Trim precisely</strong>
+        <p>Zoom into the waveform at the start and end before placing handles. Use I/O keys while playing back, then press ⌘Z if you overshoot.</p>
+      </div>
+      <div class="tip-card">
+        <strong>Shorten silences</strong>
+        <p>The default 1.0 s works well for most sermons. Too short and delivery feels rushed; too long and pauses drag.</p>
+      </div>
+      <div class="tip-card">
+        <strong>Chapter timing</strong>
+        <p>If you're unsure where a section starts, play the recording and press M at the right moment. Drag the marker afterwards to fine-tune.</p>
+      </div>
+      <div class="tip-card">
+        <strong>Preacher and Series persist</strong>
+        <p>These are remembered between sessions — you only need to update them when they change.</p>
+      </div>
+      <div class="tip-card">
+        <strong>Artwork persists too</strong>
+        <p>Set it once and it will be embedded in every recording until you change it.</p>
+      </div>
+      <div class="tip-card">
+        <strong>Set your title format once</strong>
+        <p>If your church's YouTube titles follow a different convention, set it in Settings → Templates and AI extraction will work correctly every time.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-logo">
+    <img src="images/DeChaff-iOS-Default-1024x1024@1x.png" alt="DeChaff icon" />
+    <span>DeChaff</span>
+  </div>
+  <p>Built for the AV team at <a href="https://www.cityonahill.co.nz" target="_blank" rel="noopener">City On a Hill</a> &nbsp;·&nbsp; <a href="https://github.com/howardgrigg/DeChaff" target="_blank" rel="noopener">Open source on GitHub</a></p>
+  <p style="margin-top: 8px;">Free to use &nbsp;·&nbsp; MIT licence &nbsp;·&nbsp; macOS 13+</p>
+</footer>
+
+</body>
+</html>
