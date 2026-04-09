@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DeChaff — Tech Details</title>
+  <meta name="description" content="Technical details of how DeChaff works internally — metadata extraction tiers, template parsing, audio processing pipeline." />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --blue:    #2563eb;
+      --blue-lt: #3b82f6;
+      --dark:    #0f172a;
+      --dark2:   #1e293b;
+      --mid:     #334155;
+      --muted:   #64748b;
+      --border:  #e2e8f0;
+      --light:   #f8fafc;
+      --white:   #ffffff;
+      --radius:  14px;
+      --green:   #16a34a;
+      --green-lt:#dcfce7;
+      --amber:   #d97706;
+      --amber-lt:#fef3c7;
+      --purple:  #7c3aed;
+      --purple-lt:#ede9fe;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      background: var(--white);
+      color: var(--dark);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── NAV ── */
+    nav {
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(255,255,255,0.85);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-inner {
+      max-width: 1100px; margin: 0 auto;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 24px;
+    }
+    .nav-logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .nav-logo img { width: 32px; height: 32px; border-radius: 7px; }
+    .nav-logo span { font-size: 17px; font-weight: 700; color: var(--dark); }
+    .nav-links { display: flex; gap: 28px; list-style: none; }
+    .nav-links a { color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 500; transition: color .15s; }
+    .nav-links a:hover, .nav-links a.active { color: var(--dark); }
+    .nav-cta {
+      background: var(--blue); color: var(--white);
+      padding: 8px 18px; border-radius: 8px;
+      font-size: 14px; font-weight: 600; text-decoration: none;
+      transition: background .15s;
+    }
+    .nav-cta:hover { background: var(--blue-lt); }
+
+    /* ── HERO ── */
+    .hero {
+      background: linear-gradient(160deg, var(--dark) 0%, #1a2d5a 100%);
+      color: var(--white);
+      text-align: center;
+      padding: 64px 24px 56px;
+    }
+    .hero-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 100px; padding: 5px 14px;
+      font-size: 13px; font-weight: 500; color: rgba(255,255,255,0.8);
+      margin-bottom: 20px;
+    }
+    .hero h1 { font-size: clamp(28px, 5vw, 48px); font-weight: 800; letter-spacing: -1px; margin-bottom: 12px; }
+    .hero p { font-size: 18px; color: rgba(255,255,255,0.65); max-width: 560px; margin: 0 auto; }
+
+    /* ── TOC ── */
+    .toc {
+      background: var(--light);
+      border-bottom: 1px solid var(--border);
+      padding: 20px 24px;
+    }
+    .toc-inner { max-width: 900px; margin: 0 auto; display: flex; flex-wrap: wrap; gap: 8px; }
+    .toc a {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: var(--white); border: 1px solid var(--border);
+      border-radius: 8px; padding: 6px 14px;
+      font-size: 13px; font-weight: 500; color: var(--mid);
+      text-decoration: none; transition: border-color .15s, color .15s;
+    }
+    .toc a:hover { border-color: var(--blue); color: var(--blue); }
+
+    /* ── SECTIONS ── */
+    .tech-section { padding: 72px 24px; }
+    .tech-section:nth-child(even) { background: var(--light); }
+    .tech-section.dark { background: var(--dark2); color: var(--white); }
+    .tech-inner { max-width: 900px; margin: 0 auto; }
+
+    .section-label {
+      display: inline-block;
+      font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+      color: var(--blue); margin-bottom: 10px;
+    }
+    .dark .section-label { color: #93c5fd; }
+    .section-title { font-size: clamp(24px, 3.5vw, 36px); font-weight: 800; letter-spacing: -.5px; line-height: 1.2; margin-bottom: 16px; }
+    .dark .section-title { color: var(--white); }
+    .section-sub { font-size: 17px; color: var(--muted); margin-bottom: 40px; max-width: 680px; }
+    .dark .section-sub { color: rgba(255,255,255,0.5); }
+
+    /* ── PROSE ── */
+    .prose { font-size: 15px; color: var(--mid); line-height: 1.8; }
+    .prose + .prose { margin-top: 14px; }
+    .dark .prose { color: rgba(255,255,255,0.65); }
+    .prose strong { color: var(--dark); font-weight: 600; }
+    .dark .prose strong { color: var(--white); }
+
+    /* ── CODE ── */
+    code {
+      background: #f1f5f9; border: 1px solid var(--border);
+      border-radius: 4px; padding: 1px 6px;
+      font-family: ui-monospace, "SF Mono", monospace; font-size: 13px; color: var(--blue);
+    }
+    .dark code { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.12); color: #93c5fd; }
+
+    pre {
+      background: var(--dark);
+      border-radius: 12px;
+      padding: 20px 24px;
+      overflow-x: auto;
+      margin-top: 20px;
+      margin-bottom: 8px;
+    }
+    pre code {
+      background: none; border: none; padding: 0;
+      font-size: 13px; line-height: 1.7;
+      color: #e2e8f0;
+    }
+    .comment { color: #64748b; }
+    .kw  { color: #93c5fd; }   /* keyword */
+    .str { color: #86efac; }   /* string/literal */
+    .fn  { color: #fde68a; }   /* function/type */
+    .rx  { color: #f9a8d4; }   /* regex highlight */
+
+    pre + .pre-caption {
+      font-size: 12px; color: var(--muted); margin-bottom: 24px;
+      padding-left: 4px;
+    }
+
+    /* ── TIER CARDS ── */
+    .tiers { display: flex; flex-direction: column; gap: 24px; margin-top: 40px; }
+    .tier-card {
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      overflow: hidden;
+    }
+    .tier-header {
+      display: flex; align-items: center; gap: 16px;
+      padding: 20px 24px;
+    }
+    .tier-header.green  { background: var(--green-lt);  border-bottom: 1px solid #bbf7d0; }
+    .tier-header.amber  { background: var(--amber-lt);  border-bottom: 1px solid #fde68a; }
+    .tier-header.purple { background: var(--purple-lt); border-bottom: 1px solid #ddd6fe; }
+    .tier-badge {
+      width: 36px; height: 36px; border-radius: 50%;
+      font-size: 16px; font-weight: 800;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; color: var(--white);
+    }
+    .tier-badge.green  { background: var(--green); }
+    .tier-badge.amber  { background: var(--amber); }
+    .tier-badge.purple { background: var(--purple); }
+    .tier-title { font-size: 17px; font-weight: 700; }
+    .tier-title small { display: block; font-size: 12px; font-weight: 500; color: var(--muted); margin-top: 1px; }
+    .tier-body { padding: 24px; background: var(--white); }
+    .tier-body .prose + .prose { margin-top: 10px; }
+
+    .pill {
+      display: inline-flex; align-items: center;
+      border-radius: 100px; padding: 3px 10px;
+      font-size: 12px; font-weight: 600;
+    }
+    .pill.green  { background: var(--green-lt);  color: var(--green); }
+    .pill.amber  { background: var(--amber-lt);  color: var(--amber); }
+    .pill.purple { background: var(--purple-lt); color: var(--purple); }
+
+    /* ── STEP BLOCKS ── */
+    .steps-list { display: flex; flex-direction: column; gap: 0; margin-top: 36px; }
+    .step-block {
+      display: grid; grid-template-columns: 48px 1fr;
+      gap: 0 20px; position: relative;
+    }
+    .step-block + .step-block { margin-top: 32px; }
+    .step-num-col { display: flex; flex-direction: column; align-items: center; }
+    .step-circle {
+      width: 36px; height: 36px; border-radius: 50%;
+      background: var(--blue); color: var(--white);
+      font-size: 15px; font-weight: 800;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; position: relative; z-index: 1;
+    }
+    .step-line {
+      width: 2px; flex: 1; background: var(--border);
+      margin-top: 6px; min-height: 20px;
+    }
+    .step-block:last-child .step-line { display: none; }
+    .step-content { padding-bottom: 8px; }
+    .step-content h3 { font-size: 16px; font-weight: 700; margin-bottom: 6px; padding-top: 6px; }
+    .step-content .prose { font-size: 14px; }
+
+    /* ── EXAMPLE BOX ── */
+    .example-box {
+      background: var(--light); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 20px 24px;
+      margin-top: 28px;
+    }
+    .example-box .label {
+      font-size: 11px; font-weight: 700; letter-spacing: .08em;
+      text-transform: uppercase; color: var(--muted); margin-bottom: 10px;
+    }
+    .example-row {
+      display: flex; align-items: baseline; gap: 12px;
+      font-size: 14px; padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .example-row:last-child { border-bottom: none; }
+    .example-row .key { color: var(--muted); font-weight: 500; min-width: 80px; flex-shrink: 0; }
+    .example-row .val { font-family: ui-monospace, monospace; font-size: 13px; color: var(--blue); }
+    .example-row .arrow { color: var(--muted); flex-shrink: 0; }
+
+    /* ── FOOTER ── */
+    footer {
+      background: var(--dark);
+      color: rgba(255,255,255,0.4);
+      text-align: center; padding: 48px 24px;
+      font-size: 14px;
+    }
+    footer a { color: rgba(255,255,255,0.5); text-decoration: none; }
+    footer a:hover { color: var(--white); }
+    footer .footer-logo { display: flex; align-items: center; gap: 8px; justify-content: center; margin-bottom: 16px; }
+    footer .footer-logo img { width: 28px; height: 28px; border-radius: 6px; opacity: 0.8; }
+    footer .footer-logo span { font-size: 16px; font-weight: 700; color: rgba(255,255,255,0.7); }
+    footer p { margin-top: 8px; }
+
+    .subsection { margin-top: 44px; }
+    .subsection h3 {
+      font-size: 18px; font-weight: 700; margin-bottom: 16px;
+      padding-bottom: 10px; border-bottom: 1px solid var(--border);
+    }
+
+    @media (max-width: 600px) {
+      .nav-links { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="nav-inner">
+    <a class="nav-logo" href="index.html">
+      <img src="images/DeChaff-iOS-Default-1024x1024@1x.png" alt="DeChaff icon" />
+      <span>DeChaff</span>
+    </a>
+    <ul class="nav-links">
+      <li><a href="index.html#features">Features</a></li>
+      <li><a href="user-guide.html">User Guide</a></li>
+      <li><a href="tech-details.html" class="active">Tech Details</a></li>
+    </ul>
+    <a class="nav-cta" href="https://github.com/howardgrigg/DeChaff/releases/latest/download/DeChaff.zip">Download</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-badge">Tech Details</div>
+  <h1>How DeChaff works</h1>
+  <p>Implementation notes on the interesting parts — for contributors, curious minds, or churches adapting DeChaff for their own use.</p>
+</section>
+
+<!-- TOC -->
+<div class="toc">
+  <div class="toc-inner">
+    <a href="#metadata">Metadata extraction tiers</a>
+    <a href="#template-parser">Template parser</a>
+  </div>
+</div>
+
+
+<!-- ── METADATA EXTRACTION ─────────────────────────────────────────── -->
+<section id="metadata" class="tech-section">
+  <div class="tech-inner">
+    <span class="section-label">Metadata extraction</span>
+    <h2 class="section-title">Three-tier YouTube title parsing</h2>
+    <p class="section-sub">
+      When a video is selected for download, DeChaff immediately tries to extract structured sermon metadata
+      from the YouTube video title — sermon title, Bible reading, preacher, series, and date.
+      It attempts three strategies in order, falling back to the next if the previous one is unavailable or fails.
+      The extraction runs concurrently with the audio download, so the fields are pre-filled by the time the
+      download finishes.
+    </p>
+
+    <div class="tiers">
+
+      <!-- TIER 1 -->
+      <div class="tier-card">
+        <div class="tier-header green">
+          <div class="tier-badge green">1</div>
+          <div class="tier-title">
+            Apple Intelligence
+            <small>On-device · FoundationModels framework · macOS 26+</small>
+          </div>
+          <span class="pill green" style="margin-left:auto;">Preferred</span>
+        </div>
+        <div class="tier-body">
+          <p class="prose">
+            The first attempt uses Apple's <strong>FoundationModels</strong> framework to run a small language model
+            entirely on-device. DeChaff creates a <code>LanguageModelSession</code> with a system prompt that
+            describes the expected title format (injected from the user's Settings → Templates configuration),
+            then asks the model to populate a structured <code>SermonMetadata</code> schema using the
+            <code>@Generable</code> / <code>@Guide</code> macros. The model returns a strongly-typed Swift struct
+            directly — no JSON parsing required.
+          </p>
+          <p class="prose" style="margin-top:12px;">
+            Because it runs on the Neural Engine, it adds no network latency and costs nothing per request.
+            It is skipped if Apple Intelligence is unavailable on the device (checked via
+            <code>SystemLanguageModel.default.availability</code>).
+          </p>
+          <pre><code><span class="comment">// Structured output schema — the model fills this in directly</span>
+<span class="kw">@Generable</span>
+<span class="kw">struct</span> <span class="fn">SermonMetadata</span> {
+    <span class="kw">@Guide</span>(description: <span class="str">"The sermon title or topic."</span>)
+    <span class="kw">var</span> title: String
+    <span class="kw">@Guide</span>(description: <span class="str">"Bible reading, e.g. 'Romans 8:28'."</span>)
+    <span class="kw">var</span> bibleReading: String
+    <span class="kw">@Guide</span>(description: <span class="str">"Preacher or speaker name."</span>)
+    <span class="kw">var</span> speaker: String
+    <span class="kw">@Guide</span>(description: <span class="str">"Sermon series name."</span>)
+    <span class="kw">var</span> series: String
+    <span class="kw">@Guide</span>(description: <span class="str">"Date as 'dd MMM yyyy'."</span>)
+    <span class="kw">var</span> date: String
+}
+
+<span class="kw">let</span> session = <span class="fn">LanguageModelSession</span>(
+    model: SystemLanguageModel.default,
+    instructions: systemInstructions(titleFormat: titleFormat)
+)
+<span class="kw">let</span> response = <span class="kw">try await</span> session.respond(
+    to: <span class="str">"Extract sermon metadata from: \"\(title)\""</span>,
+    generating: SermonMetadata.self
+)</code></pre>
+        </div>
+      </div>
+
+      <!-- TIER 2 -->
+      <div class="tier-card">
+        <div class="tier-header amber">
+          <div class="tier-badge amber">2</div>
+          <div class="tier-title">
+            Claude API
+            <small>Network · Anthropic API · requires API key in Settings</small>
+          </div>
+          <span class="pill amber" style="margin-left:auto;">Fallback</span>
+        </div>
+        <div class="tier-body">
+          <p class="prose">
+            If Apple Intelligence is unavailable, DeChaff falls back to the <strong>Anthropic Claude API</strong>
+            — the same API used by the AI Assistant feature. It sends the same system prompt (with the user's
+            title format injected) and asks for a JSON response with the five metadata fields. The response is
+            parsed from JSON into a <code>SermonMetadata</code> struct.
+          </p>
+          <p class="prose" style="margin-top:12px;">
+            This tier requires an API key to be configured in <strong>Settings → AI Assistant</strong> and an
+            active internet connection. It is skipped silently if no key is present. The model used is whatever
+            is selected in Settings (defaulting to Claude Sonnet 4.6).
+          </p>
+          <pre><code><span class="comment">// Same system prompt as tier 1, with a JSON output instruction appended</span>
+<span class="kw">let</span> response = <span class="kw">try await</span> <span class="fn">ClaudeAPIClient</span>.sendMessage(
+    apiKey: apiKey,
+    model: model,
+    systemPrompt: systemInstructions(titleFormat: titleFormat) + <span class="str">"""
+
+        Respond with ONLY a JSON object:
+        {"title":"...","bibleReading":"...","speaker":"...","series":"...","date":"..."}
+        """</span>,
+    transcript: <span class="str">"Extract sermon metadata from: \"\(title)\""</span>
+)</code></pre>
+        </div>
+      </div>
+
+      <!-- TIER 3 -->
+      <div class="tier-card">
+        <div class="tier-header purple">
+          <div class="tier-badge purple">3</div>
+          <div class="tier-title">
+            Template parser
+            <small>On-device · pure string matching · no AI required</small>
+          </div>
+          <span class="pill purple" style="margin-left:auto;">Last resort</span>
+        </div>
+        <div class="tier-body">
+          <p class="prose">
+            If both AI tiers fail or are unavailable, DeChaff falls back to a deterministic regex parser that
+            uses the user's title format template directly. Unlike AI, it cannot handle variation or imprecision —
+            but when titles are consistently formatted it works reliably with zero latency and zero cost.
+          </p>
+          <p class="prose" style="margin-top:12px;">
+            See <a href="#template-parser" style="color:var(--blue);">Template parser</a> below for a full
+            explanation of how it works.
+          </p>
+        </div>
+      </div>
+
+    </div><!-- /tiers -->
+
+    <!-- Shared system prompt -->
+    <div class="subsection">
+      <h3>The shared system prompt</h3>
+      <p class="prose">
+        Tiers 1 and 2 use identical instructions. The user's title format is injected at runtime so the model
+        understands the specific structure your church uses. This is why configuring the format in
+        <strong>Settings → Templates</strong> matters — it significantly improves extraction accuracy for
+        both AI tiers.
+      </p>
+      <pre><code><span class="str">"""
+You extract structured metadata from church sermon YouTube video titles.
+
+The expected format for this church is: "\(titleFormat)"
+where {title} is the sermon title or topic, {reading} is the Bible reading or passage,
+{preacher} is the speaker or preacher name, {series} is the sermon series name,
+and {date} is the date of the sermon.
+
+Fields may be separated by pipe characters (|), commas, dashes, or other delimiters
+as shown in the format above. Not all fields are always present.
+
+The date may appear in various formats (e.g. "23 Mar 2025", "15/3/26").
+Always normalise it to "dd MMM yyyy" format.
+
+Only populate fields you are confident about. Use empty string for anything not clearly
+present. Never invent information.
+"""</span></code></pre>
+    </div>
+
+  </div>
+</section>
+
+
+<!-- ── TEMPLATE PARSER ────────────────────────────────────────────── -->
+<section id="template-parser" class="tech-section">
+  <div class="tech-inner">
+    <span class="section-label">Tier 3</span>
+    <h2 class="section-title">Template parser</h2>
+    <p class="section-sub">
+      The template parser converts the user's format string into a regular expression at runtime,
+      then matches it against the YouTube title. Any separator the user configures works — the parser
+      makes no assumptions about <code>|</code> or any other delimiter.
+    </p>
+
+    <p class="prose">Walking through the default template as a concrete example:</p>
+
+    <div class="example-box" style="margin-top:16px;">
+      <div class="label">Input template</div>
+      <code style="font-size:14px;">{title}, {reading} | {preacher} | {series} | {date}</code>
+    </div>
+
+    <!-- Steps -->
+    <div class="steps-list">
+
+      <div class="step-block">
+        <div class="step-num-col">
+          <div class="step-circle">1</div>
+          <div class="step-line"></div>
+        </div>
+        <div class="step-content">
+          <h3>Find the placeholders</h3>
+          <p class="prose">
+            The regex <code>\{(\w+)\}</code> scans the format string and returns each <code>{…}</code>
+            match in document order, capturing the field name inside the braces.
+          </p>
+          <pre><code>match 0  <span class="rx">{title}</span>     name=<span class="str">"title"</span>
+match 1  <span class="rx">{reading}</span>   name=<span class="str">"reading"</span>
+match 2  <span class="rx">{preacher}</span>  name=<span class="str">"preacher"</span>
+match 3  <span class="rx">{series}</span>    name=<span class="str">"series"</span>
+match 4  <span class="rx">{date}</span>      name=<span class="str">"date"</span></code></pre>
+        </div>
+      </div>
+
+      <div class="step-block">
+        <div class="step-num-col">
+          <div class="step-circle">2</div>
+          <div class="step-line"></div>
+        </div>
+        <div class="step-content">
+          <h3>Build segments</h3>
+          <p class="prose">
+            For each placeholder match, the code slices out the literal text that sits
+            between the <em>previous match's end</em> and <em>this match's start</em>.
+            That literal is whatever separator the user typed — it could be <code>, </code>,
+            <code> | </code>, <code> - </code>, <code> — </code>, or anything else.
+          </p>
+          <pre><code>segment 0  literal=<span class="str">""</span>     field=<span class="str">"title"</span>    <span class="comment">← nothing before {title}</span>
+segment 1  literal=<span class="str">", "</span>   field=<span class="str">"reading"</span>  <span class="comment">← text between {title} and {reading}</span>
+segment 2  literal=<span class="str">" | "</span>  field=<span class="str">"preacher"</span> <span class="comment">← text between {reading} and {preacher}</span>
+segment 3  literal=<span class="str">" | "</span>  field=<span class="str">"series"</span>
+segment 4  literal=<span class="str">" | "</span>  field=<span class="str">"date"</span></code></pre>
+        </div>
+      </div>
+
+      <div class="step-block">
+        <div class="step-num-col">
+          <div class="step-circle">3</div>
+          <div class="step-line"></div>
+        </div>
+        <div class="step-content">
+          <h3>Build the regex</h3>
+          <p class="prose">
+            Each segment contributes two things to the pattern: its literal text
+            <strong>regex-escaped</strong> (so <code>|</code> becomes <code>\|</code>,
+            <code>.</code> becomes <code>\.</code>, etc.), then a capture group.
+            All capture groups are non-greedy <code>(.+?)</code> except the last, which
+            is greedy <code>(.+)</code> so it consumes everything to the end of the string.
+          </p>
+          <pre><code>segment 0  <span class="str">""</span>     →            <span class="rx">(.+?)</span>
+segment 1  <span class="str">", "</span>   → <span class="fn">,\ </span>      + <span class="rx">(.+?)</span>
+segment 2  <span class="str">" | "</span>  → <span class="fn">\ \|\ </span>   + <span class="rx">(.+?)</span>
+segment 3  <span class="str">" | "</span>  → <span class="fn">\ \|\ </span>   + <span class="rx">(.+?)</span>
+segment 4  <span class="str">" | "</span>  → <span class="fn">\ \|\ </span>   + <span class="rx">(.+)</span>   <span class="comment">← greedy on the last field</span>
+
+<span class="comment">→ final pattern:</span>
+<span class="rx">^(.+?), (.+?) \| (.+?) \| (.+?) \| (.+)$</span></code></pre>
+          <p class="prose" style="margin-top:12px;">
+            Non-greedy groups are critical here — each <code>(.+?)</code> matches as little as possible,
+            stopping at the first occurrence of the next literal rather than consuming it.
+          </p>
+        </div>
+      </div>
+
+      <div class="step-block">
+        <div class="step-num-col">
+          <div class="step-circle">4</div>
+          <div class="step-line"></div>
+        </div>
+        <div class="step-content">
+          <h3>Progressive fallback for missing fields</h3>
+          <p class="prose">
+            If the title has fewer fields than the template — for example, no date — the full regex won't match
+            because the expected separator and capture group aren't there. The parser retries with one fewer
+            trailing segment, rebuilding the regex each time, until it either finds a match or runs out of
+            options. A minimum of two matching fields is required to prevent the degenerate case of
+            <code>^(.+)$</code> matching any arbitrary string.
+          </p>
+          <pre><code><span class="comment">-- title: "Grace Abounding, Romans 5:1-5 | Pastor Mike | Core Series"
+   (has series but no date)</span>
+
+count=5  <span class="rx">^(.+?), (.+?) \| (.+?) \| (.+?) \| (.+)$</span>  <span class="comment">→ no match</span>
+count=4  <span class="rx">^(.+?), (.+?) \| (.+?) \| (.+)$</span>           <span class="comment">→ match ✓</span>
+
+title    = <span class="str">"Grace Abounding"</span>
+reading  = <span class="str">"Romans 5:1-5"</span>
+preacher = <span class="str">"Pastor Mike"</span>
+series   = <span class="str">"Core Series"</span>   <span class="comment">← captured by the greedy group</span>
+date     = <span class="str">""</span>               <span class="comment">← not in title, defaults to empty</span></code></pre>
+        </div>
+      </div>
+
+      <div class="step-block">
+        <div class="step-num-col">
+          <div class="step-circle">5</div>
+          <div class="step-line"></div>
+        </div>
+        <div class="step-content">
+          <h3>Map captures to fields</h3>
+          <p class="prose">
+            Each capture group maps back to a field name via the <code>used</code> segments array,
+            which preserves the original order. Each value is whitespace-trimmed, then assembled
+            into a <code>SermonMetadata</code> struct.
+          </p>
+          <div class="example-box">
+            <div class="label">Result — default template, all fields present</div>
+            <div class="example-row"><span class="key">title</span><span class="arrow">→</span><span class="val">"The Good Shepherd"</span></div>
+            <div class="example-row"><span class="key">reading</span><span class="arrow">→</span><span class="val">"John 10:1–18"</span></div>
+            <div class="example-row"><span class="key">preacher</span><span class="arrow">→</span><span class="val">"Rev. James Hart"</span></div>
+            <div class="example-row"><span class="key">series</span><span class="arrow">→</span><span class="val">"Foundations"</span></div>
+            <div class="example-row"><span class="key">date</span><span class="arrow">→</span><span class="val">"6 Apr 2026"</span></div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /steps -->
+
+    <!-- Limitations -->
+    <div class="subsection">
+      <h3>Known limitations</h3>
+      <p class="prose">
+        Because the parser is purely structural, it has two inherent limitations that AI tiers do not:
+      </p>
+      <p class="prose" style="margin-top:12px;">
+        <strong>Separator collision.</strong> If the separator character appears inside a field value
+        — for example a sermon titled <em>"Faith, Hope, and Love"</em> when the separator between
+        <code>{title}</code> and <code>{reading}</code> is <code>, </code> — the non-greedy capture
+        will stop at the first comma and the mapping will be wrong. Tiers 1 and 2 handle this correctly
+        because they understand context rather than pattern-matching literally.
+      </p>
+      <p class="prose" style="margin-top:12px;">
+        <strong>Position-dependence.</strong> Fields must appear in exactly the order the template specifies.
+        A missing field in the <em>middle</em> of the template (rather than at the end) will cause all
+        subsequent fields to shift and map incorrectly. Missing <em>trailing</em> fields are handled
+        gracefully by the progressive fallback.
+      </p>
+    </div>
+
+  </div>
+</section>
+
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-logo">
+    <img src="images/DeChaff-iOS-Default-1024x1024@1x.png" alt="DeChaff icon" />
+    <span>DeChaff</span>
+  </div>
+  <p>Built for the AV team at <a href="https://www.cityonahill.co.nz" target="_blank" rel="noopener">City On a Hill</a> &nbsp;·&nbsp; <a href="https://github.com/howardgrigg/DeChaff" target="_blank" rel="noopener">Open source on GitHub</a></p>
+  <p style="margin-top: 8px;">Free to use &nbsp;·&nbsp; MIT licence &nbsp;·&nbsp; macOS 26+</p>
+</footer>
+
+</body>
+</html>
