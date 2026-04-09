@@ -9,14 +9,14 @@
     <item>
       <title>Version 1.0.1</title>
       <pubDate>Thu, 10 Apr 2026 00:00:00 +0000</pubDate>
-      <sparkle:version>2</sparkle:version>
+      <sparkle:version>10</sparkle:version>
       <sparkle:shortVersionString>1.0.1</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
       <sparkle:releaseNotesLink>https://github.com/howardgrigg/DeChaff/releases/tag/v1.0.1</sparkle:releaseNotesLink>
       <enclosure
         url="https://github.com/howardgrigg/DeChaff/releases/download/v1.0.1/DeChaff.zip"
-        sparkle:edSignature="W+nZf3yo39OHbY9xn+xvwEf9y62YXb0A2EHc1lffWmNkGRGJwU3Hcf9HYsZXva5D467i8lx4dIwYO1+S/FxYBA=="
-        length="8244979"
+        sparkle:edSignature="P+qJXkjZhvdPaQ3NfmqlcIeSvaAsL4Nm56xsyg4DxKAx9O3h80F4qkM+GtD3rpdj4/A/PI8lwkm/TRXXFsI5Ag=="
+        length="8244706"
         type="application/octet-stream" />
     </item>
 
