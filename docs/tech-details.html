@@ -318,7 +318,9 @@
 <div class="toc">
   <div class="toc-inner">
     <a href="#metadata">Metadata extraction tiers</a>
-    <a href="#template-parser">Template parser</a>
+    <a href="#apple-intelligence">Tier 1 — Apple Intelligence</a>
+    <a href="#claude-api">Tier 2 — Claude API</a>
+    <a href="#template-parser">Tier 3 — Template parser</a>
     <a href="#audio-pipeline">Audio processing pipeline</a>
   </div>
 </div>
@@ -482,15 +484,181 @@ present. Never invent information.
 </section>
 
 
+<!-- ── TIER 1: APPLE INTELLIGENCE ────────────────────────────────── -->
+<section id="apple-intelligence" class="tech-section">
+  <div class="tech-inner">
+    <span class="section-label">Tier 1</span>
+    <h2 class="section-title">Apple Intelligence</h2>
+    <p class="section-sub">
+      The preferred extraction path: a small language model runs entirely on the device, with no network
+      request and no cost per use. Available on Apple Silicon Macs running macOS 26+ with Apple Intelligence enabled.
+    </p>
+
+    <div class="subsection" style="margin-top:0;">
+      <h3>How it works</h3>
+      <p class="prose">
+        DeChaff uses the <strong>FoundationModels</strong> framework introduced in macOS 26 to access Apple's
+        on-device language model via <code>SystemLanguageModel.default</code>. Before attempting extraction,
+        it checks <code>SystemLanguageModel.default.availability</code> — if the result is anything other
+        than <code>.available</code> (e.g. the device lacks Apple Intelligence, or the user hasn't enabled it),
+        this tier is skipped immediately and Tier 2 is tried instead.
+      </p>
+      <p class="prose" style="margin-top:12px;">
+        A <code>LanguageModelSession</code> is created with a system prompt that describes the expected title
+        format — injected from the user's <strong>Settings → Templates</strong> configuration. The prompt tells
+        the model which fields to look for, what separators to expect, and how to normalise the date. It then
+        sends a single user message: <em>"Extract sermon metadata from this YouTube title: …"</em>
+      </p>
+    </div>
+
+    <div class="subsection">
+      <h3>Structured output via <code>@Generable</code></h3>
+      <p class="prose">
+        Rather than asking the model to produce free-form text and then parsing it, DeChaff uses the
+        <code>@Generable</code> macro to declare <code>SermonMetadata</code> as a structured output schema.
+        Each field is annotated with <code>@Guide</code> to give the model a description of what to put there.
+        The <code>session.respond(to:generating:)</code> call constrains the model's output to exactly this shape —
+        the framework handles all schema enforcement internally, and DeChaff receives a fully-typed Swift struct
+        with no JSON parsing step.
+      </p>
+      <pre><code><span class="kw">@Generable</span>
+<span class="kw">struct</span> <span class="fn">SermonMetadata</span> {
+    <span class="kw">@Guide</span>(description: <span class="str">"The sermon title or topic. Empty string if not found."</span>)
+    <span class="kw">var</span> title: String
+
+    <span class="kw">@Guide</span>(description: <span class="str">"Bible reading or passage, e.g. 'Romans 8:28'. Empty string if not found."</span>)
+    <span class="kw">var</span> bibleReading: String
+
+    <span class="kw">@Guide</span>(description: <span class="str">"Preacher or speaker name. Empty string if not found."</span>)
+    <span class="kw">var</span> speaker: String
+
+    <span class="kw">@Guide</span>(description: <span class="str">"Sermon series name. Empty string if not found."</span>)
+    <span class="kw">var</span> series: String
+
+    <span class="kw">@Guide</span>(description: <span class="str">"Date as 'dd MMM yyyy', e.g. '23 Mar 2025'. Empty string if not found."</span>)
+    <span class="kw">var</span> date: String
+}
+
+<span class="comment">// Extraction call — returns SermonMetadata directly, no JSON parsing</span>
+<span class="kw">let</span> session = <span class="fn">LanguageModelSession</span>(
+    model: SystemLanguageModel.default,
+    instructions: systemInstructions(titleFormat: titleFormat)
+)
+<span class="kw">let</span> response = <span class="kw">try await</span> session.respond(
+    to: <span class="str">"Extract sermon metadata from this YouTube title: \"\(title)\""</span>,
+    generating: SermonMetadata.<span class="kw">self</span>
+)
+<span class="kw">return</span> response.content  <span class="comment">// already a SermonMetadata</span></code></pre>
+    </div>
+
+    <div class="subsection">
+      <h3>Privacy and performance</h3>
+      <p class="prose">
+        Because the model runs on the Neural Engine, extraction adds no network latency — it typically completes
+        in under a second, well within the time the audio download takes. The YouTube title never leaves the device.
+        There is no API key to manage and no per-request cost.
+      </p>
+      <p class="prose" style="margin-top:12px;">
+        The on-device model is smaller than a cloud model, so it may occasionally miss a field or misread an
+        unusual date format. This is why the date is always normalised to <code>dd MMM yyyy</code> in the system
+        prompt — it reduces ambiguity regardless of how the church formats it in their title.
+      </p>
+    </div>
+
+  </div>
+</section>
+
+
+<!-- ── TIER 2: CLAUDE API ─────────────────────────────────────────── -->
+<section id="claude-api" class="tech-section">
+  <div class="tech-inner">
+    <span class="section-label">Tier 2</span>
+    <h2 class="section-title">Claude API</h2>
+    <p class="section-sub">
+      When Apple Intelligence is unavailable, DeChaff falls back to the Anthropic Claude API —
+      a cloud model accessed over the network using the API key from Settings.
+    </p>
+
+    <div class="subsection" style="margin-top:0;">
+      <h3>How it works</h3>
+      <p class="prose">
+        DeChaff looks up the Anthropic API key from the macOS Keychain. If no key is stored, this tier is
+        skipped immediately. Otherwise, it calls <code>ClaudeAPIClient.sendMessage</code> with the same
+        system prompt used by Tier 1, with one addition: an instruction to respond with a plain JSON object
+        containing the five metadata fields. No markdown fencing, no explanation — just the JSON.
+      </p>
+      <p class="prose" style="margin-top:12px;">
+        The model used is whatever is selected in <strong>Settings → AI Assistant</strong>
+        (defaulting to Claude Sonnet 4.6). Because the API is the same one used for the AI Assistant chat
+        feature, no additional configuration is needed once an API key is in place.
+      </p>
+    </div>
+
+    <div class="subsection">
+      <h3>JSON response parsing</h3>
+      <p class="prose">
+        Unlike Tier 1, the Claude API returns plain text. DeChaff trims whitespace from the response, then
+        parses it with <code>JSONSerialization</code> into a <code>[String: String]</code> dictionary,
+        mapping keys (<code>title</code>, <code>bibleReading</code>, <code>speaker</code>, <code>series</code>,
+        <code>date</code>) directly to <code>SermonMetadata</code> fields. Any key not present in the response
+        becomes an empty string. If the JSON parse fails for any reason, the tier returns <code>nil</code>
+        and Tier 3 is attempted.
+      </p>
+      <pre><code><span class="comment">// System prompt is identical to Tier 1, plus a JSON output instruction</span>
+<span class="kw">let</span> systemPrompt = systemInstructions(titleFormat: titleFormat) + <span class="str">"""
+
+    Respond with ONLY a JSON object, no markdown fencing, no explanation:
+    {"title":"...","bibleReading":"...","speaker":"...","series":"...","date":"..."}
+    Use empty string for any field not found. Format the date as "dd MMM yyyy".
+    """</span>
+
+<span class="kw">let</span> response = <span class="kw">try await</span> <span class="fn">ClaudeAPIClient</span>.sendMessage(
+    apiKey: apiKey, model: model,
+    systemPrompt: systemPrompt,
+    transcript: <span class="str">"Extract sermon metadata from this YouTube title: \"\(title)\""</span>
+)
+
+<span class="comment">// Parse the JSON response into a SermonMetadata</span>
+<span class="kw">guard let</span> data = response.trimmingCharacters(in: .whitespaces).data(using: .utf8),
+      <span class="kw">let</span> json = <span class="kw">try</span> <span class="fn">JSONSerialization</span>.jsonObject(with: data) <span class="kw">as</span>? [String: String]
+<span class="kw">else</span> { <span class="kw">return nil</span> }
+
+<span class="kw">return</span> <span class="fn">SermonMetadata</span>(
+    title:        json[<span class="str">"title"</span>]        ?? <span class="str">""</span>,
+    bibleReading: json[<span class="str">"bibleReading"</span>] ?? <span class="str">""</span>,
+    speaker:      json[<span class="str">"speaker"</span>]      ?? <span class="str">""</span>,
+    series:       json[<span class="str">"series"</span>]       ?? <span class="str">""</span>,
+    date:         json[<span class="str">"date"</span>]         ?? <span class="str">""</span>
+)</code></pre>
+    </div>
+
+    <div class="subsection">
+      <h3>When Tier 2 is used</h3>
+      <p class="prose">
+        In practice, Tier 2 is most useful for volunteers whose Mac doesn't support Apple Intelligence —
+        either because it's an Intel Mac, or because the user hasn't enabled it. It's also a good fallback
+        when the on-device model produces a clearly wrong result (though DeChaff doesn't currently validate
+        Tier 1 output and retry — it trusts the first successful tier).
+      </p>
+      <p class="prose" style="margin-top:12px;">
+        Cloud models handle unusual date formats, non-English text, and ambiguous titles better than the
+        on-device model. If your church's titles are consistently tricky, configuring an API key is worth it.
+      </p>
+    </div>
+
+  </div>
+</section>
+
+
 <!-- ── TEMPLATE PARSER ────────────────────────────────────────────── -->
 <section id="template-parser" class="tech-section">
   <div class="tech-inner">
     <span class="section-label">Tier 3</span>
     <h2 class="section-title">Template parser</h2>
     <p class="section-sub">
-      The template parser converts the user's format string into a regular expression at runtime,
-      then matches it against the YouTube title. Any separator the user configures works — the parser
-      makes no assumptions about <code>|</code> or any other delimiter.
+      The last-resort path: a deterministic regex parser that uses the user's format template directly.
+      No AI, no network, no latency — and no flexibility. When titles are consistently formatted it works
+      perfectly; when they're not, the fields it can't match are left blank for the user to fill in.
     </p>
 
     <p class="prose">Walking through the default template as a concrete example:</p>
