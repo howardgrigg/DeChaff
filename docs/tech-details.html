@@ -234,6 +234,36 @@
     .example-row .val { font-family: ui-monospace, monospace; font-size: 13px; color: var(--blue); }
     .example-row .arrow { color: var(--muted); flex-shrink: 0; }
 
+    /* ── PASS CARDS ── */
+    .pass-cards { display: flex; flex-direction: column; gap: 20px; margin-top: 40px; }
+    .pass-card { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+    .pass-header {
+      display: flex; align-items: center; gap: 14px;
+      padding: 16px 22px;
+      background: var(--light); border-bottom: 1px solid var(--border);
+    }
+    .pass-badge {
+      font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+      padding: 3px 9px; border-radius: 6px; flex-shrink: 0;
+      background: var(--blue); color: var(--white);
+    }
+    .pass-badge.opt { background: #94a3b8; }
+    .pass-title { font-size: 16px; font-weight: 700; }
+    .pass-title small { font-size: 12px; font-weight: 500; color: var(--muted); margin-left: 8px; }
+    .pass-body { padding: 22px; background: var(--white); }
+    .pass-body .prose + .prose { margin-top: 10px; }
+    .settings-table { width: 100%; border-collapse: collapse; margin-top: 18px; font-size: 13px; }
+    .settings-table th {
+      text-align: left; padding: 8px 12px;
+      font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+      color: var(--muted); border-bottom: 2px solid var(--border);
+    }
+    .settings-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; line-height: 1.5; }
+    .settings-table tr:last-child td { border-bottom: none; }
+    .settings-table td:first-child { font-family: ui-monospace, monospace; color: var(--blue); white-space: nowrap; font-size: 12px; }
+    .settings-table td:nth-child(2) { font-weight: 600; white-space: nowrap; }
+    .settings-table td:nth-child(3) { color: var(--muted); }
+
     /* ── FOOTER ── */
     footer {
       background: var(--dark);
@@ -289,6 +319,7 @@
   <div class="toc-inner">
     <a href="#metadata">Metadata extraction tiers</a>
     <a href="#template-parser">Template parser</a>
+    <a href="#audio-pipeline">Audio processing pipeline</a>
   </div>
 </div>
 
@@ -615,6 +646,368 @@ date     = <span class="str">""</span>               <span class="comment">← n
       </p>
     </div>
 
+  </div>
+</section>
+
+
+<!-- ── AUDIO PROCESSING PIPELINE ─────────────────────────────────── -->
+<section id="audio-pipeline" class="tech-section">
+  <div class="tech-inner">
+    <span class="section-label">Audio processing</span>
+    <h2 class="section-title">The processing pipeline</h2>
+    <p class="section-sub">
+      When you hit Process, DeChaff runs the trimmed audio through up to six sequential passes.
+      Each pass writes a temporary WAV file that feeds the next, so no pass has to hold the entire
+      recording in memory at once. Temporary files are deleted as soon as they are no longer needed.
+    </p>
+
+    <pre><code>Input audio (any format)
+    │
+    ├─ Pass 1 ──── Voice isolation + dynamic compression  (AU render loop)
+    │
+    ├─ Pass 1.5 ── Slow leveler                           (optional)
+    │
+    ├─ Pass 2 ──── Loudness measurement (EBU R128)        │
+    │              + gain application + soft limiter       ┘ (optional, combined)
+    │
+    ├─ Pass 2.5 ── Silence shortening                     (optional)
+    │
+    └─ Pass 3 ──── MP3 encoding via LAME                  (optional — WAV output skips this)
+         │
+         └── Output .mp3 (or .wav)</code></pre>
+
+    <div class="pass-cards">
+
+      <!-- PASS 1: VOICE ISOLATION -->
+      <div class="pass-card">
+        <div class="pass-header">
+          <span class="pass-badge">Pass 1a</span>
+          <div class="pass-title">Voice isolation <small>AUSoundIsolation · subtype 0x766f6973</small></div>
+        </div>
+        <div class="pass-body">
+          <p class="prose">
+            Apple's <strong>AUSoundIsolation</strong> Audio Unit runs the audio through an on-device neural
+            model that separates speech from everything else — room reverb, chair scrapes, HVAC hum, crowd
+            sounds, and anything that isn't a human voice. For a church recording, this is the single biggest
+            quality improvement: a live room can add 300–500 ms of reverb tail to every word, and a distant
+            lapel mic picks up the whole room equally.
+          </p>
+          <p class="prose">
+            The AU is pulled by subtype <code>0x766f6973</code> (<code>'vois'</code> in four-character code
+            notation). Three parameters are set before initialisation:
+          </p>
+          <table class="settings-table">
+            <thead><tr><th>Parameter</th><th>Value</th><th>Why</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>param 0</td><td>100.0</td>
+                <td>Isolation strength — 100 is full isolation. Lower values blend the cleaned signal with the original; 100 gives the most aggressive noise removal, which is correct for speech-only podcast use.</td>
+              </tr>
+              <tr>
+                <td>param 95782</td><td>1.0</td>
+                <td>Undocumented Apple parameter — empirically required to enable the neural model. Without it the AU passes audio through unmodified.</td>
+              </tr>
+              <tr>
+                <td>param 95783</td><td>1.0</td>
+                <td>Undocumented Apple parameter — similarly required. Both flags are present in Apple's own FaceTime and Voice Memo implementations.</td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="prose" style="margin-top:14px;">
+            Processing is chunk-based: 4096 frames (~85 ms at 48 kHz) are read, pushed through the AU's render
+            callback, and written to a temporary WAV file. This keeps memory use flat regardless of recording
+            length.
+          </p>
+        </div>
+      </div>
+
+      <!-- PASS 1: DYNAMIC COMPRESSION -->
+      <div class="pass-card">
+        <div class="pass-header">
+          <span class="pass-badge">Pass 1b</span>
+          <div class="pass-title">Dynamic compression <small>kAudioUnitSubType_DynamicsProcessor</small></div>
+        </div>
+        <div class="pass-body">
+          <p class="prose">
+            The compressor runs in the same AU render loop immediately after voice isolation, on the cleaned
+            signal. Church recordings have a high <em>crest factor</em> — the ratio between peak level and average
+            level — because preachers vary their delivery significantly: quiet reflective passages, sudden
+            emphatic words, prayer, congregational response. Compression reduces this range so that the loudness
+            normalisation pass has less gap to close and the result sounds more consistent throughout.
+          </p>
+          <table class="settings-table">
+            <thead><tr><th>Parameter</th><th>Value</th><th>Why</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>Threshold</td><td>−28 dBFS</td>
+                <td>Set low enough to engage on all speech, including a quiet scripture reader or someone stepping back from the microphone. A higher threshold (e.g. −18 dB) would miss quieter passages entirely.</td>
+              </tr>
+              <tr>
+                <td>HeadRoom</td><td>6 dB</td>
+                <td>The "knee" above the threshold before full compression kicks in. A 6 dB headroom against a −28 dB threshold produces an effective ratio of approximately 4.7:1 — standard for podcast voice processing. Gentler than broadcast limiting (10:1+) but harder than music (2:1).</td>
+              </tr>
+              <tr>
+                <td>OverallGain</td><td>+8 dB</td>
+                <td>Makeup gain applied after compression. Because compression reduces the average level, makeup gain restores it. +8 dB brings the compressed speech closer to the loudness target, reducing the gain the normalisation pass has to apply — which in turn reduces how hard the soft limiter has to work.</td>
+              </tr>
+              <tr>
+                <td>AttackTime</td><td>3 ms</td>
+                <td>Fast enough to catch sharp transients (a hand clap near the mic, a cough) before they clip the headroom ceiling, but not so fast that it bites into consonants and makes speech sound dull. At 3 ms, /p/ and /t/ transients are largely preserved.</td>
+              </tr>
+              <tr>
+                <td>ReleaseTime</td><td>150 ms</td>
+                <td>Snappy enough to recover gain between words without audible pumping on continuous speech. 150 ms is roughly the gap between spoken syllables, so the compressor breathes naturally with the delivery.</td>
+              </tr>
+              <tr>
+                <td>ExpansionRatio</td><td>1.0</td>
+                <td>Expansion ratio of 1.0 disables downward expansion (noise gating). The AU is used purely as a compressor; any noise gating would conflict with the voice isolation pass that already cleaned the signal.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- PASS 1.5: SLOW LEVELER -->
+      <div class="pass-card">
+        <div class="pass-header">
+          <span class="pass-badge opt">Pass 1.5</span>
+          <div class="pass-title">Slow leveler <small>optional · 1-second window RMS · ±6 dB · zero-phase EMA</small></div>
+        </div>
+        <div class="pass-body">
+          <p class="prose">
+            Dynamic compression handles short-term peaks (syllable to syllable), but it can't fix a
+            sustained level difference that lasts minutes — for example, a scripture reader who is consistently
+            10 dB quieter than the preacher throughout their entire reading. The slow leveler addresses this
+            by building a smooth gain envelope across the whole recording and applying it in a second pass.
+          </p>
+          <p class="prose">The algorithm runs in five stages:</p>
+          <div class="steps-list" style="margin-top:20px;">
+            <div class="step-block">
+              <div class="step-num-col"><div class="step-circle" style="width:28px;height:28px;font-size:12px;">1</div><div class="step-line"></div></div>
+              <div class="step-content">
+                <h3 style="font-size:14px;">Measure RMS per 1-second window</h3>
+                <p class="prose">The file is scanned in 1-second blocks. The RMS across all channels is computed for each block using <code>vDSP_measqv</code>.</p>
+              </div>
+            </div>
+            <div class="step-block">
+              <div class="step-num-col"><div class="step-circle" style="width:28px;height:28px;font-size:12px;">2</div><div class="step-line"></div></div>
+              <div class="step-content">
+                <h3 style="font-size:14px;">Gate and find the reference level</h3>
+                <p class="prose">Windows below −40 dBFS are excluded — after voice isolation, residual room noise and breath noise sit around −40 to −45 dBFS. The median RMS of the remaining voiced windows becomes the reference level. Median (rather than mean) is used so that brief loud events like congregational laughter don't skew the reference upward.</p>
+              </div>
+            </div>
+            <div class="step-block">
+              <div class="step-num-col"><div class="step-circle" style="width:28px;height:28px;font-size:12px;">3</div><div class="step-line"></div></div>
+              <div class="step-content">
+                <h3 style="font-size:14px;">Compute per-window gain, clamped to ±6 dB</h3>
+                <p class="prose">Each voiced window gets a gain of <code>reference / rms</code>, clamped to ±6 dB. The ±6 dB limit prevents the leveler from over-correcting: a speaker who is genuinely quiet shouldn't be boosted into sounding unnaturally loud. Silent windows inherit the gain of the nearest voiced neighbour rather than snapping back to unity, which prevents the envelope from dipping through quiet gaps.</p>
+              </div>
+            </div>
+            <div class="step-block">
+              <div class="step-num-col"><div class="step-circle" style="width:28px;height:28px;font-size:12px;">4</div><div class="step-line"></div></div>
+              <div class="step-content">
+                <h3 style="font-size:14px;">Smooth with zero-phase EMA (α = 0.25, ~3 s time constant)</h3>
+                <p class="prose">A forward EMA pass (each window = 0.25 × its gain + 0.75 × the previous window's smoothed gain) is followed by a backward EMA pass. Running the EMA in both directions produces a zero-phase filter — the smoothed envelope is centred on the transitions rather than lagging behind them, which means the gain starts adjusting before a level change rather than reacting to it. The 0.25 coefficient corresponds to a time constant of roughly 3 seconds at 1-second window resolution.</p>
+              </div>
+            </div>
+            <div class="step-block">
+              <div class="step-num-col"><div class="step-circle" style="width:28px;height:28px;font-size:12px;">5</div><div class="step-line"></div></div>
+              <div class="step-content">
+                <h3 style="font-size:14px;">Apply with per-window linear ramps</h3>
+                <p class="prose">The gain is applied sample-by-sample using a linear ramp that interpolates from the midpoint between the previous window's gain and the current window's gain, to the midpoint between the current and the next window's gain. This guarantees continuity at window boundaries — no clicks or discontinuities.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PASS 2: LUFS MEASUREMENT -->
+      <div class="pass-card">
+        <div class="pass-header">
+          <span class="pass-badge opt">Pass 2a</span>
+          <div class="pass-title">Loudness measurement <small>optional · ITU-R BS.1770-4 / EBU R128</small></div>
+        </div>
+        <div class="pass-body">
+          <p class="prose">
+            Before gain can be applied, the integrated loudness of the file must be measured in LUFS
+            (Loudness Units relative to Full Scale). DeChaff implements the <strong>EBU R128</strong>
+            algorithm from scratch rather than relying on an external tool, so the measurement is
+            accurate and runs entirely in-process.
+          </p>
+          <p class="prose">The EBU R128 measurement has three stages:</p>
+
+          <div class="subsection" style="margin-top:20px; border-top:none;">
+            <h3 style="border-bottom:none; padding-bottom:0; margin-bottom:10px; font-size:14px;">K-weighting filter</h3>
+            <p class="prose">
+              Each channel is passed through a two-stage biquad cascade that approximates the frequency
+              sensitivity of the human ear. Stage 1 is a high-shelf pre-filter (+4 dB above ~1.5 kHz —
+              ears are more sensitive to high frequencies). Stage 2 is a high-pass RLB filter (rolls off
+              below ~38 Hz — bass content is perceptually less loud). The coefficients are computed
+              analytically for the input file's sample rate, so the filter is accurate at 44.1 kHz,
+              48 kHz, and any other rate. Processing uses Apple's <code>vDSP_biquad</code> for
+              performance; only ~93 KB of K-weighted samples are held in memory at any time regardless
+              of recording length.
+            </p>
+          </div>
+
+          <div class="subsection" style="margin-top:16px; border-top:none;">
+            <h3 style="border-bottom:none; padding-bottom:0; margin-bottom:10px; font-size:14px;">Overlapping 400 ms blocks</h3>
+            <p class="prose">
+              The K-weighted signal is divided into 400 ms blocks at 100 ms hops (75% overlap).
+              The mean square of each block is converted to a momentary LUFS value.
+              Overlapping blocks increase temporal resolution without losing the 400 ms integration
+              window required by the standard.
+            </p>
+          </div>
+
+          <div class="subsection" style="margin-top:16px; border-top:none;">
+            <h3 style="border-bottom:none; padding-bottom:0; margin-bottom:10px; font-size:14px;">Two-pass gating</h3>
+            <p class="prose">
+              <strong>Absolute gate (−70 LUFS):</strong> blocks below −70 LUFS are discarded. This excludes
+              complete silence — gaps between songs, dead air at the start and end of the recording.
+            </p>
+            <p class="prose" style="margin-top:8px;">
+              <strong>Relative gate (ungated mean − 10 LU):</strong> a second pass discards blocks more than
+              10 LU below the ungated mean. This excludes quiet background noise that passed the absolute
+              gate but shouldn't contribute to the measurement of speech loudness. The result is an integrated
+              LUFS figure that accurately represents the perceived loudness of the speech content only.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- PASS 2: GAIN + LIMITER -->
+      <div class="pass-card">
+        <div class="pass-header">
+          <span class="pass-badge opt">Pass 2b</span>
+          <div class="pass-title">Gain application + soft limiter <small>optional · −16 LUFS target · −1 dBFS ceiling</small></div>
+        </div>
+        <div class="pass-body">
+          <p class="prose">
+            A single gain value (target LUFS − measured LUFS, in dB) is applied to bring the integrated
+            loudness to the target. The default target is <strong>−16 LUFS</strong>, which is the EBU R128
+            recommendation for podcast and streaming platforms. A −1 dBFS true peak ceiling is enforced
+            to leave headroom for MP3 encoder inter-sample peaks.
+          </p>
+          <p class="prose">
+            Rather than hard-clipping peaks that exceed the ceiling, a per-sample gain envelope follower
+            (a soft limiter) is used:
+          </p>
+          <table class="settings-table" style="margin-top:16px;">
+            <thead><tr><th>Parameter</th><th>Value</th><th>Why</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>Peak ceiling</td><td>−1 dBFS</td>
+                <td>MP3 encoding can introduce inter-sample peaks up to +3 dBFS above the digital peak due to the reconstruction filter. A −1 dBFS ceiling ensures the decoded MP3 stays below 0 dBFS on any playback device.</td>
+              </tr>
+              <tr>
+                <td>Attack</td><td>1 ms</td>
+                <td>Fast enough to catch sharp transients before they exceed the ceiling — a 1 ms attack means the limiter engages within approximately 48 samples at 48 kHz.</td>
+              </tr>
+              <tr>
+                <td>Release</td><td>150 ms</td>
+                <td>Matched to the compressor release so the two stages breathe at the same rate. A slower release (e.g. 500 ms) would reduce the average level noticeably; a faster release (e.g. 10 ms) would cause audible pumping on loud passages.</td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="prose" style="margin-top:14px;">
+            The limiter computes a per-sample target gain from the multi-channel peak, then smooths it with
+            the attack/release coefficients. If the gain is falling (a new peak), the attack coefficient
+            applies; if recovering, the release coefficient applies. This asymmetry means the limiter
+            clamps hard and fast but lets go slowly — the correct behaviour for a peak limiter.
+          </p>
+          <p class="prose" style="margin-top:10px;">
+            The pass also applies the mono mixdown at this stage when enabled. Rather than discarding one
+            channel, both channels are averaged using <code>vDSP_vadd</code> + <code>vDSP_vsdiv</code>.
+            Averaging preserves the level of signals that are identical in both channels (i.e. centre-panned
+            speech) while reducing the level of signals that are out of phase between channels.
+          </p>
+        </div>
+      </div>
+
+      <!-- PASS 2.5: SILENCE SHORTENING -->
+      <div class="pass-card">
+        <div class="pass-header">
+          <span class="pass-badge opt">Pass 2.5</span>
+          <div class="pass-title">Silence shortening <small>optional · −40 dBFS threshold · frame-accurate removal</small></div>
+        </div>
+        <div class="pass-body">
+          <p class="prose">
+            Long pauses — a preacher pausing for effect, a gap while pages turn, silence before the
+            benediction — are detected and trimmed to a configurable maximum duration (default 1 second).
+            This runs after normalisation so the silence threshold is consistent regardless of the input
+            recording level.
+          </p>
+          <table class="settings-table" style="margin-top:16px;">
+            <thead><tr><th>Setting</th><th>Value</th><th>Why</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>Threshold</td><td>−40 dBFS</td>
+                <td>Matched to the slow leveler's noise floor gate. After voice isolation, residual room noise sits at roughly −40 to −45 dBFS, so −40 dBFS cleanly separates intentional silence from the noise floor without accidentally triggering on quiet breath or room tone.</td>
+              </tr>
+              <tr>
+                <td>Min silence duration</td><td>0.5 s</td>
+                <td>Pauses shorter than 500 ms are left untouched. Natural speech rhythm includes pauses of 200–400 ms between sentences; removing these would make the delivery sound unnaturally rushed. Only pauses that a listener would notice as "dead air" are candidates for shortening.</td>
+              </tr>
+              <tr>
+                <td>Max kept duration</td><td>1.0 s (default)</td>
+                <td>The user-configurable maximum. 1 second preserves enough pause to feel natural between sections (Bible reading → sermon, sermon → prayer) while removing the longer gaps that add nothing to the listener experience.</td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="prose" style="margin-top:14px;">
+            Removal is <strong>frame-accurate</strong>: the processor pre-computes which frame ranges to skip,
+            then streams through the file writing only the frames outside those ranges. When a 4096-frame chunk
+            straddles a boundary, sub-ranges within the chunk are written separately using <code>memcpy</code>
+            into a scratch buffer. No resampling or cross-fading is applied — the edit is a hard cut, which is
+            inaudible because the signal on both sides of the boundary is silence.
+          </p>
+          <p class="prose" style="margin-top:10px;">
+            Chapter timestamps are remapped after shortening: each timestamp is adjusted by the total duration
+            removed from silence segments that appear before it in the timeline. A chapter that falls inside
+            a removed silent region snaps to the end of the kept tail.
+          </p>
+        </div>
+      </div>
+
+      <!-- PASS 3: MP3 ENCODING -->
+      <div class="pass-card">
+        <div class="pass-header">
+          <span class="pass-badge opt">Pass 3</span>
+          <div class="pass-title">MP3 encoding <small>optional · bundled LAME · CBR</small></div>
+        </div>
+        <div class="pass-body">
+          <p class="prose">
+            The final pass encodes the processed WAV to MP3 using a bundled, re-signed LAME binary.
+            LAME is invoked as a subprocess with the <code>--cbr</code> flag (constant bitrate) rather
+            than VBR, because podcast hosting platforms and some podcast apps handle CBR more reliably —
+            particularly for chapter marker seek accuracy. The default bitrate is 128 kbps.
+          </p>
+          <table class="settings-table" style="margin-top:16px;">
+            <thead><tr><th>Bitrate</th><th>File size (60 min)</th><th>Use case</th></tr></thead>
+            <tbody>
+              <tr><td>64 kbps</td><td>~29 MB</td><td>Speech-only, bandwidth-constrained listeners. Audible compression artefacts on sibilants at this rate.</td></tr>
+              <tr><td>128 kbps</td><td>~58 MB</td><td>Default. Clean speech quality. Transparent for voice at typical listening volumes.</td></tr>
+              <tr><td>192 kbps</td><td>~86 MB</td><td>Higher quality for services that re-encode (some podcast platforms transcode uploads).</td></tr>
+              <tr><td>256 kbps</td><td>~115 MB</td><td>Near-transparent. Overkill for speech but useful if the recording includes live music.</td></tr>
+            </tbody>
+          </table>
+          <p class="prose" style="margin-top:14px;">
+            The LAME process output pipe is fully drained before <code>waitUntilExit</code> is called.
+            This is necessary to prevent a deadlock: if LAME writes enough output to fill the pipe buffer
+            (~64 KB on macOS), it blocks waiting for the pipe to be read; but <code>waitUntilExit</code>
+            blocks waiting for the process to exit — neither side can proceed. Draining the pipe first
+            ensures LAME can always write freely.
+          </p>
+          <p class="prose" style="margin-top:10px;">
+            LAME is bundled rather than requiring a separate install because asking volunteer AV team
+            members to install command-line tools is a meaningful adoption barrier. The binary is
+            re-signed at build time with Hardened Runtime to satisfy macOS notarisation requirements.
+          </p>
+        </div>
+      </div>
+
+    </div><!-- /pass-cards -->
   </div>
 </section>
 
