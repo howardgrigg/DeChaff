@@ -157,68 +157,73 @@ private func extractViaClaudeAPI(from title: String, titleFormat: String) async 
 // MARK: - Tier 3: Template-aware string parsing
 
 /// Parses a YouTube title using the user-defined format template.
-/// The template uses {title}, {reading}, {preacher}, {series}, {date} placeholders.
-/// Groups are separated by | and fields within a group by the literal separator in the template.
+/// Converts the template into a regex by escaping its literal parts and replacing each
+/// {placeholder} with a capture group — so any separator the user configures is matched exactly,
+/// with no assumptions about | or any other delimiter.
 private func extractViaTemplate(from title: String, format: String) -> SermonMetadata? {
-    // Split template and title on pipe
-    let templateGroups = format.components(separatedBy: "|")
-        .map { $0.trimmingCharacters(in: .whitespaces) }
-    let titleGroups = title.components(separatedBy: "|")
-        .map { $0.trimmingCharacters(in: .whitespaces) }
+    guard let placeholderRegex = try? NSRegularExpression(pattern: #"\{(\w+)\}"#) else { return nil }
 
-    var values: [String: String] = [:]
+    let matches = placeholderRegex.matches(in: format, range: NSRange(format.startIndex..., in: format))
+    guard !matches.isEmpty else { return nil }
 
-    for (i, templateGroup) in templateGroups.enumerated() {
-        guard i < titleGroups.count else { break }
-        let segment = titleGroups[i]
-        let fields = placeholders(in: templateGroup)
-        guard !fields.isEmpty else { continue }
+    // Build segments: each holds the literal text immediately before it and its field name.
+    struct Segment { let literal: String; let field: String }
+    var segments: [Segment] = []
+    var lastEnd = format.startIndex
 
-        if fields.count == 1 {
-            values[fields[0]] = segment
-        } else {
-            // Derive the separator between the first two fields from the template
-            let sep = separator(in: templateGroup, between: fields[0], and: fields[1])
-            let parts = segment.components(separatedBy: sep)
-                .map { $0.trimmingCharacters(in: .whitespaces) }
-            for (j, field) in fields.enumerated() {
-                values[field] = j < parts.count ? parts[j] : ""
+    for match in matches {
+        let matchRange = Range(match.range, in: format)!
+        let fieldRange = Range(match.range(at: 1), in: format)!
+        segments.append(Segment(
+            literal: String(format[lastEnd..<matchRange.lowerBound]),
+            field:   String(format[fieldRange])
+        ))
+        lastEnd = matchRange.upperBound
+    }
+    let trailingLiteral = String(format[lastEnd...])
+
+    // Try matching with all segments, then progressively fewer trailing ones.
+    // Require at least 2 matching fields (or 1 if the template itself only has 1).
+    let minCount = min(2, segments.count)
+    for count in (minCount...segments.count).reversed() {
+        let used = Array(segments.prefix(count))
+
+        var regexParts: [String] = []
+        for (i, seg) in used.enumerated() {
+            if !seg.literal.isEmpty {
+                regexParts.append(NSRegularExpression.escapedPattern(for: seg.literal))
+            }
+            regexParts.append(i == used.count - 1 ? "(.+)" : "(.+?)")
+        }
+        if count == segments.count && !trailingLiteral.isEmpty {
+            regexParts.append(NSRegularExpression.escapedPattern(for: trailingLiteral))
+        }
+
+        let pattern = "^" + regexParts.joined() + "$"
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+              let match = regex.firstMatch(in: title, range: NSRange(title.startIndex..., in: title)) else {
+            continue
+        }
+
+        var values: [String: String] = [:]
+        for (i, seg) in used.enumerated() {
+            if let range = Range(match.range(at: i + 1), in: title) {
+                values[seg.field] = String(title[range]).trimmingCharacters(in: .whitespaces)
             }
         }
-    }
 
-    guard !values.isEmpty,
-          !(values["title"] ?? "").isEmpty || !(values["preacher"] ?? "").isEmpty else {
-        return nil
-    }
-
-    return SermonMetadata(
-        title:        values["title"]    ?? "",
-        bibleReading: values["reading"]  ?? "",
-        speaker:      values["preacher"] ?? "",
-        series:       values["series"]   ?? "",
-        date:         values["date"]     ?? ""
-    )
-}
-
-/// Returns the ordered list of placeholder names (without braces) in a template string.
-private func placeholders(in template: String) -> [String] {
-    guard let regex = try? NSRegularExpression(pattern: #"\{(\w+)\}"#) else { return [] }
-    return regex.matches(in: template, range: NSRange(template.startIndex..., in: template))
-        .compactMap { match -> String? in
-            guard let range = Range(match.range(at: 1), in: template) else { return nil }
-            return String(template[range])
+        guard !(values["title"] ?? "").isEmpty || !(values["preacher"] ?? "").isEmpty else {
+            continue
         }
-}
 
-/// Finds the literal separator text between two named placeholders in a template string.
-private func separator(in template: String, between first: String, and second: String) -> String {
-    let pattern = #"\{\#(first)\}(.+?)\{\#(second)\}"#
-    guard let regex = try? NSRegularExpression(pattern: pattern),
-          let match = regex.firstMatch(in: template, range: NSRange(template.startIndex..., in: template)),
-          let range = Range(match.range(at: 1), in: template) else {
-        return ","
+        return SermonMetadata(
+            title:        values["title"]    ?? "",
+            bibleReading: values["reading"]  ?? "",
+            speaker:      values["preacher"] ?? "",
+            series:       values["series"]   ?? "",
+            date:         values["date"]     ?? ""
+        )
     }
-    let sep = String(template[range]).trimmingCharacters(in: .whitespaces)
-    return sep.isEmpty ? "," : sep
+
+    return nil
 }
