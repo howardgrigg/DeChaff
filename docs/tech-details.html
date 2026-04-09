@@ -322,6 +322,7 @@
     <a href="#claude-api">Tier 2 — Claude API</a>
     <a href="#template-parser">Tier 3 — Template parser</a>
     <a href="#audio-pipeline">Audio processing pipeline</a>
+    <a href="#yt-dlp">YouTube downloads</a>
     <a href="#transcription">Transcription</a>
     <a href="#ai-assistant">AI Assistant</a>
   </div>
@@ -1178,6 +1179,118 @@ date     = <span class="str">""</span>               <span class="comment">← n
       </div>
 
     </div><!-- /pass-cards -->
+  </div>
+</section>
+
+
+<!-- ── YOUTUBE DOWNLOADS ──────────────────────────────────────────── -->
+<section id="yt-dlp" class="tech-section">
+  <div class="tech-inner">
+    <span class="section-label">YouTube downloads</span>
+    <h2 class="section-title">yt-dlp management</h2>
+    <p class="section-sub">
+      DeChaff downloads audio from YouTube using yt-dlp — an open-source command-line tool that handles
+      YouTube's ever-changing download API. It installs and updates yt-dlp automatically so volunteers
+      never need to touch the terminal.
+    </p>
+
+    <div class="subsection" style="margin-top:0;">
+      <h3>Why yt-dlp updates on every launch</h3>
+      <p class="prose">
+        yt-dlp's job is to work around YouTube's delivery API, which changes frequently and without notice.
+        When YouTube rolls out a change, older versions of yt-dlp break and downloads fail with cryptic
+        errors — the yt-dlp project typically ships a fix within hours. Checking for a new release on
+        every launch means DeChaff is almost always running the latest version, and a volunteer whose
+        download broke yesterday will find it working again the next time they open the app.
+      </p>
+      <p class="prose" style="margin-top:12px;">
+        The check is fast: DeChaff fetches the latest release metadata from the GitHub API
+        (<code>api.github.com/repos/yt-dlp/yt-dlp/releases/latest</code>, 10-second timeout) and compares
+        the release tag against the version stored in <code>UserDefaults</code>. If the tags match
+        <em>and</em> the binary passes a quick sanity check (<code>yt-dlp --version</code> exits 0),
+        nothing is downloaded and the app proceeds immediately. An actual download only happens when the
+        version has changed or the binary is missing or broken.
+      </p>
+    </div>
+
+    <div class="subsection">
+      <h3>Where yt-dlp lives</h3>
+      <p class="prose">
+        yt-dlp (and ffmpeg, see below) are stored in the app's
+        <code>Application Support/DeChaff/</code> directory — outside the app bundle so they can be
+        updated independently and survive app reinstalls. The binary is set to executable permissions
+        (<code>0o755</code>) after every write, because macOS sometimes strips them when files are moved
+        between directories.
+      </p>
+      <p class="prose" style="margin-top:12px;">
+        Recent yt-dlp releases ship as a zip containing a PyInstaller <em>onedir</em> bundle — a
+        top-level binary alongside a <code>_Internal/</code> folder of Python modules. DeChaff unzips
+        the whole bundle into Application Support, preserving <code>_Internal/</code>, and creates a
+        canonical <code>yt-dlp</code> symlink if the zip named the binary <code>yt-dlp_macos</code>.
+      </p>
+    </div>
+
+    <div class="subsection">
+      <h3>ffmpeg and live-stream VODs</h3>
+      <p class="prose">
+        YouTube live-stream recordings are stored in DASH format — split across many small fragments
+        rather than a single file. yt-dlp needs ffmpeg to stitch these fragments together into a
+        complete audio file. DeChaff downloads ffmpeg automatically the first time it's needed,
+        sourcing a static build from the <code>yt-dlp/FFmpeg-Builds</code> GitHub repository. The
+        correct architecture is selected at compile time (<code>macos-arm64</code> or
+        <code>macos64</code>) so the binary runs natively on both Apple Silicon and Intel.
+      </p>
+      <p class="prose" style="margin-top:12px;">
+        If a system ffmpeg is already present (e.g. installed via Homebrew at
+        <code>/opt/homebrew/bin/ffmpeg</code>) DeChaff falls back to it rather than downloading a
+        second copy. The bundled version in Application Support always takes precedence.
+      </p>
+    </div>
+
+    <div class="subsection">
+      <h3>Running yt-dlp: the PTY workaround</h3>
+      <p class="prose">
+        yt-dlp is a Python app bundled with PyInstaller. When run with its stdout connected to a Unix
+        pipe (as is normal when spawning a child process from Swift), PyInstaller intercepts the output
+        and silently swallows all stderr — including error messages and progress lines. This makes it
+        impossible to show download progress or report errors to the user.
+      </p>
+      <p class="prose" style="margin-top:12px;">
+        The fix is to run yt-dlp inside a pseudo-terminal (PTY) using <code>/usr/bin/script</code>.
+        A PTY makes Python think it's writing to a real terminal, bypassing PyInstaller's pipe handling.
+        <code>script -q /dev/null yt-dlp …</code> discards the transcript file (<code>/dev/null</code>)
+        and passes PTY output through to its own stdout, which DeChaff reads via a pipe. ANSI escape
+        sequences (cursor movement, colour codes) that a PTY emits are stripped with a regex before
+        the lines are shown in the UI.
+      </p>
+      <pre><code><span class="comment">// Wrap yt-dlp in /usr/bin/script to allocate a PTY — bypasses PyInstaller's</span>
+<span class="comment">// pipe handling that swallows all stderr output when stdout is a pipe.</span>
+process.executableURL = URL(fileURLWithPath: <span class="str">"/usr/bin/script"</span>)
+process.arguments = [
+    <span class="str">"-q"</span>, <span class="str">"/dev/null"</span>,   <span class="comment">// quiet mode; discard transcript file</span>
+    bin.path,              <span class="comment">// yt-dlp binary</span>
+    <span class="str">"-x"</span>,                  <span class="comment">// extract audio only</span>
+    <span class="str">"-f"</span>, <span class="str">"bestaudio[ext=m4a]/bestaudio/best"</span>,
+    <span class="str">"--progress"</span>, <span class="str">"--newline"</span>,  <span class="comment">// one progress line per update</span>
+    <span class="str">"-o"</span>, outputTemplate,
+    videoURL
+]</code></pre>
+      <p class="pre-caption">Progress lines (<code>[download] 47.3% of …</code>) are parsed with a regex to drive the progress bar.</p>
+    </div>
+
+    <div class="subsection">
+      <h3>Channel browsing: <code>--flat-playlist</code></h3>
+      <p class="prose">
+        When a user enters a channel URL, DeChaff runs yt-dlp with <code>--flat-playlist --dump-json</code>
+        to fetch metadata for the most recent videos without downloading any audio. Each video is returned
+        as a JSON object on its own line, which DeChaff reads line-by-line from the pipe as they arrive
+        (using <code>PYTHONUNBUFFERED=1</code> to prevent Python's block-buffering from delaying output).
+        Thumbnails are constructed directly from the video ID
+        (<code>img.youtube.com/vi/{id}/mqdefault.jpg</code>) rather than using the often-absent thumbnail
+        field in the JSON — YouTube's thumbnail URLs are predictable and reliable.
+      </p>
+    </div>
+
   </div>
 </section>
 
