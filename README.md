@@ -6,7 +6,7 @@ A macOS app that prepares sermon recordings for podcast distribution. Work throu
 
 Built for the AV team at [City On a Hill](https://www.cityonahill.co.nz).
 
-![macOS 13+](https://img.shields.io/badge/macOS-13%2B-blue) ![Swift](https://img.shields.io/badge/Swift-5-orange)
+![macOS 26+](https://img.shields.io/badge/macOS-26%2B-blue) ![Swift](https://img.shields.io/badge/Swift-5-orange)
 
 ![DeChaff input tab](InputTab.png)
 
@@ -31,7 +31,7 @@ Built for the AV team at [City On a Hill](https://www.cityonahill.co.nz).
 - **MP3 encoding** — via bundled LAME, configurable bitrate (64–256 kbps)
 - **ID3 tagging** — embeds title, artist, album, year, and cover artwork
 - **Chapter markers** — CTOC/CHAP ID3 frames, compatible with podcast apps
-- **On-device transcription** — generates a text transcript using macOS speech recognition (macOS 26+)
+- **On-device transcription** — generates a text transcript using macOS speech recognition
 - **Waveform editor** — multi-resolution tiled rendering; scroll-to-zoom anchored on cursor; horizontal scroll or drag to pan; double-tap to reset; draggable trim handles and chapter markers
 - **Safari Share Extension** — share any YouTube (or yt-dlp-supported) page directly to DeChaff from Safari's share menu; the app opens, downloads the audio, and shows download progress automatically
 - **Apple Shortcuts action** — a built-in *Download & Open in DeChaff* action for Shortcuts workflows and Siri voice commands
@@ -68,9 +68,8 @@ Saved to the same folder as the original file, or to `~/Downloads` when the sour
 
 ## Requirements
 
-- macOS 13.0 or later
-- Xcode 15+ to build
-- macOS 26+ for on-device transcription and Apple Intelligence metadata extraction
+- macOS 26 or later
+- Xcode 26+ to build
 
 ## Building
 
