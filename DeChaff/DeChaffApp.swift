@@ -1,10 +1,12 @@
 import SwiftUI
 import AppKit
+import Sparkle
 
 @main
 struct DeChaffApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject var ytManager = YtDlpManager()
+    private let updater = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
 
     var body: some Scene {
         WindowGroup {
@@ -34,7 +36,14 @@ struct DeChaffApp: App {
         }
         .handlesExternalEvents(matching: ["*"])
         .windowResizability(.contentSize)
-        .commands { DechaffCommands() }
+        .commands {
+            DechaffCommands()
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") {
+                    updater.updater.checkForUpdates()
+                }
+            }
+        }
 
         Settings {
             SettingsView()
