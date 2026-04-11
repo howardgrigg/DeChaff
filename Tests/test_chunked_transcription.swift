@@ -116,14 +116,19 @@ func transcribeChunk(url: URL, timeOffset: Double, label: String = "") async thr
         }
     }
 
-    let file     = try AVAudioFile(forReading: url)
-    let analyzer = SpeechAnalyzer(modules: [transcriber])
-    async let analysis: CMTime? = analyzer.analyzeSequence(from: file)
+    let file = try AVAudioFile(forReading: url)
+
+    // analyzeSequence drives audio into the transcriber. We run it in a child Task
+    // so we can cancel it after the results loop finishes — otherwise it can hang
+    // on finalisation for long files.
+    let analyzerTask = Task {
+        let analyzer = SpeechAnalyzer(modules: [transcriber])
+        _ = try await analyzer.analyzeSequence(from: file)
+    }
 
     var words: [TWord] = []
     var lastPrintedMinute = -1
     for try await result in transcriber.results {
-        // Print a heartbeat on each new minute of audio reached (using volatile results)
         if let tr = result.text.runs.first?.audioTimeRange {
             let minute = Int((tr.start.seconds + timeOffset) / 60)
             if minute != lastPrintedMinute {
@@ -142,7 +147,7 @@ func transcribeChunk(url: URL, timeOffset: Double, label: String = "") async thr
             words.append(TWord(text: text, startTime: start, endTime: end))
         }
     }
-    _ = try await analysis
+    analyzerTask.cancel()
     return words
 }
 
