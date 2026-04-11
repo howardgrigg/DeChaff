@@ -27,14 +27,15 @@ import CoreMedia
 
 let args = CommandLine.arguments
 guard args.count >= 2 else {
-    fputs("Usage: swift test_chunked_transcription.swift <audio-file> [chunk-minutes] [overlap-seconds] [--skip-baseline]\n", stderr)
+    fputs("Usage: swift test_chunked_transcription.swift <audio-file> [chunk-minutes] [overlap-seconds] [--skip-baseline] [--serial-chunks]\n", stderr)
     exit(1)
 }
 
-let inputPath    = args[1]
-let chunkMins    = args.count >= 3 ? Double(args[2]) ?? 5.0 : 5.0
-let overlapSecs  = args.count >= 4 ? Double(args[3]) ?? 5.0 : 5.0
-let skipBaseline = args.contains("--skip-baseline")
+let inputPath     = args[1]
+let chunkMins     = args.count >= 3 ? Double(args[2]) ?? 5.0 : 5.0
+let overlapSecs   = args.count >= 4 ? Double(args[3]) ?? 5.0 : 5.0
+let skipBaseline  = args.contains("--skip-baseline")
+let serialChunks  = args.contains("--serial-chunks")  // run chunks one-at-a-time to isolate concurrency effects
 
 let inputURL = URL(fileURLWithPath: inputPath)
 guard FileManager.default.fileExists(atPath: inputPath) else {
@@ -44,7 +45,8 @@ guard FileManager.default.fileExists(atPath: inputPath) else {
 // Run async work from a synchronous main thread using a semaphore.
 let sema = DispatchSemaphore(value: 0)
 Task {
-    await runTest(inputURL: inputURL, chunkMinutes: chunkMins, overlapSeconds: overlapSecs, skipBaseline: skipBaseline)
+    await runTest(inputURL: inputURL, chunkMinutes: chunkMins, overlapSeconds: overlapSecs,
+                  skipBaseline: skipBaseline, serialChunks: serialChunks)
     sema.signal()
 }
 sema.wait()
@@ -195,7 +197,7 @@ func mergeChunks(chunkWords: [[TWord]], chunkStarts: [Double], chunkEnds: [Doubl
 // MARK: - Main test
 // ---------------------------------------------------------------------------
 
-func runTest(inputURL: URL, chunkMinutes: Double, overlapSeconds: Double, skipBaseline: Bool) async {
+func runTest(inputURL: URL, chunkMinutes: Double, overlapSeconds: Double, skipBaseline: Bool, serialChunks: Bool) async {
     let chunkSecs = chunkMinutes * 60.0
 
     // Get file duration
@@ -248,40 +250,32 @@ func runTest(inputURL: URL, chunkMinutes: Double, overlapSeconds: Double, skipBa
         print(String(format: "  Done in %.1f sec — %d words", seqElapsed, seqWords.count))
     }
 
-    // ── CHUNKED PARALLEL ───────────────────────────────────────────
-    print("\n▶ Chunked parallel (\(nChunks) chunks, throttled concurrency)…")
+    // ── CHUNKED (PARALLEL or SERIAL) ───────────────────────────────
+    let maxConcurrent = serialChunks ? 1 : 4
+    let modeLabel = serialChunks ? "serial (1 at a time)" : "parallel (4 at a time)"
+    print("\n▶ Chunked \(modeLabel) — \(nChunks) chunks…")
     let parStart = Date()
     var chunkResults: [[TWord]] = Array(repeating: [], count: nChunks)
-
-    // Set this based on your Mac (Studio can handle 4-6 comfortably)
-    let maxConcurrentTasks = 4
 
     do {
         try await withThrowingTaskGroup(of: (Int, [TWord]).self) { group in
             for i in 0..<nChunks {
-                // If we've hit our limit, wait for one to finish before adding another
-                if i >= maxConcurrentTasks {
+                if i >= maxConcurrent {
                     if let (idx, words) = try await group.next() {
                         chunkResults[idx] = words
                     }
                 }
-
                 let s = chunkStarts[i], e = chunkEnds[i], idx = i
                 group.addTask {
                     let tempURL = try extractChunk(from: inputURL, startSec: s, endSec: e)
                     defer { try? FileManager.default.removeItem(at: tempURL) }
-                    
-                    print("  [Starting] Chunk \(idx+1)/\(nChunks)")
+                    print("  [Start] Chunk \(idx+1)/\(nChunks): \(String(format: "%.0f", s))s–\(String(format: "%.0f", e))s")
                     let words = try await transcribeChunk(url: tempURL, timeOffset: s, label: "[chunk \(idx+1)]")
-                    print("  [Finished] Chunk \(idx+1)/\(nChunks): \(words.count) words")
+                    print("  [Done]  Chunk \(idx+1)/\(nChunks): \(words.count) words")
                     return (idx, words)
                 }
             }
-            
-            // Wait for the remaining tasks in the group to finish
-            for try await (idx, words) in group {
-                chunkResults[idx] = words
-            }
+            for try await (idx, words) in group { chunkResults[idx] = words }
         }
     } catch {
         print("  Chunked failed: \(error)")
@@ -296,11 +290,11 @@ func runTest(inputURL: URL, chunkMinutes: Double, overlapSeconds: Double, skipBa
     print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print("RESULTS")
     if !skipBaseline {
-        print(String(format: "  Sequential:     %.1f sec,  %d words", seqElapsed, seqWords.count))
+        print(String(format: "  Sequential (full file): %.1f sec,  %d words", seqElapsed, seqWords.count))
     }
-    print(String(format: "  Chunked:        %.1f sec,  %d words", parElapsed, merged.count))
+    print(String(format: "  Chunked (\(modeLabel)): %.1f sec,  %d words", parElapsed, merged.count))
     if !skipBaseline && seqElapsed > 0 {
-        print(String(format: "  Speedup:        %.2fx", seqElapsed / parElapsed))
+        print(String(format: "  Speedup:         %.2fx", seqElapsed / parElapsed))
         let wordDiff = abs(seqWords.count - merged.count)
         let pct = seqWords.count > 0 ? Double(wordDiff) / Double(seqWords.count) * 100 : 0
         print(String(format: "  Word count diff: %d (%.1f%%)", wordDiff, pct))
@@ -309,24 +303,12 @@ func runTest(inputURL: URL, chunkMinutes: Double, overlapSeconds: Double, skipBa
         print("\n  Sequential last  10: " + seqWords.suffix(10).map { $0.text }.joined(separator: " "))
         print("  Chunked    last  10: " + merged.suffix(10).map { $0.text }.joined(separator: " "))
     } else {
+        print("\n  Per-chunk word counts:")
+        for i in 0..<nChunks {
+            print(String(format: "    Chunk %2d: %d words", i+1, chunkResults[i].count))
+        }
         print("\n  First 10 words: " + merged.prefix(10).map { $0.text }.joined(separator: " "))
         print("  Last  10 words: " + merged.suffix(10).map { $0.text }.joined(separator: " "))
-    }
-
-    // Boundary spot-checks
-    if nChunks > 1 {
-        print("\n  Boundary spot-checks (±8s around each join):")
-        for i in 1..<nChunks {
-            let boundary  = chunkStarts[i] + overlapSeconds / 2.0
-            let window    = 8.0
-            let parAround = merged.filter { $0.startTime >= boundary - window && $0.startTime < boundary + window }
-            print(String(format: "    Boundary %d (~%.0fm): ", i, boundary / 60)
-                  + parAround.map { $0.text }.joined(separator: " "))
-            if !skipBaseline {
-                let seqAround = seqWords.filter { $0.startTime >= boundary - window && $0.startTime < boundary + window }
-                print("    Sequential:              " + seqAround.map { $0.text }.joined(separator: " "))
-            }
-        }
     }
 
     print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
