@@ -119,10 +119,15 @@ func transcribeChunk(url: URL, timeOffset: Double, label: String = "") async thr
     let file     = try AVAudioFile(forReading: url)
     let analyzer = SpeechAnalyzer(modules: [transcriber])
 
-    // async let drives the analysis concurrently with the results loop.
-    // We use try? on the final await so any finalization error is swallowed
-    // rather than propagating a CancellationError that would poison a TaskGroup.
-    async let analysis = analyzer.analyzeSequence(from: file)
+    // Task.detached has no structured-concurrency relationship with this function,
+    // so cancelling it after the results loop won't affect sibling tasks or the
+    // parent TaskGroup. We use defer so the analyzer is always cancelled, even if
+    // the results loop throws. We do NOT await it — analyzeSequence hangs on
+    // finalization after delivering all results (framework bug); cancellation exits it.
+    let analyzerTask = Task.detached {
+        _ = try? await analyzer.analyzeSequence(from: file)
+    }
+    defer { analyzerTask.cancel() }
 
     var words: [TWord] = []
     var lastPrintedMinute = -1
@@ -145,7 +150,6 @@ func transcribeChunk(url: URL, timeOffset: Double, label: String = "") async thr
             words.append(TWord(text: text, startTime: start, endTime: end))
         }
     }
-    _ = try? await analysis  // swallow finalization errors; don't hang or propagate
     return words
 }
 
