@@ -59,6 +59,13 @@ struct TWord {
     let endTime: Double
 }
 
+/// Thread-safe word accumulator. Lets the collector task write concurrently
+/// while the main flow reads after the TaskGroup scope exits.
+actor WordBag {
+    private(set) var words: [TWord] = []
+    func append(_ word: TWord) { words.append(word) }
+}
+
 // ---------------------------------------------------------------------------
 // MARK: - Audio extraction
 // ---------------------------------------------------------------------------
@@ -104,7 +111,7 @@ func extractChunk(from sourceURL: URL, startSec: Double, endSec: Double) throws 
 /// `label` is printed with live progress so you can see the script is alive.
 func transcribeChunk(url: URL, timeOffset: Double, label: String = "") async throws -> [TWord] {
     let transcriber = SpeechTranscriber(locale: .current, preset: .timeIndexedProgressiveTranscription)
-
+                                                                                                                      
     let status = await AssetInventory.status(forModules: [transcriber])
     if status == .unsupported {
         throw NSError(domain: "Speech", code: 1,
@@ -115,23 +122,21 @@ func transcribeChunk(url: URL, timeOffset: Double, label: String = "") async thr
             try await dl.downloadAndInstall()
         }
     }
-
+                                                                                                                      
     let file     = try AVAudioFile(forReading: url)
     let analyzer = SpeechAnalyzer(modules: [transcriber])
 
-    // Run analyzer and collector concurrently, tagged so we know which finishes.
-    // We must wait for the COLLECTOR (not whichever is first): on short chunks
-    // analyzeSequence can return before the collector has drained all results,
-    // and cancelAll() at that point would kill the collector mid-stream.
-    // Strategy: if analyzer finishes first, keep waiting; when collector finishes,
-    // call cancelAll() to abandon the hung cleanup phase of analyzeSequence.
-    let words = try await withThrowingTaskGroup(of: (isCollector: Bool, words: [TWord]).self) { group in
+    // Race the analyzer against the collector. cancelAll() fires while
+    // analyzeSequence is still actively running (not yet in cleanup), so
+    // cooperative cancellation responds and the group exits cleanly.
+    // Words accumulate in an actor so they're safe to read after the group exits,
+    // regardless of which task won the race.
+    let bag = WordBag()
+    try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask {
-            _ = try? await analyzer.analyzeSequence(from: file)
-            return (isCollector: false, words: [])
+            try await analyzer.analyzeSequence(from: file)
         }
         group.addTask {
-            var collected: [TWord] = []
             var lastPrintedMinute = -1
             for try await result in transcriber.results {
                 if let tr = result.text.runs.first?.audioTimeRange {
@@ -149,24 +154,14 @@ func transcribeChunk(url: URL, timeOffset: Double, label: String = "") async thr
                     let start = tr.start.seconds + timeOffset
                     let end   = (tr.start + tr.duration).seconds + timeOffset
                     guard start.isFinite && end.isFinite && end > start else { continue }
-                    collected.append(TWord(text: text, startTime: start, endTime: end))
+                    await bag.append(TWord(text: text, startTime: start, endTime: end))
                 }
             }
-            return (isCollector: true, words: collected)
         }
-
-        var result: [TWord] = []
-        while let (isCollector, w) = try? await group.next() {
-            if isCollector {
-                result = w
-                group.cancelAll() // collector done; cancel the hung analyzer
-                break
-            }
-            // analyzer finished first — keep looping until collector is done
-        }
-        return result
+        try? await group.next() // wait for whichever finishes first
+        group.cancelAll()       // cancel the other while it's still active
     }
-    return words
+    return await bag.words
 }
 
 // ---------------------------------------------------------------------------
@@ -254,23 +249,36 @@ func runTest(inputURL: URL, chunkMinutes: Double, overlapSeconds: Double, skipBa
     }
 
     // ── CHUNKED PARALLEL ───────────────────────────────────────────
-    print("\n▶ Chunked parallel (\(nChunks) concurrent transcribers)…")
+    print("\n▶ Chunked parallel (\(nChunks) chunks, throttled concurrency)…")
     let parStart = Date()
     var chunkResults: [[TWord]] = Array(repeating: [], count: nChunks)
+
+    // Set this based on your Mac (Studio can handle 4-6 comfortably)
+    let maxConcurrentTasks = 4
 
     do {
         try await withThrowingTaskGroup(of: (Int, [TWord]).self) { group in
             for i in 0..<nChunks {
+                // If we've hit our limit, wait for one to finish before adding another
+                if i >= maxConcurrentTasks {
+                    if let (idx, words) = try await group.next() {
+                        chunkResults[idx] = words
+                    }
+                }
+
                 let s = chunkStarts[i], e = chunkEnds[i], idx = i
                 group.addTask {
                     let tempURL = try extractChunk(from: inputURL, startSec: s, endSec: e)
                     defer { try? FileManager.default.removeItem(at: tempURL) }
-                    print("  Chunk \(idx+1)/\(nChunks): \(String(format: "%.0f", s))s – \(String(format: "%.0f", e))s")
-                    let words = try await transcribeChunk(url: tempURL, timeOffset: s, label: "[chunk \(idx+1)/\(nChunks)]")
-                    print("  Chunk \(idx+1)/\(nChunks): done (\(words.count) words)")
+                    
+                    print("  [Starting] Chunk \(idx+1)/\(nChunks)")
+                    let words = try await transcribeChunk(url: tempURL, timeOffset: s, label: "[chunk \(idx+1)]")
+                    print("  [Finished] Chunk \(idx+1)/\(nChunks): \(words.count) words")
                     return (idx, words)
                 }
             }
+            
+            // Wait for the remaining tasks in the group to finish
             for try await (idx, words) in group {
                 chunkResults[idx] = words
             }
