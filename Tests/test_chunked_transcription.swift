@@ -116,15 +116,13 @@ func transcribeChunk(url: URL, timeOffset: Double, label: String = "") async thr
         }
     }
 
-    let file = try AVAudioFile(forReading: url)
+    let file     = try AVAudioFile(forReading: url)
+    let analyzer = SpeechAnalyzer(modules: [transcriber])
 
-    // analyzeSequence drives audio into the transcriber. We run it in a child Task
-    // so we can cancel it after the results loop finishes — otherwise it can hang
-    // on finalisation for long files.
-    let analyzerTask = Task {
-        let analyzer = SpeechAnalyzer(modules: [transcriber])
-        _ = try await analyzer.analyzeSequence(from: file)
-    }
+    // async let drives the analysis concurrently with the results loop.
+    // We use try? on the final await so any finalization error is swallowed
+    // rather than propagating a CancellationError that would poison a TaskGroup.
+    async let analysis = analyzer.analyzeSequence(from: file)
 
     var words: [TWord] = []
     var lastPrintedMinute = -1
@@ -147,7 +145,7 @@ func transcribeChunk(url: URL, timeOffset: Double, label: String = "") async thr
             words.append(TWord(text: text, startTime: start, endTime: end))
         }
     }
-    analyzerTask.cancel()
+    _ = try? await analysis  // swallow finalization errors; don't hang or propagate
     return words
 }
 
