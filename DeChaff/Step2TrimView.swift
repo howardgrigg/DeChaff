@@ -128,14 +128,20 @@ struct TranscriptTrimView: View {
             WordFlowLayout(spacing: 4) {
                 ForEach(Array(model.trimWords.enumerated()), id: \.offset) { index, word in
                     WordChip(word: word, isSelected: isSelected(index), onTap: { handleTap(index: index) })
+                        // onHover fires from tracking areas — independent of gesture capture.
+                        // This means it fires even while another chip holds a DragGesture,
+                        // so we can update selectionEnd as the pointer moves across chips.
+                        .onHover { isHovered in
+                            if isDragging && isHovered { selectionEnd = index }
+                        }
                         .gesture(
                             DragGesture(minimumDistance: 4)
                                 .onChanged { _ in
                                     if !isDragging {
                                         isDragging = true
                                         selectionStart = index
+                                        selectionEnd = index
                                     }
-                                    if index != selectionEnd { selectionEnd = index }
                                 }
                                 .onEnded { _ in isDragging = false }
                         )
