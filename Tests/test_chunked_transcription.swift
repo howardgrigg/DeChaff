@@ -61,11 +61,13 @@ struct TWord {
     let endTime: Double
 }
 
-/// Thread-safe word accumulator. Lets the collector task write concurrently
-/// while the main flow reads after the TaskGroup scope exits.
+/// Thread-safe word accumulator. Tracks final words and non-final word count
+/// separately so we can diagnose how much the isFinal filter costs us.
 actor WordBag {
     private(set) var words: [TWord] = []
+    private(set) var nonFinalWordCount = 0
     func append(_ word: TWord) { words.append(word) }
+    func countNonFinal(_ n: Int) { nonFinalWordCount += n }
 }
 
 // ---------------------------------------------------------------------------
@@ -111,7 +113,7 @@ func extractChunk(from sourceURL: URL, startSec: Double, endSec: Double) throws 
 
 /// Transcribes a CAF file and returns words with times offset by `timeOffset`.
 /// `label` is printed with live progress so you can see the script is alive.
-func transcribeChunk(url: URL, timeOffset: Double, label: String = "") async throws -> [TWord] {
+func transcribeChunk(url: URL, timeOffset: Double, label: String = "") async throws -> (words: [TWord], nonFinalSkipped: Int) {
     let transcriber = SpeechTranscriber(locale: .current, preset: .timeIndexedProgressiveTranscription)
                                                                                                                       
     let status = await AssetInventory.status(forModules: [transcriber])
@@ -149,7 +151,15 @@ func transcribeChunk(url: URL, timeOffset: Double, label: String = "") async thr
                         print("  \(label) ~\(minute)m: \(preview)…")
                     }
                 }
-                guard result.isFinal else { continue }
+                if !result.isFinal {
+                    // Count words in non-final results so we can diagnose filter cost
+                    let n = result.text.runs.filter { run in
+                        !String(result.text[run.range].characters).trimmingCharacters(in: .whitespaces).isEmpty
+                        && run.audioTimeRange != nil
+                    }.count
+                    if n > 0 { await bag.countNonFinal(n) }
+                    continue
+                }
                 for run in result.text.runs {
                     let text = String(result.text[run.range].characters).trimmingCharacters(in: .whitespaces)
                     guard !text.isEmpty, let tr = run.audioTimeRange else { continue }
@@ -163,7 +173,7 @@ func transcribeChunk(url: URL, timeOffset: Double, label: String = "") async thr
         try? await group.next() // wait for whichever finishes first
         group.cancelAll()       // cancel the other while it's still active
     }
-    return await bag.words
+    return (words: await bag.words, nonFinalSkipped: await bag.nonFinalWordCount)
 }
 
 // ---------------------------------------------------------------------------
@@ -242,7 +252,9 @@ func runTest(inputURL: URL, chunkMinutes: Double, overlapSeconds: Double, skipBa
         do {
             let tempURL = try extractChunk(from: inputURL, startSec: 0, endSec: 0)
             defer { try? FileManager.default.removeItem(at: tempURL) }
-            seqWords = try await transcribeChunk(url: tempURL, timeOffset: 0, label: "[seq]")
+            let seqResult = try await transcribeChunk(url: tempURL, timeOffset: 0, label: "[seq]")
+            seqWords = seqResult.words
+            print("  (non-final words skipped: \(seqResult.nonFinalSkipped))")
         } catch {
             print("  Sequential failed: \(error)")
         }
@@ -270,8 +282,8 @@ func runTest(inputURL: URL, chunkMinutes: Double, overlapSeconds: Double, skipBa
                     let tempURL = try extractChunk(from: inputURL, startSec: s, endSec: e)
                     defer { try? FileManager.default.removeItem(at: tempURL) }
                     print("  [Start] Chunk \(idx+1)/\(nChunks): \(String(format: "%.0f", s))s–\(String(format: "%.0f", e))s")
-                    let words = try await transcribeChunk(url: tempURL, timeOffset: s, label: "[chunk \(idx+1)]")
-                    print("  [Done]  Chunk \(idx+1)/\(nChunks): \(words.count) words")
+                    let (words, nonFinal) = try await transcribeChunk(url: tempURL, timeOffset: s, label: "[chunk \(idx+1)]")
+                    print("  [Done]  Chunk \(idx+1)/\(nChunks): \(words.count) final words, \(nonFinal) non-final skipped")
                     return (idx, words)
                 }
             }
