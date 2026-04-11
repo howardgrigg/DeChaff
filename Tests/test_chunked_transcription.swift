@@ -61,6 +61,13 @@ struct TWord {
     let endTime: Double
 }
 
+actor WordBag {
+    private(set) var words: [TWord] = []
+    private(set) var nonFinalWordCount = 0
+    func append(_ word: TWord) { words.append(word) }
+    func countNonFinal(_ n: Int) { nonFinalWordCount += n }
+}
+
 
 // ---------------------------------------------------------------------------
 // MARK: - Audio extraction
@@ -122,49 +129,47 @@ func transcribeChunk(url: URL, timeOffset: Double, label: String = "") async thr
     let file     = try AVAudioFile(forReading: url)
     let analyzer = SpeechAnalyzer(modules: [transcriber])
 
-    // Launch analysis as an unstructured task. When analyzeSequence finishes
-    // feeding all audio it closes the results stream; the for-loop below then
-    // exits naturally. We cancel (not await) the task afterward because
-    // analyzeSequence hangs in internal cleanup after returning — especially
-    // on long files — so awaiting it would block indefinitely.
-    let analysisTask = Task {
-        _ = try? await analyzer.analyzeSequence(from: file)
-    }
-
-    var finalWords: [TWord] = []
-    var nonFinalCount = 0
-    var lastPrintedMinute = -1
-    for try await result in transcriber.results {
-        if let tr = result.text.runs.first?.audioTimeRange {
-            let minute = Int((tr.start.seconds + timeOffset) / 60)
-            if minute != lastPrintedMinute {
-                lastPrintedMinute = minute
-                let preview = String(result.text.characters).prefix(40)
-                print("  \(label) ~\(minute)m: \(preview)…")
+    // Two concurrent tasks in a group:
+    //   Analyzer – feeds audio via analyzeSequence, then sleeps 3 seconds.
+    //              The sleep gives the results stream time to flush all final
+    //              results after analyzeSequence signals completion.
+    //   Collector – iterates transcriber.results until the stream closes.
+    //
+    // The collector always wins the race (finishes before the 3 s sleep).
+    // group.cancelAll() then wakes the sleeping analyzer task immediately.
+    // Both try? wrappers let external cancellation exit cleanly.
+    let bag = WordBag()
+    try await withThrowingTaskGroup(of: Void.self) { group in
+        group.addTask {
+            _ = try? await analyzer.analyzeSequence(from: file)
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+        }
+        group.addTask {
+            var lastPrintedMinute = -1
+            for try await result in transcriber.results {
+                if let tr = result.text.runs.first?.audioTimeRange {
+                    let minute = Int((tr.start.seconds + timeOffset) / 60)
+                    if minute != lastPrintedMinute {
+                        lastPrintedMinute = minute
+                        let preview = String(result.text.characters).prefix(40)
+                        print("  \(label) ~\(minute)m: \(preview)…")
+                    }
+                }
+                guard result.isFinal else { continue }
+                for run in result.text.runs {
+                    let text = String(result.text[run.range].characters).trimmingCharacters(in: .whitespaces)
+                    guard !text.isEmpty, let tr = run.audioTimeRange else { continue }
+                    let start = tr.start.seconds + timeOffset
+                    let end   = (tr.start + tr.duration).seconds + timeOffset
+                    guard start.isFinite && end.isFinite && end > start else { continue }
+                    await bag.append(TWord(text: text, startTime: start, endTime: end))
+                }
             }
         }
-        if !result.isFinal {
-            let n = result.text.runs.filter {
-                !String(result.text[$0.range].characters).trimmingCharacters(in: .whitespaces).isEmpty
-                && $0.audioTimeRange != nil
-            }.count
-            nonFinalCount += n
-            continue
-        }
-        for run in result.text.runs {
-            let text = String(result.text[run.range].characters).trimmingCharacters(in: .whitespaces)
-            guard !text.isEmpty, let tr = run.audioTimeRange else { continue }
-            let start = tr.start.seconds + timeOffset
-            let end   = (tr.start + tr.duration).seconds + timeOffset
-            guard start.isFinite && end.isFinite && end > start else { continue }
-            finalWords.append(TWord(text: text, startTime: start, endTime: end))
-        }
+        try? await group.next() // collector finishes first; get its completion
+        group.cancelAll()       // wake and exit the sleeping analyzer task
     }
-
-    // The results loop ended naturally (stream closed). Cancel the analysis
-    // task to abort the cleanup hang rather than waiting for it to time out.
-    analysisTask.cancel()
-    return (words: finalWords, nonFinalSkipped: nonFinalCount)
+    return (words: await bag.words, nonFinalSkipped: await bag.nonFinalWordCount)
 }
 
 // ---------------------------------------------------------------------------
