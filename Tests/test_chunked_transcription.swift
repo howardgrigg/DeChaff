@@ -118,37 +118,43 @@ func transcribeChunk(url: URL, timeOffset: Double, label: String = "") async thr
 
     let file     = try AVAudioFile(forReading: url)
     let analyzer = SpeechAnalyzer(modules: [transcriber])
-
-    // Task.detached has no structured-concurrency relationship with this function,
-    // so cancelling it after the results loop won't affect sibling tasks or the
-    // parent TaskGroup. We use defer so the analyzer is always cancelled, even if
-    // the results loop throws. We do NOT await it — analyzeSequence hangs on
-    // finalization after delivering all results (framework bug); cancellation exits it.
-    let analyzerTask = Task.detached {
-        _ = try? await analyzer.analyzeSequence(from: file)
-    }
-    defer { analyzerTask.cancel() }
-
     var words: [TWord] = []
-    var lastPrintedMinute = -1
-    for try await result in transcriber.results {
-        if let tr = result.text.runs.first?.audioTimeRange {
-            let minute = Int((tr.start.seconds + timeOffset) / 60)
-            if minute != lastPrintedMinute {
-                lastPrintedMinute = minute
-                let preview = String(result.text.characters).prefix(40)
-                print("  \(label) ~\(minute)m: \(preview)…")
+
+    // Run the analyzer and the result collector concurrently.
+    // analyzeSequence feeds audio into the transcriber; when it's done it
+    // signals the results stream to close, which ends the collector loop.
+    // analyzeSequence then hangs in internal cleanup (framework bug), so we
+    // call group.cancelAll() after the first task completes — whichever that
+    // is — to cancel the hung analyzer via Swift's cooperative cancellation.
+    try await withThrowingTaskGroup(of: Void.self) { group in
+        group.addTask {
+            try await analyzer.analyzeSequence(from: file)
+        }
+        group.addTask {
+            var lastPrintedMinute = -1
+            for try await result in transcriber.results {
+                if let tr = result.text.runs.first?.audioTimeRange {
+                    let minute = Int((tr.start.seconds + timeOffset) / 60)
+                    if minute != lastPrintedMinute {
+                        lastPrintedMinute = minute
+                        let preview = String(result.text.characters).prefix(40)
+                        print("  \(label) ~\(minute)m: \(preview)…")
+                    }
+                }
+                guard result.isFinal else { continue }
+                for run in result.text.runs {
+                    let text = String(result.text[run.range].characters).trimmingCharacters(in: .whitespaces)
+                    guard !text.isEmpty, let tr = run.audioTimeRange else { continue }
+                    let start = tr.start.seconds + timeOffset
+                    let end   = (tr.start + tr.duration).seconds + timeOffset
+                    guard start.isFinite && end.isFinite && end > start else { continue }
+                    words.append(TWord(text: text, startTime: start, endTime: end))
+                }
             }
         }
-        guard result.isFinal else { continue }
-        for run in result.text.runs {
-            let text = String(result.text[run.range].characters).trimmingCharacters(in: .whitespaces)
-            guard !text.isEmpty, let tr = run.audioTimeRange else { continue }
-            let start = tr.start.seconds + timeOffset
-            let end   = (tr.start + tr.duration).seconds + timeOffset
-            guard start.isFinite && end.isFinite && end > start else { continue }
-            words.append(TWord(text: text, startTime: start, endTime: end))
-        }
+        // Wait for whichever task finishes first, then cancel the other.
+        _ = try await group.next()
+        group.cancelAll()
     }
     return words
 }
