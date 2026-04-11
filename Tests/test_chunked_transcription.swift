@@ -118,19 +118,20 @@ func transcribeChunk(url: URL, timeOffset: Double, label: String = "") async thr
 
     let file     = try AVAudioFile(forReading: url)
     let analyzer = SpeechAnalyzer(modules: [transcriber])
-    var words: [TWord] = []
 
-    // Run the analyzer and the result collector concurrently.
-    // analyzeSequence feeds audio into the transcriber; when it's done it
-    // signals the results stream to close, which ends the collector loop.
-    // analyzeSequence then hangs in internal cleanup (framework bug), so we
-    // call group.cancelAll() after the first task completes — whichever that
-    // is — to cancel the hung analyzer via Swift's cooperative cancellation.
-    try await withThrowingTaskGroup(of: Void.self) { group in
+    // Run analyzer and collector concurrently, tagged so we know which finishes.
+    // We must wait for the COLLECTOR (not whichever is first): on short chunks
+    // analyzeSequence can return before the collector has drained all results,
+    // and cancelAll() at that point would kill the collector mid-stream.
+    // Strategy: if analyzer finishes first, keep waiting; when collector finishes,
+    // call cancelAll() to abandon the hung cleanup phase of analyzeSequence.
+    let words = try await withThrowingTaskGroup(of: (isCollector: Bool, words: [TWord]).self) { group in
         group.addTask {
-            try await analyzer.analyzeSequence(from: file)
+            _ = try? await analyzer.analyzeSequence(from: file)
+            return (isCollector: false, words: [])
         }
         group.addTask {
+            var collected: [TWord] = []
             var lastPrintedMinute = -1
             for try await result in transcriber.results {
                 if let tr = result.text.runs.first?.audioTimeRange {
@@ -148,13 +149,22 @@ func transcribeChunk(url: URL, timeOffset: Double, label: String = "") async thr
                     let start = tr.start.seconds + timeOffset
                     let end   = (tr.start + tr.duration).seconds + timeOffset
                     guard start.isFinite && end.isFinite && end > start else { continue }
-                    words.append(TWord(text: text, startTime: start, endTime: end))
+                    collected.append(TWord(text: text, startTime: start, endTime: end))
                 }
             }
+            return (isCollector: true, words: collected)
         }
-        // Wait for whichever task finishes first, then cancel the other.
-        _ = try await group.next()
-        group.cancelAll()
+
+        var result: [TWord] = []
+        while let (isCollector, w) = try? await group.next() {
+            if isCollector {
+                result = w
+                group.cancelAll() // collector done; cancel the hung analyzer
+                break
+            }
+            // analyzer finished first — keep looping until collector is done
+        }
+        return result
     }
     return words
 }
