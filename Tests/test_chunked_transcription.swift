@@ -1,0 +1,284 @@
+#!/usr/bin/env swift
+// Tests chunked parallel audio transcription vs sequential.
+//
+// Usage:
+//   swift Tests/test_chunked_transcription.swift <path-to-audio-file> [chunk-minutes] [overlap-seconds]
+//
+// Defaults: 5-minute chunks, 5-second overlap.
+// Requires: Apple Silicon Mac, macOS 26+, Apple Intelligence enabled.
+//
+// What it tests:
+//   1. Splits the audio into N equal chunks with a configurable overlap at each boundary.
+//   2. Transcribes all chunks concurrently using TaskGroup (one SpeechAnalyzer per chunk).
+//   3. Merges the per-chunk word lists, deduplicating the overlap regions by splitting
+//      each boundary at the midpoint of the overlap window.
+//   4. Runs the same file sequentially as a baseline.
+//   5. Prints wall-clock time for each approach, word counts, and a diff of the
+//      first and last 5 words to spot boundary drift.
+
+import Foundation
+import AVFoundation
+import Speech
+import CoreMedia
+
+// ---------------------------------------------------------------------------
+// MARK: - Entry point
+// ---------------------------------------------------------------------------
+
+let args = CommandLine.arguments
+guard args.count >= 2 else {
+    fputs("Usage: swift test_chunked_transcription.swift <audio-file> [chunk-minutes] [overlap-seconds]\n", stderr)
+    exit(1)
+}
+
+let inputPath   = args[1]
+let chunkMins   = args.count >= 3 ? Double(args[2]) ?? 5.0 : 5.0
+let overlapSecs = args.count >= 4 ? Double(args[3]) ?? 5.0 : 5.0
+
+let inputURL = URL(fileURLWithPath: inputPath)
+guard FileManager.default.fileExists(atPath: inputPath) else {
+    fputs("File not found: \(inputPath)\n", stderr); exit(1)
+}
+
+// Run async work from a synchronous main thread using a semaphore.
+let sema = DispatchSemaphore(value: 0)
+Task {
+    await runTest(inputURL: inputURL, chunkMinutes: chunkMins, overlapSeconds: overlapSecs)
+    sema.signal()
+}
+sema.wait()
+
+// ---------------------------------------------------------------------------
+// MARK: - TranscriptWord
+// ---------------------------------------------------------------------------
+
+struct TWord {
+    let text: String
+    let startTime: Double  // seconds into the original file
+    let endTime: Double
+}
+
+// ---------------------------------------------------------------------------
+// MARK: - Audio extraction
+// ---------------------------------------------------------------------------
+
+/// Extracts [startSec, endSec] from source into a temp CAF file.
+/// If endSec == 0 the full file is extracted.
+func extractChunk(from sourceURL: URL, startSec: Double, endSec: Double) throws -> URL {
+    let source  = try AVAudioFile(forReading: sourceURL)
+    let format  = source.processingFormat
+    let sr      = format.sampleRate
+    let startF  = AVAudioFramePosition(startSec * sr)
+    let endF: AVAudioFramePosition = endSec > startSec + 0.5
+        ? min(AVAudioFramePosition(endSec * sr), source.length)
+        : source.length
+    let total   = AVAudioFrameCount(max(0, endF - startF))
+    guard total > 0 else { throw NSError(domain: "Chunk", code: 1, userInfo: [NSLocalizedDescriptionKey: "Empty chunk"]) }
+
+    let tempURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("dechaff-chunk-\(UUID().uuidString).caf")
+    let dest    = try AVAudioFile(forWriting: tempURL, settings: format.settings)
+    source.framePosition = startF
+
+    let chunkSize: AVAudioFrameCount = 65536
+    guard let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkSize) else {
+        throw NSError(domain: "Chunk", code: 2, userInfo: [NSLocalizedDescriptionKey: "Buffer alloc failed"])
+    }
+    var remaining = total
+    while remaining > 0 {
+        let toRead = min(chunkSize, remaining)
+        buf.frameLength = toRead
+        try source.read(into: buf, frameCount: toRead)
+        try dest.write(from: buf)
+        remaining -= toRead
+    }
+    return tempURL
+}
+
+// ---------------------------------------------------------------------------
+// MARK: - Transcription (single chunk)
+// ---------------------------------------------------------------------------
+
+/// Transcribes a CAF file and returns words with times offset by `timeOffset`.
+func transcribeChunk(url: URL, timeOffset: Double) async throws -> [TWord] {
+    let transcriber = SpeechTranscriber(locale: .current, preset: .timeIndexedProgressiveTranscription)
+
+    // Ensure model is installed
+    let status = await AssetInventory.status(forModules: [transcriber])
+    if status == .unsupported {
+        throw NSError(domain: "Speech", code: 1,
+                      userInfo: [NSLocalizedDescriptionKey: "Apple Intelligence not supported on this device"])
+    }
+    if status < .installed {
+        if let dl = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
+            try await dl.downloadAndInstall()
+        }
+    }
+
+    let file     = try AVAudioFile(forReading: url)
+    let analyzer = SpeechAnalyzer(modules: [transcriber])
+    async let analysis: CMTime? = analyzer.analyzeSequence(from: file)
+
+    var words: [TWord] = []
+    for try await result in transcriber.results {
+        guard result.isFinal else { continue }
+        for run in result.text.runs {
+            let text = String(result.text[run.range].characters).trimmingCharacters(in: .whitespaces)
+            guard !text.isEmpty, let tr = run.audioTimeRange else { continue }
+            let start = tr.start.seconds + timeOffset
+            let end   = (tr.start + tr.duration).seconds + timeOffset
+            guard start.isFinite && end.isFinite && end > start else { continue }
+            words.append(TWord(text: text, startTime: start, endTime: end))
+        }
+    }
+    _ = try await analysis
+    return words
+}
+
+// ---------------------------------------------------------------------------
+// MARK: - Merge helpers
+// ---------------------------------------------------------------------------
+
+/// Given words from two adjacent chunks and the boundary time between them,
+/// keeps words from `left` up to the midpoint and words from `right` from
+/// the midpoint onwards, removing duplicates in the overlap region.
+func mergeAtBoundary(left: [TWord], right: [TWord], boundaryStart: Double, boundaryEnd: Double) -> [TWord] {
+    let mid = (boundaryStart + boundaryEnd) / 2.0
+    let leftKept  = left.filter  { $0.startTime < mid }
+    let rightKept = right.filter { $0.startTime >= mid }
+    return leftKept + rightKept
+}
+
+/// Merges an ordered list of per-chunk word arrays, applying overlap dedup at each boundary.
+func mergeChunks(chunkWords: [[TWord]], chunkStarts: [Double], chunkEnds: [Double], overlapSecs: Double) -> [TWord] {
+    guard !chunkWords.isEmpty else { return [] }
+    var merged = chunkWords[0]
+    for i in 1..<chunkWords.count {
+        let boundaryStart = chunkStarts[i]           // = chunkEnds[i-1] - overlapSecs
+        let boundaryEnd   = boundaryStart + overlapSecs
+        merged = mergeAtBoundary(left: merged, right: chunkWords[i],
+                                 boundaryStart: boundaryStart, boundaryEnd: boundaryEnd)
+    }
+    return merged.sorted { $0.startTime < $1.startTime }
+}
+
+// ---------------------------------------------------------------------------
+// MARK: - Main test
+// ---------------------------------------------------------------------------
+
+func runTest(inputURL: URL, chunkMinutes: Double, overlapSeconds: Double) async {
+    let chunkSecs = chunkMinutes * 60.0
+
+    // Get file duration
+    let asset    = AVURLAsset(url: inputURL)
+    let duration: Double
+    do {
+        let cmDur = try await asset.load(.duration)
+        duration  = cmDur.seconds
+    } catch {
+        fputs("Failed to load duration: \(error)\n", stderr); return
+    }
+    guard duration > 0 else { fputs("Zero duration file\n", stderr); return }
+
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print("File:     \(inputURL.lastPathComponent)")
+    print(String(format: "Duration: %.1f min (%.0f sec)", duration / 60, duration))
+    print(String(format: "Chunks:   %.0f min each, %.0f sec overlap", chunkMinutes, overlapSeconds))
+
+    // Plan chunks
+    var chunkStarts: [Double] = []
+    var chunkEnds:   [Double] = []
+    var start = 0.0
+    while start < duration {
+        let end = min(start + chunkSecs + overlapSeconds, duration)
+        chunkStarts.append(start)
+        chunkEnds.append(end)
+        start += chunkSecs
+        if start >= duration { break }
+    }
+    let nChunks = chunkStarts.count
+    print("Planned:  \(nChunks) chunk(s)")
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+    // ── SEQUENTIAL ─────────────────────────────────────────────────
+    print("\n▶ Sequential (baseline)…")
+    let seqStart = Date()
+    var seqWords: [TWord] = []
+    do {
+        let tempURL = try extractChunk(from: inputURL, startSec: 0, endSec: 0)
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+        seqWords = try await transcribeChunk(url: tempURL, timeOffset: 0)
+    } catch {
+        print("  Sequential failed: \(error)")
+    }
+    let seqElapsed = Date().timeIntervalSince(seqStart)
+    print(String(format: "  Done in %.1f sec — %d words", seqElapsed, seqWords.count))
+
+    // ── CHUNKED PARALLEL ───────────────────────────────────────────
+    print("\n▶ Chunked parallel (\(nChunks) concurrent transcribers)…")
+    let parStart = Date()
+    var chunkResults: [[TWord]] = Array(repeating: [], count: nChunks)
+
+    do {
+        try await withThrowingTaskGroup(of: (Int, [TWord]).self) { group in
+            for i in 0..<nChunks {
+                let s = chunkStarts[i], e = chunkEnds[i], idx = i
+                group.addTask {
+                    let tempURL = try extractChunk(from: inputURL, startSec: s, endSec: e)
+                    defer { try? FileManager.default.removeItem(at: tempURL) }
+                    print("  Chunk \(idx+1)/\(nChunks): \(String(format: "%.0f", s))s – \(String(format: "%.0f", e))s")
+                    let words = try await transcribeChunk(url: tempURL, timeOffset: s)
+                    print("  Chunk \(idx+1)/\(nChunks): done (\(words.count) words)")
+                    return (idx, words)
+                }
+            }
+            for try await (idx, words) in group {
+                chunkResults[idx] = words
+            }
+        }
+    } catch {
+        print("  Chunked failed: \(error)")
+    }
+
+    let merged     = mergeChunks(chunkWords: chunkResults, chunkStarts: chunkStarts,
+                                  chunkEnds: chunkEnds, overlapSecs: overlapSeconds)
+    let parElapsed = Date().timeIntervalSince(parStart)
+    print(String(format: "  Done in %.1f sec — %d words after merge", parElapsed, merged.count))
+
+    // ── COMPARISON ─────────────────────────────────────────────────
+    print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print("RESULTS")
+    print(String(format: "  Sequential:     %.1f sec,  %d words", seqElapsed, seqWords.count))
+    print(String(format: "  Chunked:        %.1f sec,  %d words", parElapsed, merged.count))
+    if seqElapsed > 0 {
+        print(String(format: "  Speedup:        %.2fx", seqElapsed / parElapsed))
+    }
+
+    let wordDiff = abs(seqWords.count - merged.count)
+    let pct      = seqWords.count > 0 ? Double(wordDiff) / Double(seqWords.count) * 100 : 0
+    print(String(format: "  Word count diff: %d (%.1f%%)", wordDiff, pct))
+
+    // First 10 words
+    print("\n  Sequential first 10: " + seqWords.prefix(10).map { $0.text }.joined(separator: " "))
+    print("  Chunked    first 10: " + merged.prefix(10).map { $0.text }.joined(separator: " "))
+
+    // Last 10 words
+    print("\n  Sequential last  10: " + seqWords.suffix(10).map { $0.text }.joined(separator: " "))
+    print("  Chunked    last  10: " + merged.suffix(10).map { $0.text }.joined(separator: " "))
+
+    // Boundary spot-check: words around each chunk join
+    if nChunks > 1 {
+        print("\n  Boundary spot-checks:")
+        for i in 1..<nChunks {
+            let boundary = chunkStarts[i] + overlapSeconds / 2.0
+            let window   = 8.0
+            let seqAround = seqWords.filter { $0.startTime >= boundary - window && $0.startTime < boundary + window }
+            let parAround = merged.filter   { $0.startTime >= boundary - window && $0.startTime < boundary + window }
+            print(String(format: "    Boundary %d (%.0fs):", i, boundary))
+            print("      Sequential: " + seqAround.map { $0.text }.joined(separator: " "))
+            print("      Chunked:    " + parAround.map { $0.text }.joined(separator: " "))
+        }
+    }
+
+    print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+}
