@@ -7,6 +7,17 @@ import Speech
 import CoreMedia
 import UserNotifications
 
+// MARK: - TranscriptWord
+
+struct TranscriptWord: Identifiable {
+    let id = UUID()
+    let text: String
+    let startTime: Double   // seconds into the original file
+    let endTime: Double
+}
+
+// MARK: - ProcessingModel
+
 @MainActor
 class ProcessingModel: ObservableObject {
     @Published var isProcessing = false
@@ -29,11 +40,17 @@ class ProcessingModel: ObservableObject {
     @Published var doSlowLeveler: Bool = true
     @Published var doTranscription = true
 
-    // Transcription state
+    // Transcription state (output step — plain text, no timings needed)
     @Published var transcriptText = ""
     @Published var isTranscribing = false
     @Published var transcriptError: String? = nil
     private var transcriptionTask: Task<Void, Never>?
+
+    // Trim-transcription state (word-level timings for transcript trim UI)
+    @Published var trimWords: [TranscriptWord] = []
+    @Published var isTrimTranscribing = false
+    @Published var trimTranscriptError: String? = nil
+    private var trimTranscriptionTask: Task<Void, Never>? = nil
 
     // AI Assistant state
     @AppStorage("dechaff.ai.enabled") var aiAssistantEnabled = false
@@ -141,6 +158,8 @@ class ProcessingModel: ObservableObject {
         tagDate = Date()
         transcriptionTask?.cancel()
         transcriptText = ""; transcriptError = nil; isTranscribing = false
+        trimTranscriptionTask?.cancel()
+        trimWords = []; trimTranscriptError = nil; isTrimTranscribing = false
         aiAssistantTask?.cancel()
         aiAssistantResponse = ""; aiAssistantError = nil; isAIAssistantLoading = false
 
@@ -472,6 +491,78 @@ extension ProcessingModel {
             }
             if let tmp = tempURL { try? FileManager.default.removeItem(at: tmp) }
             await MainActor.run { [weak self] in self?.isTranscribing = false }  // safety net
+        }
+    }
+
+    // MARK: - Trim transcription (word-level timings for transcript trim UI)
+
+    func startTrimTranscription() {
+        guard let url = inputURL else { return }
+        guard !isTrimTranscribing && trimWords.isEmpty else { return }  // already running or done
+        trimTranscriptionTask?.cancel()
+        trimWords = []; trimTranscriptError = nil; isTrimTranscribing = true
+        let capturedURL = url
+
+        trimTranscriptionTask = Task.detached(priority: .utility) { [weak self] in
+            guard let self else { return }
+            var tempURL: URL? = nil
+            do {
+                let transcriber = SpeechTranscriber(locale: .current, preset: .timeIndexedProgressiveTranscription)
+                let status = await AssetInventory.status(forModules: [transcriber])
+
+                if status == .unsupported {
+                    await MainActor.run { [weak self] in
+                        self?.trimTranscriptError = "On-device speech recognition requires Apple Silicon and macOS 26+."
+                        self?.isTrimTranscribing = false
+                    }
+                    return
+                }
+
+                if status < .installed {
+                    if let downloader = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
+                        try await downloader.downloadAndInstall()
+                    }
+                }
+
+                // Transcribe the full file — no trim applied
+                let extracted = try extractTrimmedAudio(from: capturedURL, trimIn: 0, trimOut: 0)
+                tempURL = extracted
+
+                let file = try AVAudioFile(forReading: extracted)
+                let analyzer = SpeechAnalyzer(modules: [transcriber])
+                async let analysis: CMTime? = analyzer.analyzeSequence(from: file)
+
+                var words: [TranscriptWord] = []
+                for try await result in transcriber.results {
+                    try Task.checkCancellation()
+                    guard result.isFinal else { continue }
+                    // Each run in the attributed string corresponds to one word with timing
+                    for run in result.text.runs {
+                        let text = String(result.text[run.range].characters).trimmingCharacters(in: .whitespaces)
+                        guard !text.isEmpty, let timeRange = run.audioTimeRange else { continue }
+                        let start = timeRange.start.seconds
+                        let end   = (timeRange.start + timeRange.duration).seconds
+                        guard start.isFinite && end.isFinite && end > start else { continue }
+                        words.append(TranscriptWord(text: text, startTime: start, endTime: end))
+                    }
+                    await MainActor.run { [weak self] in self?.trimWords = words }
+                }
+
+                await MainActor.run { [weak self] in
+                    self?.trimWords = words
+                    self?.isTrimTranscribing = false
+                }
+                _ = try await analysis
+            } catch is CancellationError {
+                // cancelled — leave words as-is
+            } catch {
+                await MainActor.run { [weak self] in
+                    self?.trimTranscriptError = error.localizedDescription
+                    self?.isTrimTranscribing = false
+                }
+            }
+            if let tmp = tempURL { try? FileManager.default.removeItem(at: tmp) }
+            await MainActor.run { [weak self] in self?.isTrimTranscribing = false }
         }
     }
 }
@@ -918,6 +1009,7 @@ struct ContentView: View {
     @AppStorage("dechaff.youtube.channelURL") var ytChannelURL = "https://www.youtube.com/@cityonahillnz"
     @AppStorage("dechaff.youtube.videoLimit") var ytVideoLimit = 10
     @State var ytTab: Int = 2   // 0 = YouTube URL, 1 = Videos, 2 = Live Streams
+    @State var trimTab: Int = 0  // 0 = Waveform, 1 = Transcript
     @State var ytDirectURL: String = ""
     @Environment(\.undoManager) var undoManager
 
