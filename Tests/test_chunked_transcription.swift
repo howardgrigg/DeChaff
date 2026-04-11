@@ -27,13 +27,14 @@ import CoreMedia
 
 let args = CommandLine.arguments
 guard args.count >= 2 else {
-    fputs("Usage: swift test_chunked_transcription.swift <audio-file> [chunk-minutes] [overlap-seconds]\n", stderr)
+    fputs("Usage: swift test_chunked_transcription.swift <audio-file> [chunk-minutes] [overlap-seconds] [--skip-baseline]\n", stderr)
     exit(1)
 }
 
-let inputPath   = args[1]
-let chunkMins   = args.count >= 3 ? Double(args[2]) ?? 5.0 : 5.0
-let overlapSecs = args.count >= 4 ? Double(args[3]) ?? 5.0 : 5.0
+let inputPath    = args[1]
+let chunkMins    = args.count >= 3 ? Double(args[2]) ?? 5.0 : 5.0
+let overlapSecs  = args.count >= 4 ? Double(args[3]) ?? 5.0 : 5.0
+let skipBaseline = args.contains("--skip-baseline")
 
 let inputURL = URL(fileURLWithPath: inputPath)
 guard FileManager.default.fileExists(atPath: inputPath) else {
@@ -43,7 +44,7 @@ guard FileManager.default.fileExists(atPath: inputPath) else {
 // Run async work from a synchronous main thread using a semaphore.
 let sema = DispatchSemaphore(value: 0)
 Task {
-    await runTest(inputURL: inputURL, chunkMinutes: chunkMins, overlapSeconds: overlapSecs)
+    await runTest(inputURL: inputURL, chunkMinutes: chunkMins, overlapSeconds: overlapSecs, skipBaseline: skipBaseline)
     sema.signal()
 }
 sema.wait()
@@ -100,10 +101,10 @@ func extractChunk(from sourceURL: URL, startSec: Double, endSec: Double) throws 
 // ---------------------------------------------------------------------------
 
 /// Transcribes a CAF file and returns words with times offset by `timeOffset`.
-func transcribeChunk(url: URL, timeOffset: Double) async throws -> [TWord] {
+/// `label` is printed with live progress so you can see the script is alive.
+func transcribeChunk(url: URL, timeOffset: Double, label: String = "") async throws -> [TWord] {
     let transcriber = SpeechTranscriber(locale: .current, preset: .timeIndexedProgressiveTranscription)
 
-    // Ensure model is installed
     let status = await AssetInventory.status(forModules: [transcriber])
     if status == .unsupported {
         throw NSError(domain: "Speech", code: 1,
@@ -120,7 +121,17 @@ func transcribeChunk(url: URL, timeOffset: Double) async throws -> [TWord] {
     async let analysis: CMTime? = analyzer.analyzeSequence(from: file)
 
     var words: [TWord] = []
+    var lastPrintedMinute = -1
     for try await result in transcriber.results {
+        // Print a heartbeat on each new minute of audio reached (using volatile results)
+        if let tr = result.text.runs.first?.audioTimeRange {
+            let minute = Int((tr.start.seconds + timeOffset) / 60)
+            if minute != lastPrintedMinute {
+                lastPrintedMinute = minute
+                let preview = String(result.text.characters).prefix(40)
+                print("  \(label) ~\(minute)m: \(preview)…")
+            }
+        }
         guard result.isFinal else { continue }
         for run in result.text.runs {
             let text = String(result.text[run.range].characters).trimmingCharacters(in: .whitespaces)
@@ -166,7 +177,7 @@ func mergeChunks(chunkWords: [[TWord]], chunkStarts: [Double], chunkEnds: [Doubl
 // MARK: - Main test
 // ---------------------------------------------------------------------------
 
-func runTest(inputURL: URL, chunkMinutes: Double, overlapSeconds: Double) async {
+func runTest(inputURL: URL, chunkMinutes: Double, overlapSeconds: Double, skipBaseline: Bool) async {
     let chunkSecs = chunkMinutes * 60.0
 
     // Get file duration
@@ -201,18 +212,23 @@ func runTest(inputURL: URL, chunkMinutes: Double, overlapSeconds: Double) async 
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
     // ── SEQUENTIAL ─────────────────────────────────────────────────
-    print("\n▶ Sequential (baseline)…")
-    let seqStart = Date()
     var seqWords: [TWord] = []
-    do {
-        let tempURL = try extractChunk(from: inputURL, startSec: 0, endSec: 0)
-        defer { try? FileManager.default.removeItem(at: tempURL) }
-        seqWords = try await transcribeChunk(url: tempURL, timeOffset: 0)
-    } catch {
-        print("  Sequential failed: \(error)")
+    var seqElapsed = 0.0
+    if skipBaseline {
+        print("\n▶ Sequential baseline skipped (--skip-baseline)")
+    } else {
+        print("\n▶ Sequential (baseline) — \(String(format: "%.0f", duration))s of audio, this will take a while…")
+        let seqStart = Date()
+        do {
+            let tempURL = try extractChunk(from: inputURL, startSec: 0, endSec: 0)
+            defer { try? FileManager.default.removeItem(at: tempURL) }
+            seqWords = try await transcribeChunk(url: tempURL, timeOffset: 0, label: "[seq]")
+        } catch {
+            print("  Sequential failed: \(error)")
+        }
+        seqElapsed = Date().timeIntervalSince(seqStart)
+        print(String(format: "  Done in %.1f sec — %d words", seqElapsed, seqWords.count))
     }
-    let seqElapsed = Date().timeIntervalSince(seqStart)
-    print(String(format: "  Done in %.1f sec — %d words", seqElapsed, seqWords.count))
 
     // ── CHUNKED PARALLEL ───────────────────────────────────────────
     print("\n▶ Chunked parallel (\(nChunks) concurrent transcribers)…")
@@ -227,7 +243,7 @@ func runTest(inputURL: URL, chunkMinutes: Double, overlapSeconds: Double) async 
                     let tempURL = try extractChunk(from: inputURL, startSec: s, endSec: e)
                     defer { try? FileManager.default.removeItem(at: tempURL) }
                     print("  Chunk \(idx+1)/\(nChunks): \(String(format: "%.0f", s))s – \(String(format: "%.0f", e))s")
-                    let words = try await transcribeChunk(url: tempURL, timeOffset: s)
+                    let words = try await transcribeChunk(url: tempURL, timeOffset: s, label: "[chunk \(idx+1)/\(nChunks)]")
                     print("  Chunk \(idx+1)/\(nChunks): done (\(words.count) words)")
                     return (idx, words)
                 }
@@ -248,35 +264,37 @@ func runTest(inputURL: URL, chunkMinutes: Double, overlapSeconds: Double) async 
     // ── COMPARISON ─────────────────────────────────────────────────
     print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print("RESULTS")
-    print(String(format: "  Sequential:     %.1f sec,  %d words", seqElapsed, seqWords.count))
+    if !skipBaseline {
+        print(String(format: "  Sequential:     %.1f sec,  %d words", seqElapsed, seqWords.count))
+    }
     print(String(format: "  Chunked:        %.1f sec,  %d words", parElapsed, merged.count))
-    if seqElapsed > 0 {
+    if !skipBaseline && seqElapsed > 0 {
         print(String(format: "  Speedup:        %.2fx", seqElapsed / parElapsed))
+        let wordDiff = abs(seqWords.count - merged.count)
+        let pct = seqWords.count > 0 ? Double(wordDiff) / Double(seqWords.count) * 100 : 0
+        print(String(format: "  Word count diff: %d (%.1f%%)", wordDiff, pct))
+        print("\n  Sequential first 10: " + seqWords.prefix(10).map { $0.text }.joined(separator: " "))
+        print("  Chunked    first 10: " + merged.prefix(10).map { $0.text }.joined(separator: " "))
+        print("\n  Sequential last  10: " + seqWords.suffix(10).map { $0.text }.joined(separator: " "))
+        print("  Chunked    last  10: " + merged.suffix(10).map { $0.text }.joined(separator: " "))
+    } else {
+        print("\n  First 10 words: " + merged.prefix(10).map { $0.text }.joined(separator: " "))
+        print("  Last  10 words: " + merged.suffix(10).map { $0.text }.joined(separator: " "))
     }
 
-    let wordDiff = abs(seqWords.count - merged.count)
-    let pct      = seqWords.count > 0 ? Double(wordDiff) / Double(seqWords.count) * 100 : 0
-    print(String(format: "  Word count diff: %d (%.1f%%)", wordDiff, pct))
-
-    // First 10 words
-    print("\n  Sequential first 10: " + seqWords.prefix(10).map { $0.text }.joined(separator: " "))
-    print("  Chunked    first 10: " + merged.prefix(10).map { $0.text }.joined(separator: " "))
-
-    // Last 10 words
-    print("\n  Sequential last  10: " + seqWords.suffix(10).map { $0.text }.joined(separator: " "))
-    print("  Chunked    last  10: " + merged.suffix(10).map { $0.text }.joined(separator: " "))
-
-    // Boundary spot-check: words around each chunk join
+    // Boundary spot-checks
     if nChunks > 1 {
-        print("\n  Boundary spot-checks:")
+        print("\n  Boundary spot-checks (±8s around each join):")
         for i in 1..<nChunks {
-            let boundary = chunkStarts[i] + overlapSeconds / 2.0
-            let window   = 8.0
-            let seqAround = seqWords.filter { $0.startTime >= boundary - window && $0.startTime < boundary + window }
-            let parAround = merged.filter   { $0.startTime >= boundary - window && $0.startTime < boundary + window }
-            print(String(format: "    Boundary %d (%.0fs):", i, boundary))
-            print("      Sequential: " + seqAround.map { $0.text }.joined(separator: " "))
-            print("      Chunked:    " + parAround.map { $0.text }.joined(separator: " "))
+            let boundary  = chunkStarts[i] + overlapSeconds / 2.0
+            let window    = 8.0
+            let parAround = merged.filter { $0.startTime >= boundary - window && $0.startTime < boundary + window }
+            print(String(format: "    Boundary %d (~%.0fm): ", i, boundary / 60)
+                  + parAround.map { $0.text }.joined(separator: " "))
+            if !skipBaseline {
+                let seqAround = seqWords.filter { $0.startTime >= boundary - window && $0.startTime < boundary + window }
+                print("    Sequential:              " + seqAround.map { $0.text }.joined(separator: " "))
+            }
         }
     }
 
