@@ -76,11 +76,7 @@ extension ContentView {
                     }
                 }
 
-                settingsGroup("Extras") {
-                    settingsToggleRow("Transcribe Audio",
-                                     subtitle: "Generate a text transcript using on-device speech recognition (requires macOS 26+)",
-                                     isOn: $model.doTranscription)
-                }
+
             }
             .padding(32)
         }

@@ -334,9 +334,8 @@ struct ContentView: View {
                     .buttonStyle(.bordered).controlSize(.large)
                 }
 
-                if model.doTranscription {
-                    Divider().padding(.horizontal, 36)
-                    VStack(alignment: .leading, spacing: 10) {
+                Divider().padding(.horizontal, 36)
+                VStack(alignment: .leading, spacing: 10) {
                         HStack(alignment: .center) {
                             Text("Transcript").font(.headline)
                             Spacer()
@@ -378,7 +377,6 @@ struct ContentView: View {
                         }
                     }
                     .padding(.horizontal, 36)
-                }
 
                 if model.aiAssistantEnabled {
                     Divider().padding(.horizontal, 36)
@@ -696,9 +694,7 @@ struct ContentView: View {
 
     private func startProcessing() {
         model.startProcessing()
-        if model.doTranscription {
-            model.startTranscription(trimIn: model.trimInSeconds, trimOut: model.trimOutSeconds)
-        }
+        model.startTranscription(trimIn: model.trimInSeconds, trimOut: model.trimOutSeconds)
     }
 }
 
