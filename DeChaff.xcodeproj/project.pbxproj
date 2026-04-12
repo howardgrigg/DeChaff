@@ -36,6 +36,10 @@
 		DC000000000000000000010E /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC000000000000000000010D /* KeychainHelper.swift */; };
 		DC0000000000000000000110 /* ClaudeAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC000000000000000000010F /* ClaudeAPIClient.swift */; };
 		DC0000000000000000000112 /* AppCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000111 /* AppCommands.swift */; };
+		DC0000000000000000000114 /* ProcessingModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000113 /* ProcessingModel.swift */; };
+		DC0000000000000000000116 /* TranscriptionHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000115 /* TranscriptionHelpers.swift */; };
+		DC0000000000000000000118 /* WaveformView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000117 /* WaveformView.swift */; };
+		DC000000000000000000011A /* PlaybackState.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000119 /* PlaybackState.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -92,6 +96,10 @@
 		DC000000000000000000010D /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
 		DC000000000000000000010F /* ClaudeAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeAPIClient.swift; sourceTree = "<group>"; };
 		DC0000000000000000000111 /* AppCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCommands.swift; sourceTree = "<group>"; };
+		DC0000000000000000000113 /* ProcessingModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessingModel.swift; sourceTree = "<group>"; };
+		DC0000000000000000000115 /* TranscriptionHelpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionHelpers.swift; sourceTree = "<group>"; };
+		DC0000000000000000000117 /* WaveformView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaveformView.swift; sourceTree = "<group>"; };
+		DC0000000000000000000119 /* PlaybackState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackState.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -166,6 +174,10 @@
 				DC000000000000000000010D /* KeychainHelper.swift */,
 				DC000000000000000000010F /* ClaudeAPIClient.swift */,
 				DC0000000000000000000111 /* AppCommands.swift */,
+				DC0000000000000000000113 /* ProcessingModel.swift */,
+				DC0000000000000000000115 /* TranscriptionHelpers.swift */,
+				DC0000000000000000000117 /* WaveformView.swift */,
+				DC0000000000000000000119 /* PlaybackState.swift */,
 				DC00000000000000000000F5 /* WaveformTileCache.swift */,
 				AA00000000000000000000C3 /* lame */,
 				AA00000000000000000000C6 /* Wheat.png */,
@@ -345,6 +357,10 @@
 				DC000000000000000000010E /* KeychainHelper.swift in Sources */,
 				DC0000000000000000000110 /* ClaudeAPIClient.swift in Sources */,
 				DC0000000000000000000112 /* AppCommands.swift in Sources */,
+				DC0000000000000000000114 /* ProcessingModel.swift in Sources */,
+				DC0000000000000000000116 /* TranscriptionHelpers.swift in Sources */,
+				DC0000000000000000000118 /* WaveformView.swift in Sources */,
+				DC000000000000000000011A /* PlaybackState.swift in Sources */,
 				DC00000000000000000000F6 /* WaveformTileCache.swift in Sources */,
 				DC0000000000000000000101 /* AudioProcessingModels.swift in Sources */,
 				DC0000000000000000000103 /* AudioUnitPass.swift in Sources */,
@@ -558,7 +574,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 10;
 				DEVELOPMENT_TEAM = 2R53HYKRFR;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -575,7 +591,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.dechaff.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -591,7 +607,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 10;
 				DEVELOPMENT_TEAM = 2R53HYKRFR;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -608,7 +624,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.dechaff.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;

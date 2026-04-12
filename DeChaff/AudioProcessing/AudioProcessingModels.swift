@@ -36,9 +36,16 @@ struct ProcessingOptions {
     var mp3Bitrate: Int = 64  // kbps CBR (64 / 96 / 128 / 192 / 256)
     var shortenSilences: Bool = false
     var maxSilenceDuration: Double = 1.0  // seconds to retain at the tail of each silent span
-    var slowLeveler: Bool = false          // windowed RMS gain envelope
+    var slowLeveler: Bool = true           // windowed RMS gain envelope
     var trimInSeconds: Double = 0
     var trimOutSeconds: Double = 0  // 0 = use full file duration
+
+    // Compressor parameters (used when compression == true)
+    var compressorThreshold: Float = -28.0  // dB — engagement point; lower = more compression
+    var compressorHeadRoom: Float  =   6.0  // dB — output ceiling = threshold + headRoom (before makeup)
+    var compressorAttack: Float    = 0.003  // seconds — how quickly gain engages on a rising peak
+    var compressorRelease: Float   = 0.150  // seconds — how quickly gain recovers after peak
+    var compressorMakeupGain: Float =  8.0  // dB — post-compression level boost
 }
 
 struct SilenceSegment {

@@ -273,12 +273,13 @@ extension VoiceIsolationProcessor {
     func applyGain(inputPath: String, outputPath: String, gainDB: Double, targetLUFS: Double,
                    monoOutput: Bool, options: ProcessingOptions,
                    progressStart: Double, progressEnd: Double) -> Bool {
-        // -1 dBFS ceiling — leave a little headroom for MP3 encoder intersample peaks
+        // -1 dBFS ceiling — leave headroom for MP3 encoder intersample peaks
         let peakCeiling: Float = Float(pow(10.0, -1.0 / 20.0))  // ≈ 0.891
         do {
             let file = try AVAudioFile(forReading: URL(fileURLWithPath: inputPath))
             let fmt = file.processingFormat
             let sr = fmt.sampleRate
+            let nch = Int(fmt.channelCount)
             let inFrame  = AVAudioFramePosition(options.trimInSeconds * sr)
             let outFrame = min(options.trimOutSeconds > 0
                 ? AVAudioFramePosition(options.trimOutSeconds * sr)
@@ -287,39 +288,21 @@ extension VoiceIsolationProcessor {
             let chunkSize: AVAudioFrameCount = 4096
             guard let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: chunkSize) else { return false }
 
-            // Pass 1: find true peak of the region
-            var truePeak: Float = 0
-            file.framePosition = inFrame
-            var scanned: AVAudioFrameCount = 0
-            while scanned < trimLength {
-                let toRead = min(chunkSize, trimLength - scanned)
-                buf.frameLength = toRead
-                try file.read(into: buf, frameCount: toRead)
-                guard buf.frameLength > 0 else { break }
-                for ch in 0..<Int(fmt.channelCount) {
-                    guard let data = buf.floatChannelData?[ch] else { continue }
-                    var chPeak: Float = 0
-                    vDSP_maxmgv(data, 1, &chPeak, vDSP_Length(buf.frameLength))
-                    truePeak = max(truePeak, chPeak)
-                }
-                scanned += buf.frameLength
-            }
-
-            // Apply the full target gain. If peaks exceed the ceiling after boosting,
-            // hard-clip them in the write loop below. For speech, sharp transient
-            // clipping is largely inaudible and far preferable to leaving the file
-            // 10+ dB below the loudness target.
             var gain = Float(pow(10.0, gainDB / 20.0))
-            if truePeak > 0 && truePeak * gain > peakCeiling {
-                let projectedDBFS = 20.0 * log10(Double(truePeak * gain))
-                logHandler(String(format: "⚠️ High crest factor: peaks would reach %.1f dBFS — soft limiting to %.1f dBFS (add more compression to avoid this)",
-                                  projectedDBFS, 20.0 * log10(Double(peakCeiling))))
-            }
 
-            // Pass 2: apply gain + soft limiter, then write output.
-            // Instead of hard-clipping, we use a per-sample gain envelope follower:
-            // fast attack (1 ms) engages the moment a peak exceeds the ceiling;
-            // slow release (150 ms) lets the gain recover smoothly, avoiding pumping.
+            // Pass 2: apply gain + look-ahead limiter, then write output.
+            //
+            // A retrospective (feedback) limiter cannot prevent the first few samples of a
+            // transient from clipping because it hasn't engaged yet. A look-ahead limiter
+            // solves this by delaying the audio signal by L samples while the gain computer
+            // inspects the undelayed (future) signal. By the time a peak arrives in the
+            // output, the gain has already been ramped down to handle it — zero clipping.
+            //
+            // Implementation: circular ring buffer per channel, L = 3 ms (≈ 132 samples
+            // at 44.1 kHz). For each sample, the limiter reads the undelayed (future)
+            // peak, updates the gain envelope, then outputs the delayed sample scaled by
+            // that gain. At end-of-file the ring buffer is flushed with silence as
+            // look-ahead so the remaining L frames are written cleanly.
             var outSettings = fmt.settings
             outSettings.removeValue(forKey: AVChannelLayoutKey)
             if monoOutput { outSettings[AVNumberOfChannelsKey] = 1 }
@@ -327,11 +310,40 @@ extension VoiceIsolationProcessor {
             let outFmt = monoOutput ? AVAudioFormat(standardFormatWithSampleRate: sr, channels: 1)! : fmt
             guard let outBuf = AVAudioPCMBuffer(pcmFormat: outFmt, frameCapacity: chunkSize) else { return false }
 
+            // Look-ahead ring buffer — one float array per channel, length L
+            let lookAheadSamples = max(1, Int(0.003 * sr))   // 3 ms
+            var ringBuf = Array(repeating: [Float](repeating: 0.0, count: lookAheadSamples), count: nch)
+            var ringPos = 0
+
             // Limiter state — persists across chunks
             var limGain: Float = 1.0
             let attackCoeff  = Float(exp(-1.0 / (0.001 * sr)))   // 1 ms attack
             let releaseCoeff = Float(exp(-1.0 / (0.150 * sr)))   // 150 ms release
-            var limGainBuf   = [Float](repeating: 1.0, count: Int(chunkSize))
+
+            // Helper: process one sample through the look-ahead limiter.
+            // `futureChannels` are the undelayed (gain-applied) channel pointers at index i.
+            // Returns the limiter-scaled delayed sample for each channel via `buf`.
+            func processOneSample(i: Int) {
+                // 1. Compute the peak of the undelayed (future) sample across all channels
+                var peak: Float = 0
+                for ch in 0..<nch {
+                    if let d = buf.floatChannelData?[ch] { peak = max(peak, abs(d[i])) }
+                }
+                // 2. Update limiter gain from future peak (attack/release envelope follower)
+                let tg: Float = peak > peakCeiling ? peakCeiling / peak : 1.0
+                limGain = tg < limGain
+                    ? attackCoeff  * limGain + (1 - attackCoeff)  * tg
+                    : releaseCoeff * limGain + (1 - releaseCoeff) * tg
+                // 3. Swap: read delayed sample, write future sample into ring, output delayed*gain
+                for ch in 0..<nch {
+                    if let d = buf.floatChannelData?[ch] {
+                        let future = d[i]
+                        d[i] = ringBuf[ch][ringPos] * limGain   // output = delayed * current gain
+                        ringBuf[ch][ringPos] = future            // store future for later
+                    }
+                }
+                ringPos = (ringPos + 1) % lookAheadSamples
+            }
 
             file.framePosition = inFrame
             var totalFrames: AVAudioFrameCount = 0
@@ -340,33 +352,17 @@ extension VoiceIsolationProcessor {
                 buf.frameLength = toRead
                 try file.read(into: buf, frameCount: toRead)
                 guard buf.frameLength > 0 else { break }
-                let nch = Int(fmt.channelCount)
-                let n   = Int(buf.frameLength)
+                let n = Int(buf.frameLength)
 
-                // Apply target gain to all channels
+                // Apply normalization gain to all channels
                 for ch in 0..<nch {
                     guard let data = buf.floatChannelData?[ch] else { continue }
                     vDSP_vsmul(data, 1, &gain, data, 1, vDSP_Length(n))
                 }
 
-                // Build per-sample limiter gain from the multi-channel peak envelope
-                for i in 0..<n {
-                    var peak: Float = 0
-                    for ch in 0..<nch {
-                        if let d = buf.floatChannelData?[ch] { peak = max(peak, abs(d[i])) }
-                    }
-                    let tg = peak > peakCeiling ? peakCeiling / peak : 1.0
-                    limGain = tg < limGain
-                        ? attackCoeff  * limGain + (1 - attackCoeff)  * tg
-                        : releaseCoeff * limGain + (1 - releaseCoeff) * tg
-                    limGainBuf[i] = limGain
-                }
+                // Run look-ahead limiter sample-by-sample (overwrites buf in place)
+                for i in 0..<n { processOneSample(i: i) }
 
-                // Apply limiter envelope to all channels
-                for ch in 0..<nch {
-                    guard let data = buf.floatChannelData?[ch] else { continue }
-                    vDSP_vmul(data, 1, limGainBuf, 1, data, 1, vDSP_Length(n))
-                }
                 if monoOutput && fmt.channelCount > 1 {
                     outBuf.frameLength = buf.frameLength
                     convertToMono(src: buf, dst: outBuf)
@@ -375,9 +371,43 @@ extension VoiceIsolationProcessor {
                     try outFile.write(from: buf)
                 }
                 totalFrames += buf.frameLength
-                // Progress spans the second half of the allocated range (first half was peak scan)
+                // Progress spans the second half of the allocated range (first half is reserved
+                // for a peak-scan pass we no longer need, kept for progress consistency)
                 progressHandler(progressStart + (progressEnd - progressStart) * (0.5 + 0.5 * Double(totalFrames) / Double(trimLength)))
             }
+
+            // Flush: drain the remaining `lookAheadSamples` frames from the ring buffer.
+            // Feed silence as future input so the limiter releases smoothly.
+            let flushCap = AVAudioFrameCount(lookAheadSamples)
+            guard let flushBuf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: flushCap) else { return false }
+            flushBuf.frameLength = flushCap
+            // Zero the buffer (silence = no future peaks → limiter releases)
+            for ch in 0..<nch {
+                if let d = flushBuf.floatChannelData?[ch] {
+                    vDSP_vclr(d, 1, vDSP_Length(lookAheadSamples))
+                }
+            }
+            // Process flush frames directly (inline rather than via processOneSample,
+            // since future input is known to be silence — no need to read buf).
+            for i in 0..<lookAheadSamples {
+                // Future peak = 0 (silence), so tg = 1.0 → limiter releases
+                limGain = releaseCoeff * limGain + (1 - releaseCoeff) * 1.0
+                for ch in 0..<nch {
+                    if let d = flushBuf.floatChannelData?[ch] {
+                        d[i] = ringBuf[ch][ringPos] * limGain
+                    }
+                }
+                ringPos = (ringPos + 1) % lookAheadSamples
+            }
+            if monoOutput && fmt.channelCount > 1 {
+                guard let monoFlush = AVAudioPCMBuffer(pcmFormat: outFmt, frameCapacity: flushCap) else { return false }
+                monoFlush.frameLength = flushCap
+                convertToMono(src: flushBuf, dst: monoFlush)
+                try outFile.write(from: monoFlush)
+            } else {
+                try outFile.write(from: flushBuf)
+            }
+
             logHandler(String(format: "✅ Normalized to %.1f LUFS", targetLUFS))
             return true
         } catch {

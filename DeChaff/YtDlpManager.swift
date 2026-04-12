@@ -76,6 +76,18 @@ class YtDlpManager: ObservableObject {
         return nil
     }
 
+    enum FFmpegSource { case bundled, system(path: String) }
+
+    /// Where ffmpeg was found, or nil if not yet available.
+    var ffmpegSource: FFmpegSource? {
+        if FileManager.default.fileExists(atPath: Self.ffmpegPath.path) { return .bundled }
+        let systemPaths = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"]
+        for path in systemPaths where FileManager.default.fileExists(atPath: path) {
+            return .system(path: path)
+        }
+        return nil
+    }
+
     // MARK: - Version check & auto-update
 
     func checkAndUpdate() async {

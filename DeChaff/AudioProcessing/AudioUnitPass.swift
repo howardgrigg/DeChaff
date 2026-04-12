@@ -45,18 +45,11 @@ extension VoiceIsolationProcessor {
                 isolationAU.map { AudioUnitUninitialize($0); AudioComponentInstanceDispose($0) }
                 return false
             }
-            // Threshold -28 dB: engages on all speech, including the quieter scripture reader
-            // HeadRoom 6 dB: ceiling = -22 dBFS before makeup — gives ~4.7:1 effective ratio,
-            //   which is standard for podcast voice and meaningfully reduces crest factor
-            // OverallGain +8 dB: makeup gain to raise the compressed output level, reducing
-            //   the gap that loudness normalisation has to close
-            // AttackTime 3ms: fast enough to catch peaks without biting into transients
-            // ReleaseTime 150ms: snappy enough to stay tight without audible pumping
-            AudioUnitSetParameter(au, kDynamicsProcessorParam_Threshold,     kAudioUnitScope_Global, 0, -28.0, 0)
-            AudioUnitSetParameter(au, kDynamicsProcessorParam_HeadRoom,      kAudioUnitScope_Global, 0,  6.0,  0)
-            AudioUnitSetParameter(au, kDynamicsProcessorParam_AttackTime,    kAudioUnitScope_Global, 0,  0.003, 0)
-            AudioUnitSetParameter(au, kDynamicsProcessorParam_ReleaseTime,   kAudioUnitScope_Global, 0,  0.15,  0)
-            AudioUnitSetParameter(au, kDynamicsProcessorParam_OverallGain,   kAudioUnitScope_Global, 0,  8.0,  0)
+            AudioUnitSetParameter(au, kDynamicsProcessorParam_Threshold,     kAudioUnitScope_Global, 0, options.compressorThreshold, 0)
+            AudioUnitSetParameter(au, kDynamicsProcessorParam_HeadRoom,      kAudioUnitScope_Global, 0, options.compressorHeadRoom,  0)
+            AudioUnitSetParameter(au, kDynamicsProcessorParam_AttackTime,    kAudioUnitScope_Global, 0, options.compressorAttack,    0)
+            AudioUnitSetParameter(au, kDynamicsProcessorParam_ReleaseTime,   kAudioUnitScope_Global, 0, options.compressorRelease,   0)
+            AudioUnitSetParameter(au, kDynamicsProcessorParam_OverallGain,   kAudioUnitScope_Global, 0, options.compressorMakeupGain,0)
             AudioUnitSetParameter(au, kDynamicsProcessorParam_ExpansionRatio,kAudioUnitScope_Global, 0,  1.0,  0)
             guard AudioUnitInitialize(au) == noErr else {
                 logHandler("❌ Compressor AU init failed")

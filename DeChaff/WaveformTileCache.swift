@@ -33,7 +33,7 @@ struct WaveformData {
                 }
             }
         }
-        return (level2, Self.framesPerPeak[2])
+        return (level0, Self.framesPerPeak[0])
     }
 }
 
