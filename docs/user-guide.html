@@ -315,7 +315,7 @@
     <div class="subsection">
       <h3>AI metadata extraction</h3>
       <p class="prose">When loading from YouTube, DeChaff uses on-device Apple Intelligence to parse the video title into sermon title, Bible reading, preacher, and series — concurrently with the download. If Apple Intelligence isn't available it falls back to the Claude API (if configured), then to built-in text parsing. By the time you reach the Info step, the fields are already filled in.</p>
-      <p class="prose" style="margin-top: 12px;">To make extraction accurate for your church, open <strong>Settings → Templates</strong> and set the YouTube title format your team uses (e.g. <code>{title}, {reading} | {preacher} | {series}</code>).</p>
+      <p class="prose" style="margin-top: 12px;">To make extraction accurate for your church, open <strong>Settings → YouTube</strong> and set the YouTube title format your team uses (e.g. <code>{title}, {reading} | {preacher} | {series}</code>). The YouTube tab also shows which extraction tier is currently active.</p>
     </div>
   </div>
 </section>
@@ -328,19 +328,31 @@
       <span class="label">Step two</span>
     </div>
     <h2 class="section-title">Trim</h2>
-    <p class="section-sub">Cut pre-service noise and dead air at the end using the waveform editor.</p>
+    <p class="section-sub">Cut pre-service noise and dead air. Switch between a waveform view and a transcript view — both stay in sync.</p>
 
     <div class="method-cards">
       <div class="method-card">
         <h3>
           <svg viewBox="0 0 24 24"><polyline points="5 9 2 12 5 15"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
-          Setting trim points
+          Waveform view
         </h3>
         <ul>
           <li>Drag the orange handles directly on the waveform</li>
           <li>Move the playhead and press <strong>I</strong> (in) or <strong>O</strong> (out)</li>
           <li>Click <strong>Set In / Set Out</strong> in the toolbar</li>
           <li>Press <strong>⌘Z</strong> to undo any move</li>
+        </ul>
+      </div>
+      <div class="method-card">
+        <h3>
+          <svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+          Transcript view
+        </h3>
+        <ul>
+          <li>Switch to the <strong>Transcript</strong> tab — DeChaff transcribes the audio on-device</li>
+          <li>Tap the first word you want to keep, then tap the last — the selection highlights in orange</li>
+          <li>Trim handles in the waveform view update instantly, and vice versa</li>
+          <li>Tap <strong>Clear</strong> to start the selection again</li>
         </ul>
       </div>
       <div class="method-card">
@@ -584,14 +596,26 @@
     <p class="section-sub">Open Settings with <kbd style="background:#f1f5f9; border:1px solid var(--border); border-radius:4px; padding:2px 7px; font-size:13px; font-family:monospace; color:var(--dark);">⌘,</kbd> or from the DeChaff menu.</p>
 
     <div class="subsection">
-      <h3>General</h3>
+      <h3>YouTube</h3>
       <table class="option-table">
         <thead><tr><th>Setting</th><th>Details</th></tr></thead>
         <tbody>
-          <tr><td>YouTube channel</td><td>Enter a channel URL or <code>@handle</code> to populate the YouTube browser.</td></tr>
+          <tr><td>Channel URL or Handle</td><td>Enter a channel URL or <code>@handle</code> to populate the YouTube browser.</td></tr>
           <tr><td>Videos to show</td><td>Number of recent videos to display: 5, 10, or 20.</td></tr>
-          <tr><td>Apple Intelligence</td><td>Shows availability; includes a shortcut to enable it in System Settings.</td></tr>
-          <tr><td>yt-dlp</td><td>Shows install status. Tap <strong>Check for Updates</strong> to install or update the download tool.</td></tr>
+          <tr><td>Metadata Extraction</td><td>Shows which tier will be used — Apple Intelligence, Claude API, or Regex — based on what's available. Tap <strong>Set Up…</strong> to enable Apple Intelligence if needed.</td></tr>
+          <tr><td>YouTube Title Format</td><td>Tells DeChaff your church's YouTube naming convention. Used to guide AI extraction. Example: <code>{title}, {reading} | {preacher} | {series} | {date}</code></td></tr>
+          <tr><td>yt-dlp</td><td>Shows install status. Checked for updates automatically on launch. Tap <strong>Check for Updates</strong> to force a refresh.</td></tr>
+          <tr><td>ffmpeg</td><td>Required for some YouTube video formats. Downloaded automatically alongside yt-dlp, or detected if already installed via Homebrew.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="subsection">
+      <h3>Audio</h3>
+      <table class="option-table">
+        <thead><tr><th>Setting</th><th>Details</th></tr></thead>
+        <tbody>
+          <tr><td>Compressor settings</td><td>Fine-tune the dynamic compressor: threshold, headroom, attack, release, and makeup gain. Tap <strong>Reset to Defaults</strong> to restore the recommended values.</td></tr>
         </tbody>
       </table>
     </div>
@@ -614,8 +638,7 @@
       <table class="option-table">
         <thead><tr><th>Setting</th><th>Details</th></tr></thead>
         <tbody>
-          <tr><td>YouTube Title Format</td><td>Tells DeChaff your church's YouTube naming convention. Used to guide AI extraction. Example: <code>{title}, {reading} | {preacher} | {series} | {date}</code></td></tr>
-          <tr><td>Output Filename</td><td>Controls how the exported file is named. A live preview updates as you type. Same placeholders available.</td></tr>
+          <tr><td>Output Filename</td><td>Controls how the exported file is named. A live preview updates as you type. Placeholders: <code>{date}</code>, <code>{title}</code>, <code>{reading}</code>, <code>{preacher}</code>, <code>{series}</code>.</td></tr>
         </tbody>
       </table>
       <p class="prose" style="margin-top: 14px;">Tap any placeholder chip to append it to the template field.</p>
@@ -652,8 +675,12 @@
         <p>Set it once and it will be embedded in every recording until you change it.</p>
       </div>
       <div class="tip-card">
+        <strong>Use transcript trim for precision</strong>
+        <p>If you know the first and last words of the sermon, switch to the Transcript tab and tap them — it's often faster than scrubbing the waveform to find the exact moment.</p>
+      </div>
+      <div class="tip-card">
         <strong>Set your title format once</strong>
-        <p>If your church's YouTube titles follow a different convention, set it in Settings → Templates and AI extraction will work correctly every time.</p>
+        <p>If your church's YouTube titles follow a different convention, set it in Settings → YouTube and AI extraction will work correctly every time.</p>
       </div>
     </div>
   </div>

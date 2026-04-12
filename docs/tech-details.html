@@ -355,7 +355,7 @@
           <p class="prose">
             The first attempt uses Apple's <strong>FoundationModels</strong> framework to run a small language model
             entirely on-device. DeChaff creates a <code>LanguageModelSession</code> with a system prompt that
-            describes the expected title format (injected from the user's Settings → Templates configuration),
+            describes the expected title format (injected from the user's Settings → YouTube configuration),
             then asks the model to populate a structured <code>SermonMetadata</code> schema using the
             <code>@Generable</code> / <code>@Guide</code> macros. The model returns a strongly-typed Swift struct
             directly — no JSON parsing required.
@@ -455,7 +455,7 @@
       <p class="prose">
         Tiers 1 and 2 use identical instructions. The user's title format is injected at runtime so the model
         understands the specific structure your church uses. This is why configuring the format in
-        <strong>Settings → Templates</strong> matters — it significantly improves extraction accuracy for
+        <strong>Settings → YouTube</strong> matters — it significantly improves extraction accuracy for
         both AI tiers.
       </p>
       <pre><code><span class="str">"""
@@ -1177,8 +1177,9 @@ process.arguments = [
     <span class="section-label">Transcription</span>
     <h2 class="section-title">On-device speech-to-text</h2>
     <p class="section-sub">
-      After processing completes, DeChaff can generate a full transcript of the sermon using Apple's
-      on-device speech recognition — privately, with no audio sent anywhere.
+      DeChaff uses Apple's on-device speech recognition in two places: to power transcript-based trim
+      point selection in Step 2, and to generate a full transcript after processing completes.
+      All recognition runs on-device — no audio is sent anywhere.
     </p>
 
     <div class="subsection" style="margin-top:0;">
@@ -1231,8 +1232,22 @@ process.arguments = [
     <div class="subsection">
       <h3>What transcription is used for</h3>
       <p class="prose">
-        The completed transcript is displayed in the <strong>Output</strong> step alongside the processed
-        audio, where it can be copied to the clipboard. If the AI Assistant is enabled, the transcript is
+        Transcription feeds three distinct features:
+      </p>
+      <p class="prose" style="margin-top:12px;">
+        <strong>Transcript-based trimming.</strong> In Step 2, switching to the Transcript tab runs a
+        separate lighter transcription pass over the full input audio (before any processing) to produce
+        word-level timecodes. The user taps the first and last word they want to keep; DeChaff maps those
+        words back to their timestamps and updates the trim handles. This pass uses the same
+        <code>SpeechTranscriber</code> pipeline but streams results as word chips into the UI in real time
+        as the recogniser works through the file.
+      </p>
+      <p class="prose" style="margin-top:12px;">
+        <strong>Output transcript.</strong> After processing completes, the trimmed audio is transcribed
+        again and the full text is displayed in the Output step, where it can be copied to the clipboard.
+      </p>
+      <p class="prose" style="margin-top:12px;">
+        <strong>AI Assistant input.</strong> If the AI Assistant is enabled, the output transcript is
         automatically sent to Claude as soon as transcription finishes — no manual step required.
       </p>
     </div>
