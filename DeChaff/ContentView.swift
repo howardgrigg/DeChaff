@@ -14,6 +14,9 @@ struct ContentView: View {
     @State private var scrollMonitor: Any?
     @State private var clickMonitor: Any?
     @State private var keyMonitor: Any?
+    @State private var isTextEditing = false
+    @State private var firstResponderObservation: NSKeyValueObservation?
+    @State private var keyWindowObserver: NSObjectProtocol?
     @State private var showLog = false
     @AppStorage("dechaff.youtube.channelURL") var ytChannelURL = "https://www.youtube.com/@cityonahillnz"
     @AppStorage("dechaff.youtube.videoLimit") var ytVideoLimit = 10
@@ -68,6 +71,7 @@ struct ContentView: View {
             startProcessing: { startProcessing() }
         ))
         .focusedSceneValue(\.windowUndoManager, undoManager)
+        .focusedSceneValue(\.isTextInputFocused, isTextEditing)
         .onAppear {
             setupMonitors()
             Task { await ytManager.checkAndUpdate() }
@@ -255,6 +259,10 @@ struct ContentView: View {
                     .font(.system(.caption, design: .rounded).monospacedDigit())
                     .foregroundStyle(.secondary)
             }
+            Button("Cancel") { model.cancelProcessing() }
+                .buttonStyle(.bordered)
+                .keyboardShortcut(.cancelAction)
+                .help("Stop processing — no file will be written")
             if !model.logs.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Button { withAnimation { showLog.toggle() } } label: {
@@ -664,6 +672,15 @@ struct ContentView: View {
             }
             return event
         }
+        // Track whether a text field/view has keyboard focus so the single-key menu
+        // shortcuts (J/K/L/I/O/M, arrows) are disabled while typing instead of
+        // swallowing the keystrokes.
+        observeFirstResponder(of: NSApp.keyWindow ?? NSApp.mainWindow)
+        keyWindowObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
+        ) { note in
+            observeFirstResponder(of: note.object as? NSWindow)
+        }
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
             // Only intercept scroll on waveform tab; transcript tab needs scroll for its ScrollView
             let onWaveform = (self.currentStep == 1 && self.trimTab == 0) || self.currentStep == 3
@@ -684,10 +701,22 @@ struct ContentView: View {
         }
     }
 
+    private func observeFirstResponder(of window: NSWindow?) {
+        firstResponderObservation = window?.observe(\.firstResponder, options: [.initial, .new]) { _, change in
+            let responder = change.newValue ?? nil
+            let editing = responder is NSTextView || responder is NSTextField
+            DispatchQueue.main.async {
+                if isTextEditing != editing { isTextEditing = editing }
+            }
+        }
+    }
+
     private func teardownMonitors() {
         if let m = keyMonitor    { NSEvent.removeMonitor(m); keyMonitor = nil }
         if let m = scrollMonitor { NSEvent.removeMonitor(m); scrollMonitor = nil }
         if let m = clickMonitor  { NSEvent.removeMonitor(m); clickMonitor = nil }
+        firstResponderObservation?.invalidate(); firstResponderObservation = nil
+        if let o = keyWindowObserver { NotificationCenter.default.removeObserver(o); keyWindowObserver = nil }
     }
 
     // MARK: - Processing

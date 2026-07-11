@@ -75,8 +75,8 @@ extension VoiceIsolationProcessor {
                 chap.append(contentsOf: toBE32(0xFFFF_FFFF))
                 chap.append(contentsOf: toBE32(0xFFFF_FFFF))
                 if !chapter.title.isEmpty {
-                    var tit2 = Data([0x03])
-                    tit2.append(contentsOf: chapter.title.utf8)
+                    var tit2 = Data([0x01])  // UTF-16 with BOM — the only Unicode encoding ID3v2.3 defines
+                    tit2.append(utf16WithBOM(chapter.title))
                     chap.append(makeID3Frame(id: "TIT2", body: tit2))
                 }
                 frames.append(makeID3Frame(id: "CHAP", body: chap))
@@ -90,9 +90,16 @@ extension VoiceIsolationProcessor {
     }
 
     private func makeTextFrame(_ id: String, _ text: String) -> Data {
-        var body = Data([0x03])  // UTF-8
-        body.append(contentsOf: text.utf8)
+        var body = Data([0x01])  // UTF-16 with BOM — the only Unicode encoding ID3v2.3 defines
+        body.append(utf16WithBOM(text))
         return makeID3Frame(id: id, body: body)
+    }
+
+    /// Little-endian BOM (FF FE) followed by UTF-16LE code units.
+    private func utf16WithBOM(_ text: String) -> Data {
+        var data = Data([0xFF, 0xFE])
+        data.append(text.data(using: .utf16LittleEndian) ?? Data())
+        return data
     }
 
     /// Builds a single ID3v2.3 frame. Frame size is plain big-endian (NOT syncsafe — that's v2.4).

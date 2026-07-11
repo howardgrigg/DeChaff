@@ -53,6 +53,7 @@ extension VoiceIsolationProcessor {
 
             file.framePosition = 0
             for w in 0..<nWindows {
+                if isCancelled { logHandler("⏹ Cancelled"); return false }
                 let toRead = AVAudioFrameCount(min(windowFrames, totalFrames - w * windowFrames))
                 buf.frameLength = toRead
                 try file.read(into: buf, frameCount: toRead)
@@ -127,6 +128,7 @@ extension VoiceIsolationProcessor {
                                                   frameCapacity: AVAudioFrameCount(windowFrames)) else { return false }
             file.framePosition = 0
             for w in 0..<nWindows {
+                if isCancelled { logHandler("⏹ Cancelled"); return false }
                 let toRead = AVAudioFrameCount(min(windowFrames, totalFrames - w * windowFrames))
                 buf.frameLength = toRead
                 try file.read(into: buf, frameCount: toRead)
@@ -189,6 +191,7 @@ extension VoiceIsolationProcessor {
             file.framePosition = inFrame
 
             while readFrames < trimLength {
+                if isCancelled { logHandler("⏹ Cancelled"); return nil }
                 let toRead = min(chunkSize, trimLength - readFrames)
                 buf.frameLength = toRead
                 try file.read(into: buf, frameCount: toRead)
@@ -348,6 +351,7 @@ extension VoiceIsolationProcessor {
             file.framePosition = inFrame
             var totalFrames: AVAudioFrameCount = 0
             while totalFrames < trimLength {
+                if isCancelled { logHandler("⏹ Cancelled"); return false }
                 let toRead = min(chunkSize, trimLength - totalFrames)
                 buf.frameLength = toRead
                 try file.read(into: buf, frameCount: toRead)

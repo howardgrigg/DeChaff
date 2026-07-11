@@ -9,6 +9,32 @@ class VoiceIsolationProcessor {
     var progressHandler: (Double) -> Void = { _ in }
     private(set) var detectedSilenceSegments: [SilenceSegment] = []
 
+    // Cancellation — cancel() is called from the main thread while the pass
+    // loops poll isCancelled from the processing queue.
+    private let cancelLock = NSLock()
+    private var cancelledFlag = false
+    private var encoderProcess: Process?
+
+    var isCancelled: Bool {
+        cancelLock.lock(); defer { cancelLock.unlock() }
+        return cancelledFlag
+    }
+
+    func cancel() {
+        cancelLock.lock()
+        cancelledFlag = true
+        let encoder = encoderProcess
+        cancelLock.unlock()
+        encoder?.terminate()
+    }
+
+    /// Registers the running LAME process so cancel() can terminate it.
+    func setEncoderProcess(_ process: Process?) {
+        cancelLock.lock()
+        encoderProcess = process
+        cancelLock.unlock()
+    }
+
     /// Static render callback — avoids a closure allocation per chunk.
     /// The refcon is updated via AudioUnitSetProperty before each render call.
     static let auRenderCallback: AURenderCallback = { inRefCon, _, _, _, _, ioData in
@@ -78,39 +104,51 @@ class VoiceIsolationProcessor {
             auOutputPath = wavOutputPath
         }
 
-        // Pass 1: isolation + compression
+        // Pass 1: isolation + compression (also materializes trim + mono).
+        // When the AU pass is skipped, a plain copy pass does the same, so every
+        // downstream pass starts from correctly trimmed audio no matter which
+        // combination of toggles is enabled.
+        var normSource: String
         if needsAU {
             let p1End = (options.normalization || levelerActive) ? p_auEnd * auNormScale : auNormScale
             let ok = runAUPass(audioFile: audioFile, outputPath: auOutputPath,
                                options: options, progressStart: 0.0, progressEnd: p1End)
             guard ok else { temps.forEach(cleanup); return false }
+            normSource = auOutputPath
+        } else {
+            let hasDownstream = levelerActive || options.normalization
+            let copyDest = hasDownstream ? makeTempPath() : wavOutputPath
+            let copyEnd  = hasDownstream ? 0.10 * auNormScale : auNormScale
+            let ok = copyPass(inputPath: inputPath, outputPath: copyDest, options: options,
+                              progressStart: 0.0, progressEnd: copyEnd)
+            guard ok else { temps.forEach(cleanup); return false }
+            normSource = copyDest
         }
 
-        // Pass 1.5: slow leveler — after AU (or directly from input), before normalization.
+        // Pass 1.5: slow leveler — after AU/copy, before normalization.
         // Builds a smooth per-sample gain envelope from 1-second window RMS measurements,
         // clamped to ±6 dB, to even out sustained level differences between speakers.
-        var normSource: String = needsAU ? auOutputPath : inputPath
         if levelerActive {
             let levelerPath = options.normalization ? makeTempPath() : wavOutputPath
-            let lStart = needsAU ? p_auEnd * auNormScale : 0.0
+            let lStart = needsAU ? p_auEnd * auNormScale : 0.10 * auNormScale
             let lEnd   = needsAU ? p_levEnd * auNormScale
-                                 : (options.normalization ? 0.25 * auNormScale : auNormScale)
+                                 : (options.normalization ? 0.35 * auNormScale : auNormScale)
             let ok = applySlowLeveler(inputPath: normSource, outputPath: levelerPath,
                                       progressStart: lStart, progressEnd: lEnd)
             guard ok else { temps.forEach(cleanup); return false }
-            if normSource != inputPath { cleanup(normSource) }
+            cleanup(normSource)
             normSource = levelerPath
         }
 
         // Pass 2: normalization
         if options.normalization {
             let pStart = needsAU ? p_levEnd * auNormScale
-                                 : (levelerActive ? 0.25 * auNormScale : 0.0)
+                                 : (levelerActive ? 0.35 * auNormScale : 0.10 * auNormScale)
             let pMid   = needsAU ? p_measEnd * auNormScale
                                  : (levelerActive ? 0.65 * auNormScale : 0.7 * auNormScale)
-            // AU output is already trimmed — pass empty options so measureLUFS reads the whole file
-            let measureOptions = needsAU ? ProcessingOptions() : options
-            guard let measured = measureLUFS(path: normSource, options: measureOptions,
+            // Source audio is already trimmed and downmixed — empty options make
+            // measureLUFS/applyGain read the whole file with no further conversion.
+            guard let measured = measureLUFS(path: normSource, options: ProcessingOptions(),
                                              progressStart: pStart, progressEnd: pMid) else {
                 logHandler("❌ Loudness measurement failed — skipping normalization")
                 temps.forEach(cleanup); return false
@@ -120,8 +158,8 @@ class VoiceIsolationProcessor {
                                measured, options.targetLUFS, gainDB))
             let ok = applyGain(inputPath: normSource, outputPath: wavOutputPath,
                                gainDB: gainDB, targetLUFS: options.targetLUFS,
-                               monoOutput: !needsAU && options.monoOutput,
-                               options: needsAU ? ProcessingOptions() : options,
+                               monoOutput: false,
+                               options: ProcessingOptions(),
                                progressStart: pMid, progressEnd: auNormScale)
             guard ok else { temps.forEach(cleanup); return false }
             if normSource != wavOutputPath { cleanup(normSource) }

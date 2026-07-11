@@ -18,6 +18,8 @@ func formatPlaybackTime(_ seconds: Double) -> String {
 final class PlaybackState {
     var isPlaying = false
     var playheadSeconds: Double = 0
+    /// When set, playback auto-pauses once the playhead reaches this time (e.g. the trim-out point).
+    var stopAt: Double? = nil
 
     private var audioPlayer: AVAudioPlayer?
     private var playbackTimer: Timer?
@@ -35,6 +37,13 @@ final class PlaybackState {
         playbackTimer?.invalidate()
         playbackTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
             guard let self, let p = self.audioPlayer else { return }
+            if let stop = self.stopAt, p.currentTime >= stop {
+                p.pause()
+                self.playheadSeconds = stop
+                self.isPlaying = false
+                self.playbackTimer?.invalidate()
+                return
+            }
             self.playheadSeconds = p.currentTime
             if !p.isPlaying { self.isPlaying = false; self.playbackTimer?.invalidate() }
         }

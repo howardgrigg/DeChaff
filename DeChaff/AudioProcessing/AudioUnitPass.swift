@@ -131,6 +131,7 @@ extension VoiceIsolationProcessor {
             audioFile.framePosition = inFrame
 
             while totalFrames < trimLength {
+                if isCancelled { logHandler("⏹ Cancelled"); return false }
                 let toRead = min(frameCount, trimLength - totalFrames)
                 inBuf.frameLength = toRead
                 try audioFile.read(into: inBuf, frameCount: toRead)
@@ -172,6 +173,58 @@ extension VoiceIsolationProcessor {
             return true
         } catch {
             logHandler("❌ Render error: \(error.localizedDescription)"); return false
+        }
+    }
+
+    /// Plain streamed copy that materializes trim and (optionally) mono downmix.
+    /// Used when the AU pass is skipped so downstream passes always receive
+    /// correctly trimmed audio, whatever combination of toggles is enabled.
+    func copyPass(inputPath: String, outputPath: String, options: ProcessingOptions,
+                  progressStart: Double, progressEnd: Double) -> Bool {
+        do {
+            let file = try AVAudioFile(forReading: URL(fileURLWithPath: inputPath))
+            let fmt = file.processingFormat
+            let sr = fmt.sampleRate
+            let doMono = options.monoOutput && fmt.channelCount > 1
+            var outSettings = fmt.settings
+            outSettings.removeValue(forKey: AVChannelLayoutKey)
+            if doMono { outSettings[AVNumberOfChannelsKey] = 1 }
+            let outFile = try AVAudioFile(forWriting: URL(fileURLWithPath: outputPath), settings: outSettings)
+
+            let chunkSize: AVAudioFrameCount = 4096
+            guard let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: chunkSize) else { return false }
+            let monoBuf: AVAudioPCMBuffer? = doMono
+                ? AVAudioPCMBuffer(pcmFormat: AVAudioFormat(standardFormatWithSampleRate: sr, channels: 1)!,
+                                   frameCapacity: chunkSize)
+                : nil
+
+            let inFrame  = AVAudioFramePosition(options.trimInSeconds * sr)
+            let outFrame = min(options.trimOutSeconds > 0
+                ? AVAudioFramePosition(options.trimOutSeconds * sr)
+                : file.length, file.length)
+            let trimLength = AVAudioFrameCount(max(0, outFrame - inFrame))
+            var totalFrames: AVAudioFrameCount = 0
+            file.framePosition = inFrame
+
+            while totalFrames < trimLength {
+                if isCancelled { logHandler("⏹ Cancelled"); return false }
+                let toRead = min(chunkSize, trimLength - totalFrames)
+                buf.frameLength = toRead
+                try file.read(into: buf, frameCount: toRead)
+                guard buf.frameLength > 0 else { break }
+                if let mono = monoBuf {
+                    mono.frameLength = buf.frameLength
+                    convertToMono(src: buf, dst: mono)
+                    try outFile.write(from: mono)
+                } else {
+                    try outFile.write(from: buf)
+                }
+                totalFrames += buf.frameLength
+                progressHandler(progressStart + (progressEnd - progressStart) * Double(totalFrames) / Double(trimLength))
+            }
+            return true
+        } catch {
+            logHandler("❌ Copy pass failed: \(error.localizedDescription)"); return false
         }
     }
 

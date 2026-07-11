@@ -26,11 +26,14 @@ extension VoiceIsolationProcessor {
         process.standardError = pipe
         process.standardOutput = pipe
 
+        if isCancelled { logHandler("⏹ Cancelled"); return false }
         do {
             try process.run()
         } catch {
             logHandler("❌ LAME failed to launch: \(error.localizedDescription)"); return false
         }
+        setEncoderProcess(process)
+        defer { setEncoderProcess(nil) }
 
         // Drain the pipe before waitUntilExit to prevent deadlock:
         // if LAME writes enough to fill the pipe buffer (~64 KB), it blocks
@@ -38,6 +41,7 @@ extension VoiceIsolationProcessor {
         let pipeData = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
 
+        if isCancelled { logHandler("⏹ Cancelled"); return false }
         if process.terminationStatus == 0 {
             // Get output file size for logging
             let size = (try? FileManager.default.attributesOfItem(atPath: outputMP3)[.size] as? Int) ?? 0

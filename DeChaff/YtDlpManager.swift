@@ -165,7 +165,12 @@ class YtDlpManager: ObservableObject {
                     uploadDate: raw.upload_date ?? "",
                     thumbnailURL: thumbnailURL
                 ))
-                if entries.count >= limit { break }  // enforce limit in case --playlist-end is unreliable
+                if entries.count >= limit {
+                    // Stop reading and kill the process — leaving it running with nobody
+                    // draining stdout can block it on a full pipe and hang us below.
+                    process.terminate()
+                    break
+                }
             }
         }
         await awaitTermination(of: process)
@@ -296,13 +301,26 @@ class YtDlpManager: ObservableObject {
 
     /// Waits for a Process to exit without blocking the current thread.
     private nonisolated func awaitTermination(of process: Process) async {
-        await withCheckedContinuation { continuation in
-            if !process.isRunning {
-                continuation.resume()
-                return
+        // A handler installed after the process has already exited never fires, so:
+        // install the handler first, then re-check isRunning to close the race.
+        // Both paths can end up eligible to resume — guard with a locked flag.
+        final class ResumeOnce: @unchecked Sendable {
+            private let lock = NSLock()
+            private var resumed = false
+            func run(_ body: () -> Void) {
+                lock.lock(); defer { lock.unlock() }
+                guard !resumed else { return }
+                resumed = true
+                body()
             }
+        }
+        let once = ResumeOnce()
+        await withCheckedContinuation { continuation in
             process.terminationHandler = { _ in
-                continuation.resume()
+                once.run { continuation.resume() }
+            }
+            if !process.isRunning {
+                once.run { continuation.resume() }
             }
         }
     }

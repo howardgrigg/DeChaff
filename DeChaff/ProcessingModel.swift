@@ -15,6 +15,15 @@ class ProcessingModel: ObservableObject {
     @Published var outputURL: URL?
     @Published var isDone = false
 
+    /// The processor for the run in flight — kept so Cancel can reach it.
+    private var activeProcessor: VoiceIsolationProcessor?
+    /// Read by the app delegate to guard against quitting mid-run.
+    private(set) static var isAnyProcessing = false
+
+    func cancelProcessing() {
+        activeProcessor?.cancel()
+    }
+
     // Processing options — all on by default
     @Published var doIsolation   = true
     @Published var doCompression = true
@@ -149,6 +158,7 @@ class ProcessingModel: ObservableObject {
         isDone = false
         logs = []
         outputURL = nil
+        chapters = []
         stopPlayback()
         waveformZoom = 1.0; waveformVisibleStart = 0.0
         tagSermonTitle = ""; tagBibleReading = ""
@@ -183,7 +193,19 @@ class ProcessingModel: ObservableObject {
             ? (FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first?.path ?? url.deletingLastPathComponent().path)
             : url.deletingLastPathComponent().path
         let namePart = resolveFilename(template: filenameTemplate, fallback: baseName)
-        let outputPath = "\(dir)/\(namePart).\(outputFormat.fileExtension)"
+        var resolvedPath = "\(dir)/\(namePart).\(outputFormat.fileExtension)"
+
+        if resolvedPath == inputPath {
+            // Never write over the file we're reading from
+            resolvedPath = Self.uniquePath(for: resolvedPath)
+        } else if FileManager.default.fileExists(atPath: resolvedPath) {
+            switch confirmOverwrite(filename: URL(fileURLWithPath: resolvedPath).lastPathComponent) {
+            case .replace:  break
+            case .keepBoth: resolvedPath = Self.uniquePath(for: resolvedPath)
+            case .cancel:   return
+            }
+        }
+        let outputPath = resolvedPath
 
         let trimIn  = trimInSeconds
         let trimOut = trimOutSeconds > trimIn ? trimOutSeconds : inputDuration
@@ -222,9 +244,11 @@ class ProcessingModel: ObservableObject {
             artist: tagPreacher, album: tagSeries, year: tagYear, artwork: tagArtwork
         )
         let capturedChapters = chapters
+        let processor = VoiceIsolationProcessor()
+        activeProcessor = processor
+        Self.isAnyProcessing = true
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let processor = VoiceIsolationProcessor()
             let success = processor.process(
                 inputPath: inputPath,
                 outputPath: outputPath,
@@ -251,22 +275,69 @@ class ProcessingModel: ObservableObject {
             }
 
             DispatchQueue.main.async {
+                let cancelled = processor.isCancelled && !success
                 self?.isProcessing = false
                 self?.isDone = success
                 if !success { self?.outputURL = nil }
-                if success { self?.chapters = outputChapters }
+                if cancelled {
+                    self?.logs.append("⏹ Processing cancelled")
+                    try? FileManager.default.removeItem(atPath: outputPath)
+                }
+                self?.activeProcessor = nil
+                Self.isAnyProcessing = false
                 Self.clearDockProgress()
                 if success { self?.postFinishNotification() }
             }
         }
     }
 
+    // MARK: - Output overwrite handling
+
+    private enum OverwriteChoice { case replace, keepBoth, cancel }
+
+    private func confirmOverwrite(filename: String) -> OverwriteChoice {
+        let alert = NSAlert()
+        alert.messageText = "“\(filename)” already exists"
+        alert.informativeText = "A file with this name is already in the output folder. Keep both, or replace the existing file?"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Keep Both")
+        alert.addButton(withTitle: "Replace")
+        alert.addButton(withTitle: "Cancel")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:  return .keepBoth
+        case .alertSecondButtonReturn: return .replace
+        default:                       return .cancel
+        }
+    }
+
+    /// Appends " (2)", " (3)", … to the file name until it doesn't collide.
+    private static func uniquePath(for path: String) -> String {
+        let url  = URL(fileURLWithPath: path)
+        let dir  = url.deletingLastPathComponent()
+        let base = url.deletingPathExtension().lastPathComponent
+        let ext  = url.pathExtension
+        var n = 2
+        var candidate = dir.appendingPathComponent("\(base) (\(n)).\(ext)")
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            n += 1
+            candidate = dir.appendingPathComponent("\(base) (\(n)).\(ext)")
+        }
+        return candidate.path
+    }
+
     // MARK: - Playback (forwarded to PlaybackState)
 
-    func togglePlayback() { playback.toggle(url: inputURL) }
+    func togglePlayback() {
+        // Auto-pause at trim-out; playing from beyond it auditions the cut region freely.
+        playback.stopAt = playback.playheadSeconds < trimOutSeconds - 0.05 ? trimOutSeconds : nil
+        playback.toggle(url: inputURL)
+    }
     func pausePlayback()  { playback.pause() }
     func stopPlayback()   { playback.stop() }
-    func seekPlayback(to time: Double) { playback.seek(to: time) }
+    func seekPlayback(to time: Double) {
+        playback.stopAt = time < trimOutSeconds - 0.05 ? trimOutSeconds : nil
+        playback.seek(to: time)
+    }
 
     /// Resolves the filename template into a sanitised file name (without extension).
     /// Empty placeholder segments are collapsed so the result is clean.
@@ -430,18 +501,42 @@ extension ProcessingModel {
         transcriptionTask?.cancel()
         transcriptText = ""; transcriptError = nil; isTranscribing = true
 
-        // If the trim-transcript words are already available, derive the text from them
-        // directly — no need to run the speech recogniser again.
-        let existingWords = trimWords.filter { $0.startTime >= trimIn && $0.endTime <= trimOut + 0.5 }
-        if !existingWords.isEmpty {
-            transcriptText = existingWords.map { $0.text }.joined(separator: " ")
-            isTranscribing = false
-            if aiAssistantEnabled { startAIAssistant() }
+        // If the trim transcription has already finished, derive the text from its
+        // word timings directly — no need to run the speech recogniser again.
+        if !isTrimTranscribing && deriveTranscriptFromTrimWords(trimIn: trimIn, trimOut: trimOut) {
             return
         }
 
-        // Fall back to a full transcription pass if trim words aren't ready yet.
-        let capturedURL = inputURL!
+        // If it's still running, wait for it and reuse its words — using them now
+        // would silently truncate the transcript to whatever chunks have arrived.
+        if isTrimTranscribing {
+            let pending = trimTranscriptionTask
+            transcriptionTask = Task { [weak self] in
+                await pending?.value
+                guard !Task.isCancelled, let self else { return }
+                if self.deriveTranscriptFromTrimWords(trimIn: trimIn, trimOut: trimOut) { return }
+                self.startFullTranscription(trimIn: trimIn, trimOut: trimOut)
+            }
+            return
+        }
+
+        startFullTranscription(trimIn: trimIn, trimOut: trimOut)
+    }
+
+    /// Builds the transcript from completed trim-transcription words.
+    /// Returns false if no words fall inside the trim range (caller runs a full pass).
+    @discardableResult
+    private func deriveTranscriptFromTrimWords(trimIn: Double, trimOut: Double) -> Bool {
+        let words = trimWords.filter { $0.startTime >= trimIn && $0.endTime <= trimOut + 0.5 }
+        guard !words.isEmpty else { return false }
+        transcriptText = words.map { $0.text }.joined(separator: " ")
+        isTranscribing = false
+        if aiAssistantEnabled { startAIAssistant() }
+        return true
+    }
+
+    private func startFullTranscription(trimIn: Double, trimOut: Double) {
+        guard let capturedURL = inputURL else { isTranscribing = false; return }
         transcriptionTask = Task.detached(priority: .utility) { [weak self] in
             guard let self else { return }
             var tempURL: URL? = nil
@@ -503,6 +598,8 @@ extension ProcessingModel {
                 await MainActor.run { [weak self] in self?.transcriptError = error.localizedDescription }
             }
             if let tmp = tempURL { try? FileManager.default.removeItem(at: tmp) }
+            // A cancelled task must not touch state — a replacement task may already be running.
+            guard !Task.isCancelled else { return }
             await MainActor.run { [weak self] in self?.isTranscribing = false }
         }
     }
@@ -574,11 +671,13 @@ extension ProcessingModel {
                             let words = try await transcribeChunkWords(
                                 url: tempURL, timeOffset: s, chunkDuration: chunkSecs,
                                 onProgress: { p in
+                                    guard !Task.isCancelled else { return }
                                     await chunkProgress.update(index: idx, value: p)
                                     let overall = await chunkProgress.overall
                                     await MainActor.run { self.trimTranscriptProgress = overall }
                                 },
                                 onWords: { batch in
+                                    guard !Task.isCancelled else { return }
                                     await chunkAccumulator.append(batch, to: idx)
                                     let partial = mergeTranscriptChunks(
                                         chunkWords: await chunkAccumulator.all,
@@ -621,6 +720,8 @@ extension ProcessingModel {
                     self?.isTrimTranscribing = false
                 }
             }
+            // A cancelled task must not touch state — a replacement task may already be running.
+            guard !Task.isCancelled else { return }
             await MainActor.run { [weak self] in
                 self?.trimTranscriptProgress = 1.0
                 self?.isTrimTranscribing = false

@@ -18,6 +18,10 @@ struct FocusedUndoManagerKey: FocusedValueKey {
     typealias Value = UndoManager
 }
 
+struct FocusedTextInputKey: FocusedValueKey {
+    typealias Value = Bool
+}
+
 extension FocusedValues {
     var processingModel: ProcessingModel? {
         get { self[FocusedModelKey.self] }
@@ -35,6 +39,12 @@ extension FocusedValues {
         get { self[FocusedUndoManagerKey.self] }
         set { self[FocusedUndoManagerKey.self] = newValue }
     }
+    /// True while a text field/view has keyboard focus — used to disable
+    /// single-key menu shortcuts so they don't swallow typing.
+    var isTextInputFocused: Bool? {
+        get { self[FocusedTextInputKey.self] }
+        set { self[FocusedTextInputKey.self] = newValue }
+    }
 }
 
 /// Bundles callbacks that commands can invoke on ContentView.
@@ -51,6 +61,10 @@ struct DechaffCommands: Commands {
     @FocusedValue(\.currentStep) var step
     @FocusedValue(\.appActions) var actions
     @FocusedValue(\.windowUndoManager) var windowUndoManager
+    @FocusedValue(\.isTextInputFocused) var isTextInputFocused
+
+    /// Single-key shortcuts must be inert while the user is typing in a text field.
+    private var textEditing: Bool { isTextInputFocused == true }
 
     var body: some Commands {
         // Replace File > New with Open
@@ -67,7 +81,7 @@ struct DechaffCommands: Commands {
                 model?.togglePlayback()
             }
             .keyboardShortcut("k", modifiers: [])
-            .disabled(model?.inputURL == nil || !isPlaybackStep)
+            .disabled(model?.inputURL == nil || !isPlaybackStep || textEditing)
 
 
             Divider()
@@ -77,14 +91,14 @@ struct DechaffCommands: Commands {
                 m.seekPlayback(to: max(0, m.playback.playheadSeconds - 5))
             }
             .keyboardShortcut("j", modifiers: [])
-            .disabled(model?.inputURL == nil || !isPlaybackStep)
+            .disabled(model?.inputURL == nil || !isPlaybackStep || textEditing)
 
             Button("Scrub Forward 5s") {
                 guard let m = model else { return }
                 m.seekPlayback(to: min(m.inputDuration, m.playback.playheadSeconds + 5))
             }
             .keyboardShortcut("l", modifiers: [])
-            .disabled(model?.inputURL == nil || !isPlaybackStep)
+            .disabled(model?.inputURL == nil || !isPlaybackStep || textEditing)
 
             Divider()
 
@@ -93,14 +107,14 @@ struct DechaffCommands: Commands {
                 m.seekPlayback(to: max(0, m.playback.playheadSeconds - 5))
             }
             .keyboardShortcut(.leftArrow, modifiers: [])
-            .disabled(model?.inputURL == nil || !isPlaybackStep)
+            .disabled(model?.inputURL == nil || !isPlaybackStep || textEditing)
 
             Button("Scrub Forward 5s →") {
                 guard let m = model else { return }
                 m.seekPlayback(to: min(m.inputDuration, m.playback.playheadSeconds + 5))
             }
             .keyboardShortcut(.rightArrow, modifiers: [])
-            .disabled(model?.inputURL == nil || !isPlaybackStep)
+            .disabled(model?.inputURL == nil || !isPlaybackStep || textEditing)
         }
 
         // Markers menu
@@ -112,7 +126,7 @@ struct DechaffCommands: Commands {
                 registerTrimUndo(model: m, oldIn: oldIn, oldOut: oldOut)
             }
             .keyboardShortcut("i", modifiers: [])
-            .disabled(model?.inputURL == nil || step?.wrappedValue != 1)
+            .disabled(model?.inputURL == nil || step?.wrappedValue != 1 || textEditing)
 
             Button("Set Trim Out") {
                 guard let m = model else { return }
@@ -121,7 +135,7 @@ struct DechaffCommands: Commands {
                 registerTrimUndo(model: m, oldIn: oldIn, oldOut: oldOut)
             }
             .keyboardShortcut("o", modifiers: [])
-            .disabled(model?.inputURL == nil || step?.wrappedValue != 1)
+            .disabled(model?.inputURL == nil || step?.wrappedValue != 1 || textEditing)
 
             Divider()
 
@@ -129,7 +143,7 @@ struct DechaffCommands: Commands {
                 actions?.addChapter()
             }
             .keyboardShortcut("m", modifiers: [])
-            .disabled(model?.inputURL == nil || step?.wrappedValue != 3)
+            .disabled(model?.inputURL == nil || step?.wrappedValue != 3 || textEditing)
         }
 
         // Navigate menu

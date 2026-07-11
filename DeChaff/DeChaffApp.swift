@@ -53,7 +53,22 @@ struct DeChaffApp: App {
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        // Closing the window mid-run must not kill the encode
+        MainActor.assumeIsolated { !ProcessingModel.isAnyProcessing }
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let processing = MainActor.assumeIsolated { ProcessingModel.isAnyProcessing }
+        guard processing else { return .terminateNow }
+        let alert = NSAlert()
+        alert.messageText = "Processing in progress"
+        alert.informativeText = "DeChaff is still processing your sermon. Quitting now will discard the unfinished file."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Keep Processing")
+        alert.addButton(withTitle: "Quit Anyway")
+        return alert.runModal() == .alertFirstButtonReturn ? .terminateCancel : .terminateNow
+    }
 }
 
 extension Notification.Name {

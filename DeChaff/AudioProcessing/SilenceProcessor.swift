@@ -23,6 +23,7 @@ extension VoiceIsolationProcessor {
             var spans: [(start: Double, end: Double)] = []
 
             while readFrames < fileLength {
+                if isCancelled { logHandler("⏹ Cancelled"); return nil }
                 let toRead = min(chunkSize, fileLength - readFrames)
                 buf.frameLength = toRead
                 try file.read(into: buf, frameCount: toRead)
@@ -93,6 +94,7 @@ extension VoiceIsolationProcessor {
             file.framePosition = 0
 
             while inputPos < fileLength {
+                if isCancelled { logHandler("⏹ Cancelled"); return false }
                 let toRead = min(Int64(chunkSize), fileLength - inputPos)
                 buf.frameLength = AVAudioFrameCount(toRead)
                 try file.read(into: buf, frameCount: buf.frameLength)
