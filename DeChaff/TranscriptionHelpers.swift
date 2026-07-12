@@ -2,6 +2,7 @@ import Foundation
 import AVFoundation
 import Speech
 import CoreMedia
+import Accelerate
 
 // MARK: - TranscriptWord
 
@@ -18,6 +19,7 @@ func extractTrimmedAudio(from sourceURL: URL, trimIn: Double, trimOut: Double) t
     let source = try AVAudioFile(forReading: sourceURL)
     let format = source.processingFormat
     let sr = format.sampleRate
+    let nch = Int(format.channelCount)
     let startFrame = AVAudioFramePosition(trimIn * sr)
     let endFrame: AVAudioFramePosition = trimOut > trimIn + 0.5
         ? min(AVAudioFramePosition(trimOut * sr), source.length) : source.length
@@ -25,10 +27,15 @@ func extractTrimmedAudio(from sourceURL: URL, trimIn: Double, trimOut: Double) t
     guard totalFrames > 0 else { throw CocoaError(.fileReadInvalidFileName) }
     let tempURL = FileManager.default.temporaryDirectory
         .appendingPathComponent("dechaff_transcript_\(UUID().uuidString).caf")
-    let dest = try AVAudioFile(forWriting: tempURL, settings: format.settings)
+
+    // Write mono — the speech models don't use stereo, and float32 stereo temp
+    // files add up to gigabytes per sermon across the four parallel chunks.
+    let monoFormat = AVAudioFormat(standardFormatWithSampleRate: sr, channels: 1)!
+    let dest = try AVAudioFile(forWriting: tempURL, settings: monoFormat.settings)
     source.framePosition = startFrame
     let chunkSize: AVAudioFrameCount = 65536
-    guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkSize) else {
+    guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkSize),
+          let monoBuffer = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: chunkSize) else {
         throw CocoaError(.fileReadUnknown)
     }
     var remaining = totalFrames
@@ -36,8 +43,25 @@ func extractTrimmedAudio(from sourceURL: URL, trimIn: Double, trimOut: Double) t
         let toRead = min(chunkSize, remaining)
         buffer.frameLength = toRead
         try source.read(into: buffer, frameCount: toRead)
-        try dest.write(from: buffer)
-        remaining -= toRead
+        let n = Int(buffer.frameLength)
+        guard n > 0 else { break }
+        monoBuffer.frameLength = buffer.frameLength
+        if let out = monoBuffer.floatChannelData?[0] {
+            if nch == 1, let src = buffer.floatChannelData?[0] {
+                memcpy(out, src, n * MemoryLayout<Float>.size)
+            } else {
+                // Average all channels
+                vDSP_vclr(out, 1, vDSP_Length(n))
+                for ch in 0..<nch {
+                    guard let src = buffer.floatChannelData?[ch] else { continue }
+                    vDSP_vadd(out, 1, src, 1, out, 1, vDSP_Length(n))
+                }
+                var divisor = Float(nch)
+                vDSP_vsdiv(out, 1, &divisor, out, 1, vDSP_Length(n))
+            }
+        }
+        try dest.write(from: monoBuffer)
+        remaining -= AVAudioFrameCount(n)
     }
     return tempURL
 }
@@ -84,11 +108,17 @@ func transcribeChunkWords(
             try? await Task.sleep(nanoseconds: 3_000_000_000)
         }
         group.addTask {
+            var lastProgress = -1.0
             do {
                 for try await result in transcriber.results {
-                    // Report progress from every result (including non-final) for smooth tracking.
+                    // Volatile results stream continuously — only report progress in 1%
+                    // steps; every report is two actor hops plus a published UI update.
                     if let tr = result.text.runs.first?.audioTimeRange {
-                        await onProgress(min(tr.start.seconds / chunkDuration, 1.0))
+                        let p = min(tr.start.seconds / chunkDuration, 1.0)
+                        if p - lastProgress >= 0.01 {
+                            lastProgress = p
+                            await onProgress(p)
+                        }
                     }
                     guard result.isFinal else { continue }
                     var batch: [TranscriptWord] = []

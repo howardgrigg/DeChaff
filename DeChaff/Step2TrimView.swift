@@ -57,11 +57,14 @@ struct TranscriptTrimView: View {
 
     @State private var startIdx: Int = -1
     @State private var endIdx:   Int = -1
+    /// Cached sentence grouping — recomputing O(n) on every body evaluation is
+    /// noticeable with ~10k words, and body runs on every tap and stream batch.
+    @State private var sentences: [[Int]] = []
 
     private var words: [TranscriptWord] { model.trimWords }
 
     /// Group word indices into sentences, splitting after words that end with . ? !
-    private var sentences: [[Int]] {
+    private func regroupSentences() {
         var result: [[Int]] = []
         var current: [Int] = []
         for i in words.indices {
@@ -73,7 +76,7 @@ struct TranscriptTrimView: View {
             }
         }
         if !current.isEmpty { result.append(current) }
-        return result
+        sentences = result
     }
 
     var body: some View {
@@ -81,10 +84,14 @@ struct TranscriptTrimView: View {
             selectionBar
             mainContent
         }
-        .onAppear { syncIndicesFromTrimPoints() }
+        .onAppear { regroupSentences(); syncIndicesFromTrimPoints() }
         .onChange(of: trimIn)      { _, _ in syncIndicesFromTrimPoints() }
         .onChange(of: trimOut)     { _, _ in syncIndicesFromTrimPoints() }
-        .onChange(of: words.count) { _, _ in syncIndicesFromTrimPoints() }
+        .onChange(of: words.count) { _, _ in regroupSentences(); syncIndicesFromTrimPoints() }
+        .onChange(of: model.isTrimTranscribing) { _, transcribing in
+            // Final merge can replace words without changing the count
+            if !transcribing { regroupSentences() }
+        }
     }
 
     /// Map the current trimIn/trimOut values back to the nearest word indices.
@@ -168,7 +175,7 @@ struct TranscriptTrimView: View {
 
     private var wordList: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 4) {
+            LazyVStack(alignment: .leading, spacing: 4) {
                 ForEach(Array(sentences.enumerated()), id: \.offset) { _, indices in
                     SentenceRow(words: words, indices: indices,
                                 startIdx: startIdx, endIdx: endIdx,

@@ -24,8 +24,10 @@ enum YtDlpInstallStatus {
 class YtDlpManager: ObservableObject {
 
     @Published var installStatus: YtDlpInstallStatus = .notInstalled
-    @Published var downloadLog: [String] = []
     @Published var downloadProgress: Double? = nil   // nil = not downloading; 0.0–1.0 = in progress
+    /// Diagnostic only — deliberately not @Published: publishing per output line
+    /// re-renders every observing view for each line yt-dlp prints.
+    var downloadLog: [String] = []
 
     private var activeDownloadProcess: Process?
 
@@ -209,6 +211,7 @@ class YtDlpManager: ObservableObject {
             "--fragment-retries", "10",
             "--retries", "10",
             "--progress",
+            "--progress-delta", "1",   // at most one progress line per second
             "--newline",
             "-o", outputTemplate,
         ]
@@ -251,11 +254,14 @@ class YtDlpManager: ObservableObject {
         var outputLines: [String] = []
         for await line in stream {
             outputLines.append(line)
-            downloadLog.append(line)
-            if let pct = Self.parseProgress(line) {
+            // Publish only meaningful progress changes — every assignment
+            // invalidates all views observing this object.
+            if let pct = Self.parseProgress(line),
+               abs(pct - (downloadProgress ?? -1)) >= 0.001 {
                 downloadProgress = pct
             }
         }
+        downloadLog = outputLines
         downloadProgress = nil
         await awaitTermination(of: process)
         activeDownloadProcess = nil
@@ -503,6 +509,7 @@ private final class FileDownloadDelegate: NSObject, URLSessionDownloadDelegate {
     private let progressHandler: (Double) -> Void
     private let completion: (Result<URL, Error>) -> Void
     private var finished = false
+    private var lastReportedFraction: Double = -1
     var session: URLSession?
 
     init(progressHandler: @escaping (Double) -> Void,
@@ -531,7 +538,12 @@ private final class FileDownloadDelegate: NSObject, URLSessionDownloadDelegate {
                     didWriteData _: Int64, totalBytesWritten: Int64,
                     totalBytesExpectedToWrite: Int64) {
         guard totalBytesExpectedToWrite > 0 else { return }
-        progressHandler(Double(totalBytesWritten) / Double(totalBytesExpectedToWrite))
+        // This fires per received chunk (hundreds/sec on fast connections) and each
+        // report spawns a main-actor task + published update — cap it at 0.5% steps.
+        let fraction = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
+        guard fraction - lastReportedFraction >= 0.005 || fraction >= 1.0 else { return }
+        lastReportedFraction = fraction
+        progressHandler(fraction)
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {

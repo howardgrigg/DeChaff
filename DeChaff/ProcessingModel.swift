@@ -249,14 +249,22 @@ class ProcessingModel: ObservableObject {
         Self.isAnyProcessing = true
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            // Throttle before the main-thread hop: the passes report per 4096-frame
+            // chunk (hundreds of times/sec) and every published update re-renders
+            // the whole window. 0.1% steps are finer than the bar can display.
+            var lastReported: Double = -1
             let success = processor.process(
                 inputPath: inputPath,
                 outputPath: outputPath,
                 options: options,
-                progressHandler: { p in DispatchQueue.main.async {
-                    self?.progress = p
-                    Self.updateDockProgress(p)
-                } },
+                progressHandler: { p in
+                    guard p - lastReported >= 0.001 || p >= 1.0 else { return }
+                    lastReported = p
+                    DispatchQueue.main.async {
+                        self?.progress = p
+                        Self.updateDockProgress(p)
+                    }
+                },
                 logHandler:      { m in DispatchQueue.main.async { self?.logs.append(m) } }
             )
             let segments = processor.detectedSilenceSegments
@@ -409,7 +417,10 @@ class ProcessingModel: ObservableObject {
             dockTile.contentView = view
             dockProgressView = view
         }
-        dockProgressView?.progress = value
+        guard let view = dockProgressView else { return }
+        // The dock bar is ~100 px wide — redrawing for sub-0.5% steps is pure waste
+        guard abs(value - view.progress) >= 0.005 || value >= 1.0 else { return }
+        view.progress = value
         dockTile.display()
     }
 

@@ -22,6 +22,7 @@ final class PlaybackState {
     var stopAt: Double? = nil
 
     private var audioPlayer: AVAudioPlayer?
+    private var playerURL: URL?
     private var playbackTimer: Timer?
 
     func toggle(url: URL?) {
@@ -29,8 +30,16 @@ final class PlaybackState {
     }
 
     func playFrom(_ t: Double, url: URL?) {
-        guard let url, let player = try? AVAudioPlayer(contentsOf: url) else { return }
-        audioPlayer = player
+        guard let url else { return }
+        // Reuse the player on resume — re-opening a 90-minute file on every
+        // spacebar press causes a visible hitch before playback starts.
+        if audioPlayer == nil || playerURL != url {
+            guard let player = try? AVAudioPlayer(contentsOf: url) else { return }
+            player.prepareToPlay()
+            audioPlayer = player
+            playerURL = url
+        }
+        guard let player = audioPlayer else { return }
         player.currentTime = t
         player.play()
         isPlaying = true
@@ -54,7 +63,7 @@ final class PlaybackState {
     }
 
     func stop() {
-        audioPlayer?.stop(); audioPlayer = nil
+        audioPlayer?.stop(); audioPlayer = nil; playerURL = nil
         isPlaying = false; playbackTimer?.invalidate(); playheadSeconds = 0
     }
 
