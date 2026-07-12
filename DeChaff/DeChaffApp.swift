@@ -35,7 +35,8 @@ struct DeChaffApp: App {
                 }
         }
         .handlesExternalEvents(matching: ["*"])
-        .windowResizability(.contentSize)
+        .windowResizability(.contentMinSize)
+        .defaultSize(width: 760, height: 640)
         .commands {
             DechaffCommands()
             CommandGroup(after: .appInfo) {

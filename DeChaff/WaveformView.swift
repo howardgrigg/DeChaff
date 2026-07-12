@@ -50,7 +50,15 @@ struct WaveformView: View {
         GeometryReader { geo in
             let w = geo.size.width
             let h = geo.size.height
-            let _ = DispatchQueue.main.async { viewportWidth = w; onViewWidth?(w) }
+            let _ = DispatchQueue.main.async {
+                if viewportWidth != w {
+                    viewportWidth = w
+                    onViewWidth?(w)
+                    // Tiles are rendered for a specific viewport width — a resize
+                    // remaps tile indices to different time ranges, so drop them.
+                    tileCache.invalidateAll()
+                }
+            }
 
             ZStack(alignment: .topLeading) {
                 // Layer 1: Tiled waveform — only renders the visible slice

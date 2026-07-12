@@ -61,7 +61,7 @@ struct ContentView: View {
                     .padding(.vertical, 16)
             }
         }
-        .frame(width: 760)
+        .frame(minWidth: 760, maxWidth: .infinity)
         .frame(minHeight: 520)
         .focusedSceneValue(\.processingModel, model)
         .focusedSceneValue(\.currentStep, $currentStep)
