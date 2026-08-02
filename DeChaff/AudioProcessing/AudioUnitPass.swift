@@ -2,6 +2,41 @@ import AVFoundation
 import AudioToolbox
 import Accelerate
 
+/// Classifies each render-loop chunk against a sorted, non-overlapping list of
+/// music segments using a forward-only cursor — the same shape as the `regionIdx`
+/// cursor in `shortenSilenceFrames`, since chunks are always processed in time order.
+private enum ChunkClass {
+    case music
+    case speech
+    case transition(MusicSegment)
+}
+
+private struct MusicRouter {
+    let segments: [MusicSegment]
+    let crossfadeSeconds: Double
+    private var idx = 0
+
+    init(segments: [MusicSegment], crossfadeSeconds: Double) {
+        self.segments = segments
+        self.crossfadeSeconds = crossfadeSeconds
+    }
+
+    mutating func classify(chunkStart: Double, chunkEnd: Double) -> ChunkClass {
+        // Advance past segments whose influence (including crossfade margin) has
+        // fully passed.
+        while idx < segments.count, segments[idx].endSeconds + crossfadeSeconds <= chunkStart {
+            idx += 1
+        }
+        guard idx < segments.count else { return .speech }
+        let seg = segments[idx]
+        if chunkEnd <= seg.startSeconds - crossfadeSeconds { return .speech }
+        if chunkStart >= seg.startSeconds + crossfadeSeconds && chunkEnd <= seg.endSeconds - crossfadeSeconds {
+            return .music
+        }
+        return .transition(seg)
+    }
+}
+
 extension VoiceIsolationProcessor {
 
     // MARK: - File loading
@@ -21,7 +56,7 @@ extension VoiceIsolationProcessor {
     // MARK: - AU pass (isolation + compression)
 
     func runAUPass(audioFile: AVAudioFile, outputPath: String,
-                   options: ProcessingOptions,
+                   options: ProcessingOptions, musicSegments: [MusicSegment] = [],
                    progressStart: Double, progressEnd: Double) -> Bool {
         let format = audioFile.processingFormat
         var isolationAU: AudioUnit? = nil
@@ -68,7 +103,8 @@ extension VoiceIsolationProcessor {
 
         return renderLoop(audioFile: audioFile, outputPath: outputPath,
                           isolationAU: isolationAU, compressorAU: compressorAU,
-                          options: options, progressStart: progressStart, progressEnd: progressEnd)
+                          options: options, musicSegments: musicSegments,
+                          progressStart: progressStart, progressEnd: progressEnd)
     }
 
     private func makeAU(subType: UInt32, format: AVAudioFormat) -> AudioUnit? {
@@ -97,7 +133,7 @@ extension VoiceIsolationProcessor {
 
     private func renderLoop(audioFile: AVAudioFile, outputPath: String,
                              isolationAU: AudioUnit?, compressorAU: AudioUnit?,
-                             options: ProcessingOptions,
+                             options: ProcessingOptions, musicSegments: [MusicSegment] = [],
                              progressStart: Double, progressEnd: Double) -> Bool {
         do {
             let format = audioFile.processingFormat
@@ -119,6 +155,12 @@ extension VoiceIsolationProcessor {
             let monoBuf: AVAudioPCMBuffer? = doMono
                 ? AVAudioPCMBuffer(pcmFormat: monoFmt, frameCapacity: frameCount)
                 : nil
+            // Only needed when skipping isolation on music — holds the per-sample
+            // crossfade result for chunks that straddle a music/speech boundary.
+            let blendBuf: AVAudioPCMBuffer? = musicSegments.isEmpty
+                ? nil
+                : AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount)
+            var router = MusicRouter(segments: musicSegments, crossfadeSeconds: Self.musicCrossfadeSeconds)
 
             let sr = format.sampleRate
             let inFrame  = AVAudioFramePosition(options.trimInSeconds * sr)
@@ -140,11 +182,35 @@ extension VoiceIsolationProcessor {
                 var current: AVAudioPCMBuffer = inBuf
 
                 if let au = isolationAU {
+                    // Always render isolation with continuous sample time — the AU may
+                    // carry internal/adaptive state that a skipped chunk could disrupt.
+                    // Whether the isolated or raw result is used downstream is decided
+                    // afterward, based on whether this chunk falls in a music segment.
                     midBuf.frameLength = inBuf.frameLength
-                    guard renderAU(au, from: current, into: midBuf, sampleTime: Float64(totalFrames)) else {
+                    guard renderAU(au, from: inBuf, into: midBuf, sampleTime: Float64(totalFrames)) else {
                         logHandler("❌ Isolation render failed"); return false
                     }
-                    current = midBuf
+                    if musicSegments.isEmpty {
+                        current = midBuf
+                    } else {
+                        let chunkStartSec = Double(totalFrames) / sr
+                        let chunkEndSec   = Double(totalFrames + inBuf.frameLength) / sr
+                        switch router.classify(chunkStart: chunkStartSec, chunkEnd: chunkEndSec) {
+                        case .speech:
+                            current = midBuf
+                        case .music:
+                            current = inBuf
+                        case .transition(let segment):
+                            if let blend = blendBuf {
+                                blendMusicCrossfade(raw: inBuf, isolated: midBuf, into: blend,
+                                                    chunkStartFrame: totalFrames, sampleRate: sr,
+                                                    segment: segment, crossfadeSeconds: Self.musicCrossfadeSeconds)
+                                current = blend
+                            } else {
+                                current = midBuf
+                            }
+                        }
+                    }
                 }
 
                 if let au = compressorAU {
@@ -240,6 +306,46 @@ extension VoiceIsolationProcessor {
         var ts = AudioTimeStamp()
         ts.mSampleTime = sampleTime; ts.mFlags = .sampleTimeValid
         return AudioUnitRender(au, &flags, &ts, 0, input.frameLength, output.mutableAudioBufferList) == noErr
+    }
+
+    // MARK: - Music-segment routing (skip isolation on music)
+
+    static let musicCrossfadeSeconds = 0.05  // ramp length either side of a segment boundary
+
+    /// Blends the raw and isolated buffers per-sample across a music/speech boundary
+    /// so switching isolation on/off doesn't produce an audible click. Only a handful
+    /// of chunks per file ever take this path (one per segment boundary), so a plain
+    /// per-sample loop is simplest — no measurable cost at that frequency.
+    private func blendMusicCrossfade(raw: AVAudioPCMBuffer, isolated: AVAudioPCMBuffer,
+                                     into blend: AVAudioPCMBuffer, chunkStartFrame: AVAudioFrameCount,
+                                     sampleRate: Double, segment: MusicSegment, crossfadeSeconds: Double) {
+        let n = Int(raw.frameLength)
+        blend.frameLength = raw.frameLength
+        for ch in 0..<Int(raw.format.channelCount) {
+            guard let r = raw.floatChannelData?[ch],
+                  let iso = isolated.floatChannelData?[ch],
+                  let out = blend.floatChannelData?[ch] else { continue }
+            for i in 0..<n {
+                let t = Double(chunkStartFrame + AVAudioFrameCount(i)) / sampleRate
+                let w = Float(isolationWeight(at: t, segment: segment, crossfadeSeconds: crossfadeSeconds))
+                out[i] = w * iso[i] + (1 - w) * r[i]
+            }
+        }
+    }
+
+    /// 1.0 = fully isolated (speech), 0.0 = fully raw (music), ramping linearly
+    /// across `crossfadeSeconds` on either side of the segment's start/end.
+    private func isolationWeight(at t: Double, segment: MusicSegment, crossfadeSeconds: Double) -> Double {
+        let enter = segment.startSeconds, exit = segment.endSeconds
+        if t < enter - crossfadeSeconds { return 1.0 }
+        if t < enter + crossfadeSeconds {
+            return 1.0 - (t - (enter - crossfadeSeconds)) / (2 * crossfadeSeconds)
+        }
+        if t < exit - crossfadeSeconds { return 0.0 }
+        if t < exit + crossfadeSeconds {
+            return (t - (exit - crossfadeSeconds)) / (2 * crossfadeSeconds)
+        }
+        return 1.0
     }
 
     // MARK: - Helpers

@@ -36,6 +36,7 @@ class ProcessingModel: ObservableObject {
     @Published var shortenSilences: Bool = true
     @Published var maxSilenceDuration: Double = 1.0
     @Published var doSlowLeveler: Bool = true
+    @Published var skipIsolationOnMusic: Bool = false
 
 
     // Transcription state (output step — plain text, no timings needed)
@@ -232,6 +233,7 @@ class ProcessingModel: ObservableObject {
             slowLeveler:         doSlowLeveler,
             trimInSeconds:       trimIn,
             trimOutSeconds:      trimOut,
+            skipIsolationOnMusic: skipIsolationOnMusic,
             compressorThreshold: Float(compressorThreshold),
             compressorHeadRoom:  Float(compressorHeadRoom),
             compressorAttack:    Float(compressorAttack),

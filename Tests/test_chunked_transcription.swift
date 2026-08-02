@@ -5,6 +5,8 @@
 //   swift Tests/test_chunked_transcription.swift <path-to-audio-file> [chunk-minutes] [overlap-seconds]
 //
 // Defaults: 5-minute chunks, 5-second overlap.
+// Use --chunks N to split into exactly N equal parts instead of fixed-size chunks.
+//   e.g. --chunks 4  splits a 95-min file into 4 × ~24-min chunks, all run in parallel.
 // Requires: Apple Silicon Mac, macOS 26+, Apple Intelligence enabled.
 //
 // What it tests:
@@ -27,7 +29,7 @@ import CoreMedia
 
 let args = CommandLine.arguments
 guard args.count >= 2 else {
-    fputs("Usage: swift test_chunked_transcription.swift <audio-file> [chunk-minutes] [overlap-seconds] [--skip-baseline] [--serial-chunks]\n", stderr)
+    fputs("Usage: swift test_chunked_transcription.swift <audio-file> [chunk-minutes] [overlap-seconds] [--skip-baseline] [--serial-chunks] [--chunks N]\n", stderr)
     exit(1)
 }
 
@@ -36,6 +38,11 @@ let chunkMins     = args.count >= 3 ? Double(args[2]) ?? 5.0 : 5.0
 let overlapSecs   = args.count >= 4 ? Double(args[3]) ?? 5.0 : 5.0
 let skipBaseline  = args.contains("--skip-baseline")
 let serialChunks  = args.contains("--serial-chunks")  // run chunks one-at-a-time to isolate concurrency effects
+// --chunks N splits the file into exactly N equal parts (ignores chunk-minutes)
+let nChunksOverride: Int? = {
+    if let idx = args.firstIndex(of: "--chunks"), idx + 1 < args.count { return Int(args[idx + 1]) }
+    return nil
+}()
 
 let inputURL = URL(fileURLWithPath: inputPath)
 guard FileManager.default.fileExists(atPath: inputPath) else {
@@ -46,7 +53,7 @@ guard FileManager.default.fileExists(atPath: inputPath) else {
 let sema = DispatchSemaphore(value: 0)
 Task {
     await runTest(inputURL: inputURL, chunkMinutes: chunkMins, overlapSeconds: overlapSecs,
-                  skipBaseline: skipBaseline, serialChunks: serialChunks)
+                  skipBaseline: skipBaseline, serialChunks: serialChunks, nChunksOverride: nChunksOverride)
     sema.signal()
 }
 sema.wait()
@@ -130,14 +137,14 @@ func transcribeChunk(url: URL, timeOffset: Double, label: String = "") async thr
     let analyzer = SpeechAnalyzer(modules: [transcriber])
 
     // Two concurrent tasks in a group:
-    //   Analyzer – feeds audio via analyzeSequence, then sleeps 3 seconds.
-    //              The sleep gives the results stream time to flush all final
-    //              results after analyzeSequence signals completion.
-    //   Collector – iterates transcriber.results until the stream closes.
+    //   Analyzer  – feeds audio via analyzeSequence, then sleeps 3 seconds.
+    //               The sleep lets the results stream flush all final results
+    //               after analyzeSequence signals completion (its internal cleanup
+    //               phase hangs indefinitely, so we don't await it directly).
+    //   Collector – iterates transcriber.results until the stream closes naturally.
     //
-    // The collector always wins the race (finishes before the 3 s sleep).
-    // group.cancelAll() then wakes the sleeping analyzer task immediately.
-    // Both try? wrappers let external cancellation exit cleanly.
+    // The stream closes while the 3 s sleep is running, so the collector always
+    // wins the race. group.cancelAll() then wakes the sleeping analyzer immediately.
     let bag = WordBag()
     try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask {
@@ -203,8 +210,7 @@ func mergeChunks(chunkWords: [[TWord]], chunkStarts: [Double], chunkEnds: [Doubl
 // MARK: - Main test
 // ---------------------------------------------------------------------------
 
-func runTest(inputURL: URL, chunkMinutes: Double, overlapSeconds: Double, skipBaseline: Bool, serialChunks: Bool) async {
-    let chunkSecs = chunkMinutes * 60.0
+func runTest(inputURL: URL, chunkMinutes: Double, overlapSeconds: Double, skipBaseline: Bool, serialChunks: Bool, nChunksOverride: Int?) async {
 
     // Get file duration
     let asset    = AVURLAsset(url: inputURL)
@@ -217,10 +223,21 @@ func runTest(inputURL: URL, chunkMinutes: Double, overlapSeconds: Double, skipBa
     }
     guard duration > 0 else { fputs("Zero duration file\n", stderr); return }
 
+    // Chunk size: either duration/N (--chunks N) or fixed minutes
+    let chunkSecs: Double
+    let chunkLabel: String
+    if let n = nChunksOverride, n > 0 {
+        chunkSecs  = duration / Double(n)
+        chunkLabel = String(format: "%d equal chunks (~%.0f min each), %.0f sec overlap", n, chunkSecs / 60, overlapSeconds)
+    } else {
+        chunkSecs  = chunkMinutes * 60.0
+        chunkLabel = String(format: "%.0f min each, %.0f sec overlap", chunkMinutes, overlapSeconds)
+    }
+
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print("File:     \(inputURL.lastPathComponent)")
     print(String(format: "Duration: %.1f min (%.0f sec)", duration / 60, duration))
-    print(String(format: "Chunks:   %.0f min each, %.0f sec overlap", chunkMinutes, overlapSeconds))
+    print("Chunks:   \(chunkLabel)")
 
     // Plan chunks
     var chunkStarts: [Double] = []
@@ -259,8 +276,10 @@ func runTest(inputURL: URL, chunkMinutes: Double, overlapSeconds: Double, skipBa
     }
 
     // ── CHUNKED (PARALLEL or SERIAL) ───────────────────────────────
-    let maxConcurrent = serialChunks ? 1 : 4
-    let modeLabel = serialChunks ? "serial (1 at a time)" : "parallel (4 at a time)"
+    // When --chunks N is used, run all N at once (they're already sized to fit).
+    // Otherwise cap at 4 to avoid saturating the Neural Engine with tiny chunks.
+    let maxConcurrent = serialChunks ? 1 : (nChunksOverride ?? 4)
+    let modeLabel = serialChunks ? "serial (1 at a time)" : "parallel (\(maxConcurrent) at a time)"
     print("\n▶ Chunked \(modeLabel) — \(nChunks) chunks…")
     let parStart = Date()
     var chunkResults: [[TWord]] = Array(repeating: [], count: nChunks)

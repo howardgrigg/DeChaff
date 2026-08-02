@@ -40,6 +40,7 @@
 		DC0000000000000000000116 /* TranscriptionHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000115 /* TranscriptionHelpers.swift */; };
 		DC0000000000000000000118 /* WaveformView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000117 /* WaveformView.swift */; };
 		DC000000000000000000011A /* PlaybackState.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000119 /* PlaybackState.swift */; };
+		DC000000000000000000011D /* MusicDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC000000000000000000011C /* MusicDetector.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -100,6 +101,7 @@
 		DC0000000000000000000115 /* TranscriptionHelpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionHelpers.swift; sourceTree = "<group>"; };
 		DC0000000000000000000117 /* WaveformView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaveformView.swift; sourceTree = "<group>"; };
 		DC0000000000000000000119 /* PlaybackState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackState.swift; sourceTree = "<group>"; };
+		DC000000000000000000011C /* MusicDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicDetector.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -195,6 +197,7 @@
 				DC0000000000000000000106 /* SilenceProcessor.swift */,
 				DC0000000000000000000108 /* MP3Encoder.swift */,
 				DC000000000000000000010A /* ID3Tagger.swift */,
+				DC000000000000000000011C /* MusicDetector.swift */,
 			);
 			path = AudioProcessing;
 			sourceTree = "<group>";
@@ -368,6 +371,7 @@
 				DC0000000000000000000107 /* SilenceProcessor.swift in Sources */,
 				DC0000000000000000000109 /* MP3Encoder.swift in Sources */,
 				DC000000000000000000010B /* ID3Tagger.swift in Sources */,
+				DC000000000000000000011D /* MusicDetector.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -574,7 +578,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 11;
+				CURRENT_PROJECT_VERSION = 12;
 				DEVELOPMENT_TEAM = 2R53HYKRFR;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -591,7 +595,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 1.1;
+				MARKETING_VERSION = 1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.dechaff.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -607,7 +611,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 11;
+				CURRENT_PROJECT_VERSION = 12;
 				DEVELOPMENT_TEAM = 2R53HYKRFR;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -624,7 +628,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 1.1;
+				MARKETING_VERSION = 1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.dechaff.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;

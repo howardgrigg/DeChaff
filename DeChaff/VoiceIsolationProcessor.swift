@@ -78,6 +78,19 @@ class VoiceIsolationProcessor {
         let p_levEnd:  Double = 0.60                          // end of leveler (= norm start)
         let p_measEnd: Double = levelerActive ? 0.78 : 0.85  // end of LUFS measurement
 
+        // Music detection runs before everything else and gets its own reserved
+        // slice at the front; every downstream progress value is shifted into the
+        // remaining space via `scaled(_:)`, same idea as `silenceScale`'s tail slice.
+        let musicDetectActive = options.voiceIsolation && options.skipIsolationOnMusic
+        let musicDetectScale: Double = musicDetectActive ? 0.05 : 0.0
+        func scaled(_ raw: Double) -> Double { musicDetectScale + raw * (1.0 - musicDetectScale) }
+
+        var musicSegments: [MusicSegment] = []
+        if musicDetectActive {
+            musicSegments = detectMusicSegments(audioFile: audioFile, options: options,
+                                                progressStart: 0.0, progressEnd: musicDetectScale) ?? []
+        }
+
         // WAV path used throughout AU/normalization pipeline
         var wavOutputPath: String
         var temps: [String] = []
@@ -112,7 +125,8 @@ class VoiceIsolationProcessor {
         if needsAU {
             let p1End = (options.normalization || levelerActive) ? p_auEnd * auNormScale : auNormScale
             let ok = runAUPass(audioFile: audioFile, outputPath: auOutputPath,
-                               options: options, progressStart: 0.0, progressEnd: p1End)
+                               options: options, musicSegments: musicSegments,
+                               progressStart: scaled(0.0), progressEnd: scaled(p1End))
             guard ok else { temps.forEach(cleanup); return false }
             normSource = auOutputPath
         } else {
@@ -120,7 +134,7 @@ class VoiceIsolationProcessor {
             let copyDest = hasDownstream ? makeTempPath() : wavOutputPath
             let copyEnd  = hasDownstream ? 0.10 * auNormScale : auNormScale
             let ok = copyPass(inputPath: inputPath, outputPath: copyDest, options: options,
-                              progressStart: 0.0, progressEnd: copyEnd)
+                              progressStart: scaled(0.0), progressEnd: scaled(copyEnd))
             guard ok else { temps.forEach(cleanup); return false }
             normSource = copyDest
         }
@@ -134,7 +148,7 @@ class VoiceIsolationProcessor {
             let lEnd   = needsAU ? p_levEnd * auNormScale
                                  : (options.normalization ? 0.35 * auNormScale : auNormScale)
             let ok = applySlowLeveler(inputPath: normSource, outputPath: levelerPath,
-                                      progressStart: lStart, progressEnd: lEnd)
+                                      progressStart: scaled(lStart), progressEnd: scaled(lEnd))
             guard ok else { temps.forEach(cleanup); return false }
             cleanup(normSource)
             normSource = levelerPath
@@ -149,7 +163,7 @@ class VoiceIsolationProcessor {
             // Source audio is already trimmed and downmixed — empty options make
             // measureLUFS/applyGain read the whole file with no further conversion.
             guard let measured = measureLUFS(path: normSource, options: ProcessingOptions(),
-                                             progressStart: pStart, progressEnd: pMid) else {
+                                             progressStart: scaled(pStart), progressEnd: scaled(pMid)) else {
                 logHandler("❌ Loudness measurement failed — skipping normalization")
                 temps.forEach(cleanup); return false
             }
@@ -160,7 +174,7 @@ class VoiceIsolationProcessor {
                                gainDB: gainDB, targetLUFS: options.targetLUFS,
                                monoOutput: false,
                                options: ProcessingOptions(),
-                               progressStart: pMid, progressEnd: auNormScale)
+                               progressStart: scaled(pMid), progressEnd: scaled(auNormScale))
             guard ok else { temps.forEach(cleanup); return false }
             if normSource != wavOutputPath { cleanup(normSource) }
         }
@@ -176,8 +190,8 @@ class VoiceIsolationProcessor {
                     let silenceWavPath = makeTempPath()
                     let ok = shortenSilenceFrames(inputPath: wavOutputPath, outputPath: silenceWavPath,
                                                   segments: segments,
-                                                  progressStart: auNormScale,
-                                                  progressEnd: auNormScale + silenceScale)
+                                                  progressStart: scaled(auNormScale),
+                                                  progressEnd: scaled(auNormScale + silenceScale))
                     guard ok else { temps.forEach(cleanup); return false }
                     if encodingMP3 {
                         cleanup(wavOutputPath)
@@ -194,11 +208,11 @@ class VoiceIsolationProcessor {
                     }
                 } else {
                     logHandler("✂️ No long silences detected")
-                    progressHandler(auNormScale + silenceScale)
+                    progressHandler(scaled(auNormScale + silenceScale))
                 }
             } else {
                 logHandler("⚠️ Silence detection failed — skipping")
-                progressHandler(auNormScale + silenceScale)
+                progressHandler(scaled(auNormScale + silenceScale))
             }
         } else {
             detectedSilenceSegments = []
@@ -208,7 +222,7 @@ class VoiceIsolationProcessor {
         if encodingMP3 {
             let ok = encodeToMP3(inputWAV: wavOutputPath, outputMP3: outputPath,
                                  bitrate: options.mp3Bitrate, mono: options.monoOutput,
-                                 progressStart: auNormScale, progressEnd: 1.0)
+                                 progressStart: scaled(auNormScale), progressEnd: 1.0)
             cleanup(wavOutputPath)
             return ok
         }

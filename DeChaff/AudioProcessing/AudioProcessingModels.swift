@@ -39,6 +39,7 @@ struct ProcessingOptions {
     var slowLeveler: Bool = true           // windowed RMS gain envelope
     var trimInSeconds: Double = 0
     var trimOutSeconds: Double = 0  // 0 = use full file duration
+    var skipIsolationOnMusic: Bool = false  // only meaningful when voiceIsolation == true
 
     // Compressor parameters (used when compression == true)
     var compressorThreshold: Float = -28.0  // dB — engagement point; lower = more compression
@@ -52,4 +53,9 @@ struct SilenceSegment {
     let startSeconds: Double
     let endSeconds:   Double
     let keptSeconds:  Double  // portion retained at tail of the silent span
+}
+
+struct MusicSegment {
+    let startSeconds: Double   // relative to the trimmed (kept) timeline
+    let endSeconds:   Double
 }

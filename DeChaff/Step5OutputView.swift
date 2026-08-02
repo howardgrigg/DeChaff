@@ -11,6 +11,12 @@ extension ContentView {
                     settingsToggleRow("Voice Isolation",
                                      subtitle: "Remove background noise and non-voice sounds",
                                      isOn: $model.doIsolation)
+                    if model.doIsolation {
+                        Divider().padding(.leading, 16)
+                        settingsToggleRow("Preserve Music",
+                                         subtitle: "Skip isolation during singing and instrumental sections",
+                                         isOn: $model.skipIsolationOnMusic)
+                    }
                     Divider().padding(.leading, 16)
                     settingsToggleRow("Dynamic Compression",
                                      subtitle: "Balance loud and quiet passages",
