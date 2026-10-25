@@ -84,7 +84,8 @@ func parseTimeString(_ s: String) -> Double? {
 
 /// "1:02:03.4" / "12:34.5" — rounded to tenths, for showing times to the model.
 func formatTime(_ seconds: Double) -> String {
-    let s = max(0, seconds)
+    // Round to the displayed tenth first, so 659.99 reads "11:00.0", not "10:60.0".
+    let s = (max(0, seconds) * 10).rounded() / 10
     let h = Int(s / 3600), m = Int(s.truncatingRemainder(dividingBy: 3600) / 60)
     let sec = s - Double(h * 3600 + m * 60)
     return h > 0 ? String(format: "%d:%02d:%04.1f", h, m, sec) : String(format: "%d:%04.1f", m, sec)

@@ -564,17 +564,34 @@ struct DeChaffTools: Sendable {
                     throw ToolError("Processing failed: \(failure)")
                 case .finished(let result):
                     // Like the app: the next episode starts from this one's preacher, series and artwork.
-                    AppSettings().rememberLastUsed(preacher: finalTags.preacher, series: finalTags.series,
-                                                   artwork: finalTags.artwork)
+                    // Test renders (WAV, or no title) leave the saved defaults alone.
+                    let remember = format == .mp3 && !finalTags.title.isEmpty
+                    if remember {
+                        AppSettings().rememberLastUsed(preacher: finalTags.preacher, series: finalTags.series,
+                                                       artwork: finalTags.artwork)
+                    }
                     let size = (try? FileManager.default.attributesOfItem(atPath: result.outputURL.path)[.size] as? NSNumber)?
                         .doubleValue ?? 0
                     let removed = result.silenceSegments.reduce(0.0) {
                         $0 + max(0, ($1.endSeconds - $1.startSeconds) - $1.keptSeconds)
                     }
+                    // Self-check: the output should be the kept audio minus removed silence.
+                    // A shortfall means a pass dropped audio (as the slow leveler once did).
+                    var outputWarnings = finalWarnings
+                    let outputDuration = audioDuration(result.outputURL)
+                    if let outputDuration {
+                        let expected = keptDuration(keptRanges(trimIn: options.trimInSeconds, trimOut: options.trimOutSeconds,
+                                                               excluding: options.excludedRanges)) - removed
+                        if abs(outputDuration - expected) > 0.25 {
+                            outputWarnings.append(.string(String(format:
+                                "Output is %.2f s but should be %.2f s (kept audio minus removed silence) — audio may be missing; check the end.",
+                                outputDuration, expected)))
+                        }
+                    }
                     return [
                         "output_path": .string(result.outputURL.path),
                         "size_mb": rounded(size / 1_048_576, 1),
-                        "duration": JSONValue(audioDuration(result.outputURL).map(formatTime)),
+                        "duration": JSONValue(outputDuration.map(formatTime)),
                         "trim": trimReport,
                         "silence_removed_seconds": rounded(removed, 1),
                         "chapters": .array(result.chapters.map {
@@ -585,8 +602,10 @@ struct DeChaffTools: Sendable {
                             "album": .string(finalTags.series), "year": .string(finalTags.year),
                             "artwork": .bool(finalTags.artwork != nil),
                         ],
-                        "warnings": .array(finalWarnings),
-                        "remembered": "Preacher, series and artwork are saved as DeChaff's defaults for the next episode.",
+                        "warnings": .array(outputWarnings),
+                        "remembered": remember
+                            ? "Preacher, series and artwork are saved as DeChaff's defaults for the next episode."
+                            : "Test render (WAV or no title) — DeChaff's saved defaults were left unchanged.",
                         "log": .array(job.log.suffix(15).map { .string($0) }),
                     ]
                 }
