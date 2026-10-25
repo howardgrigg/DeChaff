@@ -213,9 +213,14 @@ public struct YtDlpClient: Sendable {
         process.arguments = args
         try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binary.path)
 
+        // script copies its stdin into the PTY, so give it /dev/null: run from the MCP
+        // server, stdin is the client's socket and script fails at once with
+        // "tcgetattr/ioctl: Operation not supported on socket".
+        process.standardInput = FileHandle.nullDevice
         let outPipe = Pipe()
+        let errPipe = Pipe()
         process.standardOutput = outPipe
-        process.standardError = Pipe()
+        process.standardError = errPipe
 
         let (stream, continuation) = AsyncStream<String>.makeStream()
         var lineBuffer = ""
@@ -256,6 +261,9 @@ public struct YtDlpClient: Sendable {
             if errorLines.isEmpty {
                 errorLines = Array(outputLines.filter { Self.parseProgress($0) == nil }.suffix(5))
             }
+            // script's own complaints never reach the PTY.
+            let scriptErrors = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            errorLines += scriptErrors.components(separatedBy: .newlines)
             let msg = errorLines
                 .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
                 .joined(separator: "\n")
