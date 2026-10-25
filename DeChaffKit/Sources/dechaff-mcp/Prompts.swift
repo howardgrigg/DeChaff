@@ -13,24 +13,25 @@ let prepareSermonPrompt = MCPPrompt(
     let source = args["source"].flatMap { $0.isEmpty ? nil : $0 }
     let notes = args["notes"].flatMap { $0.isEmpty ? nil : $0 }
     return """
-    Prepare this week's sermon podcast episode with the DeChaff tools.
+    Prepare this week's sermon podcast episode with the DeChaff tools, working through the app's five \
+    steps in order — Load → Trim → Info → Chapters → Output. Tell me briefly as each step is done.
 
-    1. Source: \(source.map { "use \($0)." } ?? "call list_channel_videos and pick the newest service or sermon video.")
-       Download it with download_audio if it's a URL. Note the parsed title fields.
-    2. Call analyze_audio and transcribe on the file (they can run side by side; poll with get_job if needed).
-    3. Find the sermon. Use search_transcript for phrases that typically open and close it (the reading being \
-    announced, "let's pray", "amen") and get_transcript windows around those to decide:
-       - trim_start: the first word of the sermon proper (usually after the Bible reading),
-       - trim_end: the last word (usually the "Amen" of the closing prayer),
-       - 3–6 chapters at clear structural turns, the first at trim_start (e.g. "Introduction").
-       analyze_audio's music segments help locate the worship before and after.
-    4. Call refine_cuts with those word indexes. If any cut comes back "forced", look at the words around it \
-    with get_transcript format "words" and pick a nearby sentence boundary instead.
-    5. Show the user the plan: trim start/end (times and the words there), chapter titles and times, and tags \
-    (title, reading, preacher, series, date). Wait for their go-ahead or corrections.
-    6. Run process_sermon with the confirmed points and tags, then read_tags on the output to check it.
-    7. Finish with the output path and a short episode description (2–3 sentences) and key themes, written from \
-    the transcript.
-    \(notes.map { "\nNotes from the user: \($0)" } ?? "")
+    1. Load: \(source.map { "use \($0) — download it with download_audio if it's a URL." }
+                ?? "call list_channel_videos, pick the newest service or sermon video, and download it with download_audio.")
+       Keep the parsed title fields for Info.
+    2. Trim: run transcribe and analyze_audio on the file (side by side; poll with get_job if needed). Use \
+    search_transcript for phrases that open and close the sermon (the reading being announced, "let's pray", \
+    "amen") and get_transcript windows around them to choose the first and last words of the sermon; the music \
+    segments show the worship either side. Check both with refine_cuts — if a cut is "forced", look at the words \
+    nearby with get_transcript format "words" and pick a sentence boundary instead.
+    3. Info: settle title, Bible reading, preacher, series and date from the parsed title, get_settings and the \
+    transcript. Artwork defaults to the app's.
+    4. Chapters: choose 3–6 chapters at clear structural turns, the first at the trim start (e.g. "Introduction"), \
+    and check them with refine_cuts.
+    5. Output: show me the plan — trim start and end (times and the words there), the tags, and chapter titles \
+    and times — and wait for my go-ahead or corrections. Then run process_sermon, check the result with \
+    read_tags, and finish with the output path, a 2–3 sentence episode description and the key themes, written \
+    from the transcript.
+    \(notes.map { "\nNotes from me: \($0)" } ?? "")
     """
 }

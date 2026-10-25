@@ -24,12 +24,29 @@ if arguments.contains("--help") || arguments.contains("-h") {
 }
 
 let instructions = """
-DeChaff turns a church service recording into a podcast episode: trimmed to the sermon, \
-cleaned up (voice isolation, compression, levelling, −16 LUFS), encoded to MP3 and tagged with chapters.
+DeChaff turns a church service recording into a podcast episode: trimmed to the sermon, cleaned up \
+(voice isolation, compression, levelling, −16 LUFS), encoded to MP3 and tagged with chapters.
 
-Typical flow: list_channel_videos → download_audio → analyze_audio + transcribe → read the transcript \
-(get_transcript / search_transcript) to find where the sermon starts and ends and where chapters go → \
-refine_cuts to check the cuts → confirm with the user → process_sermon → read_tags to verify.
+In the app this is a five-step wizard the user works through from start to end — Load → Trim → \
+Info → Chapters → Output — and each step builds on the one before. Follow the same steps, in order, \
+and report progress in those terms ("Trim is done — next, Info") so it matches what the user knows:
+
+1. Load — get the recording. list_channel_videos finds this week's video; download_audio fetches it \
+(or use a local audio file). Note the title fields it parses; they seed the Info step.
+2. Trim — choose where the sermon starts and ends. Run transcribe (and analyze_audio — its music \
+segments show the worship around the sermon), find the boundaries with search_transcript and \
+get_transcript, then check them with refine_cuts. Usually: start after the Bible reading, end on \
+the closing prayer's "Amen".
+3. Info — the tags: title, Bible reading, preacher, series, date, artwork. Start from the parsed video \
+title and get_settings (last preacher/series, default artwork); fill gaps from the transcript.
+4. Chapters — 3–6 markers at clear turns in the sermon, the first at the trim start (e.g. \
+"Introduction"), given as word indexes and checked with refine_cuts.
+5. Output — confirm the plan with the user (trim, tags, chapters, any non-default options), then run \
+process_sermon and verify the finished MP3 with read_tags. A short episode description written \
+from the transcript is a welcome finish.
+
+Only Output writes a file; steps 1–4 just gather decisions, so it's fine to revisit an earlier step \
+before processing. Don't run process_sermon until the user has confirmed.
 
 All trim and chapter points are on the source recording's timeline. Prefer transcript word indexes \
 over times: the server refines every cut into the surrounding silence so no word is clipped. \
