@@ -103,6 +103,10 @@ public struct CutRefinementOptions: Sendable {
     public var preRoll: Double = 0.15
     /// Silence left after speech at an `.end` cut — room for the last syllable's decay.
     public var postRoll: Double = 0.30
+    /// Silence an `.end` cut aims to keep when the gap allows: a short tail so the episode
+    /// doesn't stop dead on the last word (a closing "Amen" needs room to ring out).
+    /// Never less than `postRoll`; never past the next sound.
+    public var endTail: Double = 0.75
     /// How far before the transcript's word start to look for the real onset.
     public var onsetSearch: Double = 0.6
     /// How far after the transcript's word end to look for trailing sound
@@ -332,13 +336,14 @@ public struct CutPointRefiner: Sendable {
 
             // Extend the gap forwards to see how much room there is for post-roll.
             var q = offsetFrame + need - 1
-            let latestNeeded = offset + o.postRoll + o.guardTime
+            let tail = max(o.postRoll, o.endTail)
+            let latestNeeded = offset + tail + o.guardTime
             while q + 1 < env.levelsDB.count, env.levelsDB[q + 1] < lv.threshold,
                   env.frameStart(q + 1) + env.frameDuration <= latestNeeded + env.frameDuration {
                 q += 1
             }
             let gapEnd = env.frameStart(q) + env.frameDuration
-            var (cut, quality) = place(.end, inGap: offset, gapEnd, preferring: offset + o.postRoll)
+            var (cut, quality) = place(.end, inGap: offset, gapEnd, preferring: offset + tail)
             if quietDuration < o.boundaryQuiet { quality = .tight }
 
             var notes: [String] = []

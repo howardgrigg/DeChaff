@@ -70,7 +70,20 @@ private func w(_ text: String, _ s: Double, _ e: Double) -> TranscriptWord {
         let r = refiner.refine(edge: .end, wordIndex: 0, words: words, envelope: a.envelope)
         #expect(r.quality == .clean)
         #expect(abs((r.detectedBoundary ?? 0) - 20.30) <= 0.011)
-        #expect(abs(r.time - (20.30 + 0.30)) <= 0.015)
+        // Plenty of silence before "Please", so the cut leaves the full end tail.
+        #expect(abs(r.time - (20.30 + CutRefinementOptions().endTail)) <= 0.015)
+    }
+
+    @Test func endTailStopsShortOfTheNextWord() {
+        var a = Synth(duration: 30)
+        a.speech(18, 20.30)
+        a.speech(20.80, 23)      // only 0.5 s of silence — less than the end tail
+        let words = [w("Amen.", 19.8, 20.30), w("Please", 20.80, 21.2)]
+
+        let r = refiner.refine(edge: .end, wordIndex: 0, words: words, envelope: a.envelope)
+        #expect(r.quality == .clean)
+        #expect(r.time >= 20.30 + CutRefinementOptions().postRoll - 0.015)
+        #expect(r.time <= 20.80 - CutRefinementOptions().guardTime + 0.015)
     }
 
     @Test func endCutIsNotFooledByStopConsonantClosure() {
