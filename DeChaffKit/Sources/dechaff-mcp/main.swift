@@ -36,18 +36,20 @@ and report progress in those terms ("Trim is done — next, Info") so it matches
 2. Trim — choose where the sermon starts and ends. Run transcribe (and analyze_audio — its music \
 segments show the worship around the sermon), find the boundaries with search_transcript and \
 get_transcript, then check them with refine_cuts. Usually: start after the Bible reading, end on \
-the closing prayer's "Amen".
+the closing prayer's "Amen". If the user wants to hear an edge, preview_cut plays it as it will sound.
 3. Info — the tags: title, Bible reading, preacher, series, date, artwork. Start from the parsed video \
-title and get_settings (last preacher/series); fill gaps from the transcript. The app keeps the last \
+title and get_settings (last preacher/series); fill gaps from the transcript. list_episodes shows recent \
+episodes — match their spelling of the series and their chapter style. The app keeps the last \
 episode's artwork and the user only changes it when a new series starts: if the series differs from \
 last_series, look at the saved artwork with get_artwork and ask the user for the new series' artwork \
-(tags.artwork_path). A processed episode's preacher, series and artwork become the new defaults.
+(tags.artwork_path; update_settings saves it as the default). A processed episode's preacher, series and \
+artwork become the new defaults.
 4. Chapters — 3–6 markers at clear turns in the sermon, the first at the trim start (e.g. \
 "Introduction"), given as word indexes and checked with refine_cuts.
 5. Output — confirm the plan with the user (trim, tags, chapters, any non-default options), then run \
 process_sermon and verify the finished MP3 with read_tags. If its result includes website_copy, \
 finish by following that prompt (the church's own AI Assistant template) with the episode's transcript; \
-otherwise a short episode description written from the transcript is a welcome finish.
+otherwise a short episode description written from the transcript is a welcome finish. reveal_in_finder shows the file, ready to upload.
 
 Only Output writes a file; steps 1–4 just gather decisions, so it's fine to revisit an earlier step \
 before processing. Don't run process_sermon until the user has confirmed.
@@ -60,7 +62,8 @@ call get_dechaff_plan, tell them briefly what changed, and process with process_
 
 All trim and chapter points are on the source recording's timeline. Prefer transcript word indexes \
 over times: the server refines every cut into the surrounding silence so no word is clipped. \
-Long-running tools return a job_id if they run past wait_seconds; call get_job to keep waiting.
+Long-running tools return a job_id if they run past wait_seconds; call get_job to keep waiting. If a \
+YouTube listing or download fails with a YouTube error, run update_yt_dlp and try again.
 """ + churchInstructions(AppSettings().assistantInstructions)
 
 /// The church's own preferences from Settings → MCP, which override the defaults above.

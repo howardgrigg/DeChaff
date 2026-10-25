@@ -8,7 +8,7 @@ struct AppSettings {
     static let appDomain = "com.dechaff.app"
     /// Embedded in DeChaff.app the main bundle *is* the app, and its own domain is
     /// `.standard` (UserDefaults won't open your own bundle ID as a suite).
-    private let defaults = Bundle.main.bundleIdentifier == AppSettings.appDomain
+    let defaults = Bundle.main.bundleIdentifier == AppSettings.appDomain
         ? .standard
         : (UserDefaults(suiteName: AppSettings.appDomain) ?? .standard)
 

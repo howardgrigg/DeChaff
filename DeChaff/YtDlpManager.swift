@@ -175,43 +175,8 @@ class YtDlpManager: ObservableObject {
         }
         defer { try? FileManager.default.removeItem(at: tempZip) }
 
-        // Extract zip into a temp subdirectory then move binaries into place
-        let extractDir = Self.supportDir.appendingPathComponent("yt-dlp.unzip")
-        try? FileManager.default.removeItem(at: extractDir)
-        try FileManager.default.createDirectory(at: extractDir, withIntermediateDirectories: true)
-
-        let unzip = Process()
-        unzip.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
-        unzip.arguments = ["-o", tempZip.path, "-d", extractDir.path]
-        unzip.standardOutput = Pipe()
-        unzip.standardError = Pipe()
-        try unzip.run()
-        unzip.waitUntilExit()
-
-        // Move ALL extracted contents into supportDir, replacing anything already there.
-        // This preserves _Internal/ (required by PyInstaller onedir bundles) alongside the binary.
-        let extracted = (try? FileManager.default.contentsOfDirectory(at: extractDir, includingPropertiesForKeys: nil)) ?? []
-        let executableNames: Set<String> = ["yt-dlp", "yt-dlp_macos", "ffmpeg", "ffprobe"]
-        for item in extracted {
-            let dest = Self.supportDir.appendingPathComponent(item.lastPathComponent)
-            if FileManager.default.fileExists(atPath: dest.path) {
-                try? FileManager.default.removeItem(at: dest)
-            }
-            try? FileManager.default.moveItem(at: item, to: dest)
-            if executableNames.contains(item.lastPathComponent) {
-                try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dest.path)
-            }
-        }
-        try? FileManager.default.removeItem(at: extractDir)
-        // Ensure yt-dlp is at the canonical path — zip names the binary yt-dlp_macos.
-        // Always replace it: a stale copy left from a previous release would be paired
-        // with the _internal/ tree we just overwrote and would fail to import at launch.
-        let alt = Self.supportDir.appendingPathComponent("yt-dlp_macos")
-        if FileManager.default.fileExists(atPath: alt.path) {
-            try? FileManager.default.removeItem(at: Self.binaryPath)
-            try? FileManager.default.copyItem(at: alt, to: Self.binaryPath)
-            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: Self.binaryPath.path)
-        }
+        // Shared with the MCP server's update_yt_dlp tool.
+        try YtDlpInstaller.installBundle(zip: tempZip)
 
         UserDefaults.standard.set(version, forKey: "dechaff.ytdlp.version")
         installStatus = .installed(version: version)

@@ -62,15 +62,21 @@ Point Claude at it with **Settings → MCP → Advanced → Choose…**. A serve
 |---|---|
 | `get_settings` | The app's saved settings and where LAME, yt-dlp and ffmpeg were found |
 | `get_artwork` | Shows cover art as an image the assistant can see: the app's saved artwork (the current series'), an image file, or an MP3's embedded art |
-| `list_channel_videos` | Recent videos on the channel, with titles parsed into sermon fields |
-| `download_audio` | Downloads a video's audio and returns the file path |
+| `list_channel_videos` | Recent livestreams (or ordinary videos) on the channel, with a quick parse of each title |
+| `download_audio` | Downloads a video's audio and returns the file path, with sermon fields read by Apple Intelligence |
 | `analyze_audio` | Duration, loudness (LUFS), music segments and long silences |
 | `transcribe` | On-device transcription with word timings (cached) |
 | `get_transcript` | The transcript as `[time] #word_index sentence` lines, or word by word for a time window |
 | `search_transcript` | Finds a phrase such as "let's pray" and returns its time and word index |
 | `refine_cuts` | Previews where trim and chapter points will land after they are moved into silence |
-| `process_sermon` | Trims, cleans, encodes, tags and adds chapters, producing the episode |
+| `preview_cut` | Renders a few seconds around a cut, processed as it will sound, and plays it for the user |
+| `open_in_dechaff` / `get_dechaff_plan` | Hands the episode to the app for adjusting by hand, and reads the user's changes back |
+| `process_sermon` | Trims, cuts, cleans, encodes, tags and adds chapters, producing the episode (or exactly the app's plan, with `from_plan`) |
 | `read_tags` / `write_tags` | Checks or fixes a finished MP3's tags and chapters without re-encoding |
+| `list_episodes` | Recent finished episodes with their tags and chapters, to match last week's style |
+| `reveal_in_finder` | Shows a file in Finder |
+| `update_settings` | Changes DeChaff's saved settings, including the church's instructions and default artwork |
+| `update_yt_dlp` | Installs the latest yt-dlp when YouTube downloads break |
 | `get_job` / `cancel_job` | Waits for or stops a long-running job |
 
 The server also provides a `prepare_sermon` prompt that walks the assistant through the whole workflow, and a `dechaff://settings` resource.

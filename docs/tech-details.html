@@ -1365,8 +1365,12 @@ dechaff-mcp ───────────┘        ▲
           <tr><td><code>transcribe</code></td><td>On-device transcription with word timings, cached on disk</td></tr>
           <tr><td><code>get_transcript</code> / <code>search_transcript</code></td><td>Reads the transcript as indexed sentences or words, or finds a phrase</td></tr>
           <tr><td><code>refine_cuts</code></td><td>Previews where trim and chapter points land once moved into silence</td></tr>
+          <tr><td><code>preview_cut</code></td><td>Renders and plays a few seconds around a cut, processed as it will sound</td></tr>
+          <tr><td><code>open_in_dechaff</code> / <code>get_dechaff_plan</code></td><td>Hands the episode to the app for adjusting by hand, and reads the changes back</td></tr>
           <tr><td><code>process_sermon</code></td><td>Trims, cleans, encodes, tags and adds chapters; checks the output length</td></tr>
           <tr><td><code>read_tags</code> / <code>write_tags</code></td><td>Checks or fixes a finished MP3's tags and chapters without re-encoding</td></tr>
+          <tr><td><code>list_episodes</code></td><td>Recent finished episodes, so the series spelling and chapter style match</td></tr>
+          <tr><td><code>update_settings</code> / <code>update_yt_dlp</code> / <code>reveal_in_finder</code></td><td>Changes saved settings, fixes YouTube downloads, shows the finished file</td></tr>
           <tr><td><code>get_settings</code> / <code>get_artwork</code></td><td>The app's settings (including the church's instructions) and the saved cover art, as an image</td></tr>
           <tr><td><code>get_job</code> / <code>cancel_job</code></td><td>Waits for or stops a long-running job</td></tr>
         </tbody>

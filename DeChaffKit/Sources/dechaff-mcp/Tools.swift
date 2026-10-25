@@ -11,8 +11,8 @@ struct DeChaffTools: Sendable {
 
     var all: [MCPTool] {
         [getSettings, getArtwork, listChannelVideos, downloadAudio, analyzeAudio, transcribe, getTranscript,
-         searchTranscript, refineCuts, openInDeChaff, getDeChaffPlan, processSermon, readTags, writeTags,
-         getJob, cancelJob]
+         searchTranscript, refineCuts, previewCut, openInDeChaff, getDeChaffPlan, processSermon, readTags,
+         writeTags, listEpisodes, revealInFinder, updateSettings, updateYtDlp, getJob, cancelJob]
     }
 
     private static let readOnly: JSONValue = ["readOnlyHint": true, "openWorldHint": false]
@@ -86,6 +86,8 @@ struct DeChaffTools: Sendable {
                 inputSchema: Schema.object([
                     "channel": Schema.string("Channel URL or @handle. Defaults to the channel in DeChaff's settings."),
                     "limit": Schema.integer("How many videos (default: DeChaff's setting, usually 10)."),
+                    "tab": Schema.string("Which part of the channel: live (livestreams), videos (ordinary uploads) or "
+                        + "auto — livestreams if the channel has any (default).", enum: ["auto", "live", "videos"]),
                 ]),
                 annotations: ["readOnlyHint": true, "openWorldHint": true]) { raw, _ in
             let args = Args(raw)
@@ -93,6 +95,12 @@ struct DeChaffTools: Sendable {
             guard let client = YtDlpClient.installed else { throw Self.ytDlpMissing }
             var channel = args.string("channel") ?? settings.channelURL
             if channel.hasPrefix("@") { channel = "https://www.youtube.com/\(channel)" }
+            if let tab = args.string("tab"), tab != "auto" {
+                // An explicit tab URL skips the client's livestreams-first default.
+                let base = channel.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                    .replacingOccurrences(of: "/videos", with: "").replacingOccurrences(of: "/streams", with: "")
+                channel = base + (tab == "live" ? "/streams" : "/videos")
+            }
             let limit = min(max(try args.int("limit") ?? settings.videoLimit, 1), 50)
             let videos = try await client.fetchVideoList(channelURL: channel, limit: limit)
             return .json([
@@ -557,6 +565,230 @@ struct DeChaffTools: Sendable {
     // MARK: - Tags
 
 
+
+    // MARK: - Episodes already made
+
+    var listEpisodes: MCPTool {
+        MCPTool(name: "list_episodes", title: "List past episodes",
+                description: "Lists recent finished episodes (tagged MP3s, newest first) with their title, preacher, "
+                    + "series, chapters and whether they use the saved artwork. Use it to match last week: the same "
+                    + "spelling of the series, the same chapter style, and to notice when the series has changed.",
+                inputSchema: Schema.object([
+                    "folder": Schema.string("Folder to look in (default ~/Downloads, where YouTube episodes are saved)."),
+                    "limit": Schema.integer("How many episodes (default 8)."),
+                ]),
+                annotations: Self.readOnly) { raw, _ in
+            let args = Args(raw)
+            let folder = expandPath(args.string("folder") ?? "~/Downloads")
+            let limit = min(max(try args.int("limit") ?? 8, 1), 50)
+            let saved = AppSettings().artwork
+            let files = ((try? FileManager.default.contentsOfDirectory(
+                at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [])
+                .filter { $0.pathExtension.lowercased() == "mp3" }
+                .map { ($0, (try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast) }
+                .sorted { $0.1 > $1.1 }
+            var episodes: [JSONValue] = []
+            for (url, modified) in files where episodes.count < limit {
+                guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
+                      let tag = ID3Tag.read(data), let title = tag.text["TIT2"], !title.isEmpty else { continue }
+                episodes.append([
+                    "path": .string(url.path),
+                    "modified": .string(ISO8601DateFormatter().string(from: modified)),
+                    "title": .string(title),
+                    "preacher": JSONValue(tag.text["TPE1"]),
+                    "series": JSONValue(tag.text["TALB"]),
+                    "year": JSONValue(tag.text["TYER"] ?? tag.text["TDRC"]),
+                    "duration": JSONValue(audioDuration(url).map(formatTime)),
+                    "chapters": .array(tag.chapters.map {
+                        ["title": .string($0.title), "start": .string(formatTime($0.startSeconds))]
+                    }),
+                    "artwork": tag.artwork == nil ? "none"
+                        : .string(tag.artwork == saved ? "same as DeChaff's saved artwork" : "different from the saved artwork"),
+                ])
+            }
+            return .json(["folder": .string(folder.path), "episodes": .array(episodes)])
+        }
+    }
+
+    // MARK: - Listening to a cut
+
+    var previewCut: MCPTool {
+        MCPTool(name: "preview_cut", title: "Preview a cut",
+                description: "Renders a few seconds around a trim or chapter point, processed as it will sound in the "
+                    + "episode (voice isolation, compression, loudness), and plays it in the user's default audio app "
+                    + "so they can check it by ear — e.g. that the closing \"Amen\" isn't clipped. The point is refined "
+                    + "into silence first, as process_sermon would, unless refine is false.",
+                inputSchema: Schema.object([
+                    "path": Schema.path,
+                    "at": Schema.cutPoint("The trim or chapter point to hear."),
+                    "edge": Schema.string("start: hear the episode begin; end: hear it finish; chapter: hear "
+                        + "either side of a chapter point (default chapter).", enum: ["start", "end", "chapter"]),
+                    "seconds": Schema.number("Length of the preview (default 10)."),
+                    "refine": Schema.boolean("Snap the point into silence first (default true)."),
+                    "play": Schema.boolean("Open the preview in the default audio app (default true)."),
+                ], required: ["path", "at"]),
+                annotations: ["destructiveHint": false, "openWorldHint": false]) { raw, _ in
+            let args = Args(raw)
+            let url = try args.existingFile("path")
+            let settings = AppSettings()
+            let edge = args.string("edge") ?? "chapter"
+            let seconds = min(max(try args.double("seconds") ?? 10, 2), 60)
+            guard let spec = try CutPointSpec(args["at"], name: "at") else { throw ToolError("\"at\" is required.") }
+            let words = await transcripts.words(for: url) ?? []
+            let duration = audioDuration(url) ?? 0
+
+            var t: Double
+            var refinement: JSONValue = .null
+            if try args.bool("refine") ?? true {
+                let r = try CutPointRefiner().refine(edge: edge == "end" ? .end : .start, spec, words: words, audioURL: url)
+                t = r.time
+                refinement = refinementJSON(r)
+            } else if case .time(let s) = spec {
+                t = s
+            } else if case .word(let i) = spec, words.indices.contains(i) {
+                t = edge == "end" ? words[i].endTime : words[i].startTime
+            } else {
+                throw ToolError("at.word_index is out of range.")
+            }
+            t = max(0, min(t, duration))
+            let window: (start: Double, end: Double)
+            switch edge {
+            case "start": window = (t, min(duration, t + seconds))
+            case "end":   window = (max(0, t - seconds), t)
+            default:      window = (max(0, t - seconds / 2), min(duration, t + seconds / 2))
+            }
+            guard window.end > window.start + 0.5 else { throw ToolError("That point is too close to the end of the recording.") }
+
+            let output = URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent("dechaff-preview-\(UUID().uuidString).wav")
+            let options = ProcessingOptions(
+                outputFormat: .wav, shortenSilences: true, trimInSeconds: window.start, trimOutSeconds: window.end,
+                compressorThreshold: Float(settings.compressorThreshold), compressorHeadRoom: Float(settings.compressorHeadRoom),
+                compressorAttack: Float(settings.compressorAttack), compressorRelease: Float(settings.compressorRelease),
+                compressorMakeupGain: Float(settings.compressorMakeupGain))
+            let request = EpisodeRequest(inputURL: url, outputURL: output, options: options,
+                                         metadata: ID3Metadata(), chapters: [])
+            let processor = EpisodeProcessor(lamePath: settings.lamePath)
+            let outcome = await runBlocking({ processor.run(request, progress: { _ in }, log: { _ in }) },
+                                            onCancel: { processor.cancel() })
+            guard case .finished = outcome else { throw ToolError("Couldn't render the preview.") }
+
+            let play = try args.bool("play") ?? true
+            if play {
+                let opener = Process()
+                opener.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                opener.arguments = [output.path]
+                try? opener.run()
+            }
+            return .json([
+                "preview_path": .string(output.path),
+                "point": timeJSON(t),
+                "window": ["start": timeJSON(window.start), "end": timeJSON(window.end)],
+                "refinement": refinement,
+                "playing": .bool(play),
+                "note": "Loudness is measured on the preview alone, so its level may differ slightly from the episode.",
+            ])
+        }
+    }
+
+    // MARK: - Maintenance and settings
+
+    var updateYtDlp: MCPTool {
+        MCPTool(name: "update_yt_dlp", title: "Update yt-dlp",
+                description: "Installs the latest yt-dlp (DeChaff's YouTube downloader) if a newer one is out. "
+                    + "YouTube changes often break downloads until yt-dlp catches up — try this when "
+                    + "list_channel_videos or download_audio fail with a YouTube error.",
+                inputSchema: Schema.object(["wait_seconds": Schema.waitSeconds]),
+                annotations: ["destructiveHint": false, "idempotentHint": true, "openWorldHint": true]) { raw, context in
+            let args = Args(raw)
+            let job = jobs.running(kind: "update", summary: "Update yt-dlp")
+                ?? jobs.start(kind: "update", summary: "Update yt-dlp") { _ in
+                    switch try await YtDlpInstaller.update(defaults: AppSettings().defaults) {
+                    case .upToDate(let v):
+                        return ["status": "up_to_date", "version": .string(v)]
+                    case .updated(let from, let to):
+                        return ["status": "updated", "from": JSONValue(from), "to": .string(to)]
+                    }
+                }
+            return .json(try await jobs.wait(for: job, upTo: try args.double("wait_seconds") ?? 90, context: context))
+        }
+    }
+
+    var updateSettings: MCPTool {
+        MCPTool(name: "update_settings", title: "Change DeChaff settings",
+                description: "Changes DeChaff's saved settings — the same ones as the app's Settings window. Only the "
+                    + "fields given are changed. Use artwork_path to save a new series' artwork as the default, and "
+                    + "church_instructions to record how the user likes episodes made. Confirm with the user first.",
+                inputSchema: Schema.object([
+                    "church_instructions": Schema.string("Replaces the church's instructions for the assistant."),
+                    "title_format": Schema.string("How the church's YouTube titles are laid out, e.g. "
+                        + "\"{title}, {reading} | {preacher} | {series} | {date}\"."),
+                    "filename_template": Schema.string("How finished episodes are named, using {date} {title} {reading} "
+                        + "{preacher} {series}."),
+                    "youtube_channel_url": Schema.string("The church's channel URL or @handle."),
+                    "youtube_video_limit": Schema.integer("Videos to list: 5, 10 or 20."),
+                    "default_preacher": Schema.string("Preacher the next episode starts with."),
+                    "default_series": Schema.string("Series the next episode starts with."),
+                    "artwork_path": Schema.string("Image to save as the default artwork (square, 1400 px or more)."),
+                ]),
+                annotations: ["destructiveHint": false, "idempotentHint": true, "openWorldHint": false]) { raw, _ in
+            let args = Args(raw)
+            let settings = AppSettings()
+            let d = settings.defaults
+            var changed: [JSONValue] = []
+
+            if let v = args.string("title_format") {
+                guard v.contains("{") else { throw ToolError("title_format needs placeholders such as {title}.") }
+                d.set(v, forKey: "dechaff.titleFormat"); changed.append("title_format")
+            }
+            if let v = args.string("filename_template") {
+                guard FilenameTemplate.resolve(v, values: ["title": "Test", "date": "2026-01-01"]) != nil else {
+                    throw ToolError("filename_template doesn't produce a usable file name.")
+                }
+                d.set(v, forKey: "dechaff.filenameTemplate"); changed.append("filename_template")
+            }
+            if let v = args.string("youtube_channel_url") {
+                d.set(v.trimmingCharacters(in: .whitespaces), forKey: "dechaff.youtube.channelURL")
+                changed.append("youtube_channel_url")
+            }
+            if let v = try args.int("youtube_video_limit") {
+                guard [5, 10, 20].contains(v) else { throw ToolError("youtube_video_limit must be 5, 10 or 20.") }
+                d.set(v, forKey: "dechaff.youtube.videoLimit"); changed.append("youtube_video_limit")
+            }
+            if let v = args.string("church_instructions") {
+                d.set(v, forKey: "dechaff.mcp.instructions"); changed.append("church_instructions")
+            }
+            if let v = args.string("default_preacher") { d.set(v, forKey: "dechaff.preacher"); changed.append("default_preacher") }
+            if let v = args.string("default_series") { d.set(v, forKey: "dechaff.series"); changed.append("default_series") }
+            if let path = args.string("artwork_path") {
+                d.set(try loadArtwork(path), forKey: "dechaff.artwork"); changed.append("artwork")
+            }
+            guard !changed.isEmpty else { throw ToolError("Nothing to change — give at least one setting.") }
+            return .json([
+                "changed": .array(changed),
+                "settings": AppSettings().json,
+                "note": .string("DeChaff picks these up the next time it's opened. New church instructions reach "
+                    + "the prepare_sermon prompt now and the server's instructions on reconnect."),
+            ])
+        }
+    }
+
+    var revealInFinder: MCPTool {
+        MCPTool(name: "reveal_in_finder", title: "Show in Finder",
+                description: "Opens a Finder window with the file selected — e.g. the finished episode, ready to upload.",
+                inputSchema: Schema.object(["path": Schema.string("Absolute path to a file on this Mac.")],
+                                           required: ["path"]),
+                annotations: ["readOnlyHint": true, "openWorldHint": false]) { raw, _ in
+            let url = expandPath(try Args(raw).requiredString("path"))
+            guard FileManager.default.fileExists(atPath: url.path) else { throw ToolError("\(url.path) doesn't exist.") }
+            let opener = Process()
+            opener.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            opener.arguments = ["-R", url.path]
+            try opener.run()
+            opener.waitUntilExit()
+            return .json(["revealed": .string(url.path)])
+        }
+    }
 
     // MARK: - Hand-off to the app
 
