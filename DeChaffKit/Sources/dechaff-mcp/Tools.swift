@@ -79,7 +79,9 @@ struct DeChaffTools: Sendable {
     var listChannelVideos: MCPTool {
         MCPTool(name: "list_channel_videos", title: "List recent channel videos",
                 description: "Lists the latest videos on the church's YouTube channel (from DeChaff's settings, or the "
-                    + "channel given), with each title parsed into sermon fields using the church's title format.",
+                    + "channel given), newest first, preferring the channel's livestreams. Each title gets a quick "
+                    + "parse into sermon fields using the church's title format; titles are typed by hand, so treat "
+                    + "it as a guess and read the raw title. download_audio extracts the fields more carefully.",
                 inputSchema: Schema.object([
                     "channel": Schema.string("Channel URL or @handle. Defaults to the channel in DeChaff's settings."),
                     "limit": Schema.integer("How many videos (default: DeChaff's setting, usually 10)."),
@@ -110,7 +112,8 @@ struct DeChaffTools: Sendable {
     var downloadAudio: MCPTool {
         MCPTool(name: "download_audio", title: "Download audio",
                 description: "Downloads the audio of a YouTube video (or any yt-dlp-supported URL) to a temporary file "
-                    + "and returns its path, plus the video title parsed into sermon fields. Takes a minute or two "
+                    + "and returns its path, plus the video title's sermon fields (extracted with on-device Apple "
+                    + "Intelligence when available, as the app does; \"method\" says which). Takes a minute or two "
                     + "for a long livestream; returns a job_id to poll with get_job if it runs past wait_seconds.",
                 inputSchema: Schema.object([
                     "url": Schema.string("Video URL, e.g. https://youtu.be/abc123."),
@@ -139,7 +142,7 @@ struct DeChaffTools: Sendable {
                     if let entry {
                         o["title"] = .string(entry.title)
                         o["upload_date"] = JSONValue(parseYouTubeUploadDate(entry.uploadDate).map(isoDate))
-                        o["parsed"] = parsedJSON(entry.title, format: titleFormat)
+                        o["parsed"] = await extractedJSON(entry.title, format: titleFormat)
                     }
                     o["next_step"] = "Run analyze_audio and transcribe on this path to plan the trim."
                     return .object(o)
@@ -733,12 +736,29 @@ private func isoDate(_ date: Date) -> String {
     let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f.string(from: date)
 }
 
+/// Quick template parse — cheap enough for every title in a listing, but literal
+/// about separators, so a hand-typed title that strays from the format misparses.
 private func parsedJSON(_ title: String, format: String) -> JSONValue {
-    guard let p = parseSermonTitle(title, format: format) else { return .null }
-    var o: [String: JSONValue] = ["title": .string(p.title), "reading": .string(p.reading),
-                                  "preacher": .string(p.preacher), "series": .string(p.series)]
-    o["date"] = .string(parseExtractedDate(p.date).map(isoDate) ?? p.date)
-    return .object(o)
+    guard let m = extractSermonMetadataViaTemplate(from: title, format: format) else { return .null }
+    return metadataJSON(m, method: "template")
+}
+
+/// Sermon fields as the app extracts them: on-device Apple Intelligence (guided by the
+/// title format) when available, else the template parse.
+private func extractedJSON(_ title: String, format: String) async -> JSONValue {
+    if let m = await extractSermonMetadataOnDevice(from: title, titleFormat: format) {
+        return metadataJSON(m, method: "apple_intelligence")
+    }
+    return parsedJSON(title, format: format)
+}
+
+private func metadataJSON(_ m: SermonMetadata, method: String) -> JSONValue {
+    [
+        "title": .string(m.title), "reading": .string(m.bibleReading),
+        "preacher": .string(m.speaker), "series": .string(m.series),
+        "date": .string(parseExtractedDate(m.date).map(isoDate) ?? m.date),
+        "method": .string(method),
+    ]
 }
 
 private func audioDuration(_ url: URL) -> Double? {

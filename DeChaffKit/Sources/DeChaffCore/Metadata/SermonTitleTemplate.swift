@@ -61,13 +61,11 @@ public func parseSermonTitle(_ title: String, format: String) -> ParsedSermonTit
 
         var regexParts: [String] = []
         for (i, seg) in used.enumerated() {
-            if !seg.literal.isEmpty {
-                regexParts.append(NSRegularExpression.escapedPattern(for: seg.literal))
-            }
+            regexParts.append(separatorPattern(seg.literal))
             regexParts.append(i == used.count - 1 ? "(.+)" : "(.+?)")
         }
-        if count == segments.count && !trailingLiteral.isEmpty {
-            regexParts.append(NSRegularExpression.escapedPattern(for: trailingLiteral))
+        if count == segments.count {
+            regexParts.append(separatorPattern(trailingLiteral))
         }
 
         let pattern = "^" + regexParts.joined() + "$"
@@ -97,6 +95,14 @@ public func parseSermonTitle(_ title: String, format: String) -> ParsedSermonTit
     }
 
     return nil
+}
+
+/// A template's literal text as a regex that tolerates any spacing around it, since
+/// titles are typed by hand: " | " also matches "Gospel| 25/10" and "Gospel  |25/10".
+private func separatorPattern(_ literal: String) -> String {
+    let words = literal.split(whereSeparator: \.isWhitespace).map { NSRegularExpression.escapedPattern(for: String($0)) }
+    if words.isEmpty { return literal.isEmpty ? "" : #"\s+"# }
+    return #"\s*"# + words.joined(separator: #"\s+"#) + #"\s*"#
 }
 
 // MARK: - Dates

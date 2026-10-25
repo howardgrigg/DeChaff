@@ -62,6 +62,15 @@ import Testing
         #expect(p.series.isEmpty)
     }
 
+    @Test func toleratesSpacingAroundSeparators() throws {
+        let p = try #require(parseSermonTitle(
+            "A Story of Mercy for All, Romans 11 | Andrew Southerton | The Power of the Gospel| 25/10/2026",
+            format: defaultTitleFormat))
+        #expect(p == ParsedSermonTitle(title: "A Story of Mercy for All", reading: "Romans 11",
+                                       preacher: "Andrew Southerton", series: "The Power of the Gospel",
+                                       date: "25/10/2026"))
+    }
+
     @Test func parsesUploadDates() {
         #expect(parseYouTubeUploadDate("20240317") != nil)
         #expect(parseYouTubeUploadDate("2024031") == nil)
