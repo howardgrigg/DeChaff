@@ -56,7 +56,21 @@ extension ContentView {
                 ScrollView {
                     VStack(spacing: 0) {
                         ForEach(model.chapters) { chapter in
-                            ChapterRow(chapter: chapterBinding(for: chapter)) {
+                            ChapterRow(
+                                chapter: chapterBinding(for: chapter),
+                                // Rows show the listener's timeline, not the source
+                                // file's — a chapter 4 min into a podcast reads 4:00
+                                // however much pre-roll was trimmed or cut.
+                                keptTime: sourceToKept(chapter.timeSeconds, keptRanges: model.keptSpans),
+                                isExcluded: isExcluded(chapter.timeSeconds, keptRanges: model.keptSpans),
+                                onCommitKeptTime: { newKept in
+                                    guard let idx = model.chapters.firstIndex(where: { $0.id == chapter.id }) else { return }
+                                    let oldTime = model.chapters[idx].timeSeconds
+                                    model.chapters[idx].timeSeconds = keptToSource(newKept, keptRanges: model.keptSpans)
+                                    model.chapters.sort { $0.timeSeconds < $1.timeSeconds }
+                                    registerChapterMoveUndo(id: chapter.id, oldTime: oldTime)
+                                }
+                            ) {
                                 let removed = chapter
                                 withAnimation { model.chapters.removeAll { $0.id == chapter.id } }
                                 registerChapterRemoveUndo(chapter: removed)
@@ -75,12 +89,15 @@ extension ContentView {
 
     func addChapterAtPlayhead() {
         let idx = model.chapters.count
-        // First chapter defaults to start (output time 0), second to 2 min, rest at playhead
-        let outputTime: Double
+        // Chapters are stored in source time so exclusions never disturb them.
+        // First chapter defaults to the start of the kept audio, second to 2 min in
+        // (measured on the listener's timeline), the rest to the playhead.
+        let spans = model.keptSpans
+        let sourceTime: Double
         switch idx {
-        case 0: outputTime = 0
-        case 1: outputTime = 120
-        default: outputTime = max(0, model.playback.playheadSeconds - model.trimInSeconds)
+        case 0: sourceTime = keptToSource(0, keptRanges: spans)
+        case 1: sourceTime = keptToSource(120, keptRanges: spans)
+        default: sourceTime = model.playback.playheadSeconds
         }
         let title: String
         switch idx {
@@ -88,7 +105,7 @@ extension ContentView {
         case 1: title = model.tagSermonTitle.isEmpty   ? "Sermon"        : "Sermon: \(model.tagSermonTitle)"
         default: title = "Chapter \(idx + 1)"
         }
-        let newChapter = Chapter(timeSeconds: outputTime, title: title)
+        let newChapter = Chapter(timeSeconds: sourceTime, title: title)
         withAnimation {
             model.chapters.append(newChapter)
             model.chapters.sort { $0.timeSeconds < $1.timeSeconds }
@@ -114,6 +131,11 @@ extension ContentView {
 
 struct ChapterRow: View {
     @Binding var chapter: Chapter
+    /// The chapter's position on the listener's timeline — what the row shows and
+    /// what typed edits are interpreted as. `chapter.timeSeconds` stays source time.
+    let keptTime: Double
+    let isExcluded: Bool
+    var onCommitKeptTime: (Double) -> Void
     var onDelete: () -> Void
 
     @State private var timeText = ""
@@ -126,15 +148,21 @@ struct ChapterRow: View {
                 .frame(width: 56)
                 .multilineTextAlignment(.center)
                 .focused($timeFocused)
-                .onAppear { timeText = formatChapterTime(chapter.timeSeconds) }
-                .onChange(of: chapter.timeSeconds) { _ in
-                    if !timeFocused { timeText = formatChapterTime(chapter.timeSeconds) }
+                .onAppear { timeText = formatChapterTime(keptTime) }
+                .onChange(of: keptTime) { _ in
+                    if !timeFocused { timeText = formatChapterTime(keptTime) }
                 }
                 .onSubmit { commitTime() }
                 .onChange(of: timeFocused) { focused in if !focused { commitTime() } }
 
             TextField("Chapter title", text: $chapter.title)
                 .font(.caption).textFieldStyle(.plain)
+
+            if isExcluded {
+                Image(systemName: "scissors")
+                    .font(.caption2).foregroundStyle(.red.opacity(0.7))
+                    .help("This chapter sits in an excluded section — it will move to the cut")
+            }
 
             Button(action: onDelete) {
                 Image(systemName: "minus.circle.fill").foregroundStyle(.red.opacity(0.6))
@@ -145,26 +173,26 @@ struct ChapterRow: View {
         .padding(.vertical, 8)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Chapter: \(chapter.title.isEmpty ? "Untitled" : chapter.title)")
-        .accessibilityValue("at \(formatChapterTime(chapter.timeSeconds))")
+        .accessibilityValue("at \(formatChapterTime(keptTime))\(isExcluded ? ", inside an excluded section" : "")")
     }
 
     private func commitTime() {
         if let secs = parseChapterTime(timeText) {
-            chapter.timeSeconds = secs
+            onCommitKeptTime(secs)
             timeText = formatChapterTime(secs)
         } else {
-            timeText = formatChapterTime(chapter.timeSeconds)
+            timeText = formatChapterTime(keptTime)
         }
     }
 }
 
-private func formatChapterTime(_ seconds: Double) -> String {
+func formatChapterTime(_ seconds: Double) -> String {
     let t = max(0, Int(seconds))
     let h = t / 3600, m = (t % 3600) / 60, s = t % 60
     return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
 }
 
-private func parseChapterTime(_ text: String) -> Double? {
+func parseChapterTime(_ text: String) -> Double? {
     let parts = text.trimmingCharacters(in: .whitespaces)
                     .split(separator: ":", omittingEmptySubsequences: false)
                     .compactMap { Int($0) }

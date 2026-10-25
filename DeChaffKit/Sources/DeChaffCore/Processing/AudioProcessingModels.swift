@@ -48,6 +48,10 @@ public struct ProcessingOptions: Sendable {
     public var slowLeveler: Bool = true           // windowed RMS gain envelope
     public var trimInSeconds: Double = 0
     public var trimOutSeconds: Double = 0  // 0 = use full file duration
+    /// Spans cut out of the middle of the recording, in source seconds.
+    /// Removed by the same pass that materialises the trim, so every later pass
+    /// sees an already-cut timeline. Empty = nothing excluded.
+    public var excludedRanges: [ExcludedRange] = []
     public var skipIsolationOnMusic: Bool = false  // only meaningful when voiceIsolation == true
 
     // Compressor parameters (used when compression == true)
@@ -70,6 +74,7 @@ public struct ProcessingOptions: Sendable {
         slowLeveler: Bool = true,
         trimInSeconds: Double = 0,
         trimOutSeconds: Double = 0,
+        excludedRanges: [ExcludedRange] = [],
         skipIsolationOnMusic: Bool = false,
         compressorThreshold: Float = -28.0,
         compressorHeadRoom: Float = 6.0,
@@ -89,6 +94,7 @@ public struct ProcessingOptions: Sendable {
         self.slowLeveler = slowLeveler
         self.trimInSeconds = trimInSeconds
         self.trimOutSeconds = trimOutSeconds
+        self.excludedRanges = excludedRanges
         self.skipIsolationOnMusic = skipIsolationOnMusic
         self.compressorThreshold = compressorThreshold
         self.compressorHeadRoom = compressorHeadRoom

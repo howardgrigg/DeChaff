@@ -10,7 +10,7 @@ extension ContentView {
         VStack(alignment: .leading, spacing: 0) {
             stepHeader(
                 title: "Trim your recording",
-                subtitle: "Set the start and end of the audio you want to keep."
+                subtitle: "Set the start and end of the audio you want to keep — and shift-drag to cut sections out of the middle."
             )
 
             // Tab switcher
@@ -31,11 +31,20 @@ extension ContentView {
                 playbackControls(showSetInOut: true)
                     .padding(.horizontal, 24)
                     .padding(.top, 10)
+
+                exclusionListView
+                    .padding(.horizontal, 24)
+                    .padding(.top, 10)
             } else {
                 TranscriptTrimView(
                     model: model,
                     trimIn: $model.trimInSeconds,
-                    trimOut: $model.trimOutSeconds
+                    trimOut: $model.trimOutSeconds,
+                    onExclude: { start, end in
+                        model.selectionStart = start
+                        model.selectionEnd = end
+                        excludeSelection()
+                    }
                 )
                 .padding(.horizontal, 24)
                 .frame(maxHeight: .infinity)
@@ -47,6 +56,136 @@ extension ContentView {
             if newTab == 1 { model.startTrimTranscription() }
         }
     }
+
+    // MARK: - Excluded sections list
+
+    @ViewBuilder
+    var exclusionListView: some View {
+        if !model.excludedRanges.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Label("Excluded sections", systemImage: "scissors")
+                        .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                    Spacer()
+                    Text("Output length \(formatPlaybackTime(model.keptDurationSeconds))")
+                        .font(.system(.caption, design: .monospaced)).foregroundStyle(.tertiary)
+                }
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(model.excludedRanges) { range in
+                            ExclusionRow(
+                                range: exclusionBinding(for: range),
+                                onCommit: { oldStart, oldEnd in
+                                    registerExclusionEditUndo(id: range.id, oldStart: oldStart, oldEnd: oldEnd)
+                                    model.excludedRanges.sort { $0.startSeconds < $1.startSeconds }
+                                },
+                                onPlay: { model.seekPlayback(to: max(0, range.startSeconds - 3)) },
+                                onDelete: {
+                                    let removed = range
+                                    withAnimation { model.excludedRanges.removeAll { $0.id == range.id } }
+                                    registerExclusionRemoveUndo(range: removed)
+                                }
+                            )
+                            if range.id != model.excludedRanges.last?.id {
+                                Divider().padding(.leading, 16)
+                            }
+                        }
+                    }
+                    .background(Color(NSColor.controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+                }
+                .frame(maxHeight: 110)
+            }
+        }
+    }
+
+    func exclusionBinding(for range: ExcludedRange) -> Binding<ExcludedRange> {
+        Binding(
+            get: { model.excludedRanges.first(where: { $0.id == range.id }) ?? range },
+            set: { newValue in
+                if let idx = model.excludedRanges.firstIndex(where: { $0.id == range.id }) {
+                    model.excludedRanges[idx] = newValue
+                }
+            }
+        )
+    }
+}
+
+// MARK: - ExclusionRow
+
+struct ExclusionRow: View {
+    @Binding var range: ExcludedRange
+    /// Called with the pre-edit values so the caller can register undo.
+    var onCommit: (Double, Double) -> Void
+    var onPlay: () -> Void
+    var onDelete: () -> Void
+
+    @State private var startText = ""
+    @State private var endText = ""
+    @FocusState private var focusedField: Int?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "scissors").font(.caption2).foregroundStyle(.red.opacity(0.7))
+
+            TextField("0:00", text: $startText)
+                .font(.system(.caption, design: .monospaced))
+                .frame(width: 62).multilineTextAlignment(.center)
+                .focused($focusedField, equals: 0)
+                .onSubmit { commit() }
+
+            Text("→").font(.caption2).foregroundStyle(.tertiary)
+
+            TextField("0:00", text: $endText)
+                .font(.system(.caption, design: .monospaced))
+                .frame(width: 62).multilineTextAlignment(.center)
+                .focused($focusedField, equals: 1)
+                .onSubmit { commit() }
+
+            Text("(\(formatPlaybackTime(range.duration)))")
+                .font(.caption).foregroundStyle(.secondary)
+
+            Spacer()
+
+            Button(action: onPlay) {
+                Image(systemName: "play.circle").foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .help("Play from just before this cut")
+
+            Button(action: onDelete) {
+                Image(systemName: "minus.circle.fill").foregroundStyle(.red.opacity(0.6))
+            }
+            .buttonStyle(.borderless)
+            .help("Restore this section")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 7)
+        .onAppear { syncText() }
+        .onChange(of: range.startSeconds) { _ in if focusedField == nil { syncText() } }
+        .onChange(of: range.endSeconds)   { _ in if focusedField == nil { syncText() } }
+        .onChange(of: focusedField) { field in if field == nil { commit() } }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Excluded section")
+        .accessibilityValue("\(formatPlaybackTime(range.startSeconds)) to \(formatPlaybackTime(range.endSeconds))")
+    }
+
+    private func syncText() {
+        startText = formatChapterTime(range.startSeconds)
+        endText   = formatChapterTime(range.endSeconds)
+    }
+
+    private func commit() {
+        let oldStart = range.startSeconds, oldEnd = range.endSeconds
+        let newStart = parseChapterTime(startText) ?? oldStart
+        let newEnd   = parseChapterTime(endText)   ?? oldEnd
+        // An inverted or empty range would silently cut nothing — clamp instead.
+        guard newEnd > newStart else { syncText(); return }
+        guard newStart != oldStart || newEnd != oldEnd else { syncText(); return }
+        range.startSeconds = newStart
+        range.endSeconds = newEnd
+        syncText()
+        onCommit(oldStart, oldEnd)
+    }
 }
 
 // MARK: - TranscriptTrimView
@@ -55,12 +194,17 @@ struct TranscriptTrimView: View {
     @ObservedObject var model: ProcessingModel
     @Binding var trimIn: Double
     @Binding var trimOut: Double
+    /// Cuts the given source-time span out of the middle of the recording.
+    var onExclude: (Double, Double) -> Void
 
     @State private var startIdx: Int = -1
     @State private var endIdx:   Int = -1
     /// Cached sentence grouping — recomputing O(n) on every body evaluation is
     /// noticeable with ~10k words, and body runs on every tap and stream batch.
     @State private var sentences: [[Int]] = []
+    /// Word indices falling in a trimmed-away or excluded span. Cached for the same
+    /// reason as `sentences` — testing every word on each body pass is O(n·spans).
+    @State private var cutWordIndices: Set<Int> = []
 
     private var words: [TranscriptWord] { model.trimWords }
 
@@ -80,19 +224,31 @@ struct TranscriptTrimView: View {
         sentences = result
     }
 
+    private func recomputeCutWords() {
+        let spans = model.keptSpans
+        guard let first = spans.first, let last = spans.last else { cutWordIndices = []; return }
+        var cut = Set<Int>()
+        for i in words.indices {
+            let t = words[i].startTime
+            if t < first.start || t > last.end || isExcluded(t, keptRanges: spans) { cut.insert(i) }
+        }
+        cutWordIndices = cut
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             selectionBar
             refinementNotes
             mainContent
         }
-        .onAppear { regroupSentences(); syncIndicesFromTrimPoints() }
-        .onChange(of: trimIn)      { _, _ in syncIndicesFromTrimPoints() }
-        .onChange(of: trimOut)     { _, _ in syncIndicesFromTrimPoints() }
-        .onChange(of: words.count) { _, _ in regroupSentences(); syncIndicesFromTrimPoints() }
+        .onAppear { regroupSentences(); recomputeCutWords(); syncIndicesFromTrimPoints() }
+        .onChange(of: trimIn)      { _, _ in recomputeCutWords(); syncIndicesFromTrimPoints() }
+        .onChange(of: trimOut)     { _, _ in recomputeCutWords(); syncIndicesFromTrimPoints() }
+        .onChange(of: model.excludedRanges) { _, _ in recomputeCutWords() }
+        .onChange(of: words.count) { _, _ in regroupSentences(); recomputeCutWords(); syncIndicesFromTrimPoints() }
         .onChange(of: model.isTrimTranscribing) { _, transcribing in
             // Final merge can replace words without changing the count
-            if !transcribing { regroupSentences() }
+            if !transcribing { regroupSentences(); recomputeCutWords() }
         }
     }
 
@@ -131,10 +287,21 @@ struct TranscriptTrimView: View {
                 Button("Clear") { startIdx = -1 }
                     .buttonStyle(.bordered).controlSize(.small)
             } else {
-                Image(systemName: "scissors").foregroundStyle(.orange)
-                Text("Keeping \(formatTime(trimIn)) → \(formatTime(trimOut))")
+                Image(systemName: "text.insert").foregroundStyle(.orange)
+                Text("\(formatTime(words[startIdx].startTime)) → \(formatTime(words[endIdx].endTime))")
                     .font(.system(size: 13, weight: .medium))
                 Spacer()
+                Button("Keep Only This") { applyTrim() }
+                    .buttonStyle(.borderedProminent).controlSize(.small)
+                    .help("Trim the recording to this passage")
+                Button {
+                    onExclude(words[startIdx].startTime, words[endIdx].endTime)
+                    startIdx = -1; endIdx = -1
+                } label: {
+                    Label("Exclude", systemImage: "scissors")
+                }
+                .buttonStyle(.bordered).controlSize(.small)
+                .help("Cut this passage out and keep the rest")
                 Button("Clear") { startIdx = -1; endIdx = -1 }
                     .buttonStyle(.bordered).controlSize(.small)
             }
@@ -193,6 +360,7 @@ struct TranscriptTrimView: View {
                 ForEach(Array(sentences.enumerated()), id: \.offset) { _, indices in
                     SentenceRow(words: words, indices: indices,
                                 startIdx: startIdx, endIdx: endIdx,
+                                cutIndices: cutWordIndices,
                                 onTap: handleTap)
                 }
 
@@ -222,10 +390,8 @@ struct TranscriptTrimView: View {
                 startIdx = -1                      // tap start again → clear
             } else if idx < startIdx {
                 endIdx = startIdx; startIdx = idx  // tapped before start → swap
-                apply()
             } else {
                 endIdx = idx
-                apply()
             }
         } else {
             // Both set — start fresh from this word
@@ -233,7 +399,9 @@ struct TranscriptTrimView: View {
         }
     }
 
-    private func apply() {
+    /// A completed selection offers both actions, so neither is applied until the
+    /// user picks one — trimming on the second tap would pre-empt Exclude.
+    private func applyTrim() {
         guard startIdx >= 0, endIdx >= 0 else { return }
         // Sets the transcript timings, then snaps both cuts into silence in the background.
         model.applyTranscriptTrim(startWord: startIdx, endWord: endIdx)
@@ -254,12 +422,14 @@ private struct SentenceRow: View {
     let indices: [Int]
     let startIdx: Int
     let endIdx: Int
+    let cutIndices: Set<Int>
     let onTap: (Int) -> Void
 
     var body: some View {
         WordFlowLayout(spacing: 2) {
             ForEach(indices, id: \.self) { idx in
-                WordChip(text: words[idx].text, state: chipState(idx), onTap: { onTap(idx) })
+                WordChip(text: words[idx].text, state: chipState(idx),
+                         isCut: cutIndices.contains(idx), onTap: { onTap(idx) })
             }
         }
     }
@@ -282,15 +452,18 @@ private enum WordChipState { case none, start, inRange, end }
 private struct WordChip: View {
     let text: String
     let state: WordChipState
+    let isCut: Bool
     let onTap: () -> Void
 
     var body: some View {
         Text(text)
             .font(.system(size: 13))
+            .strikethrough(isCut, color: .red.opacity(0.5))
             .padding(.horizontal, 4)
             .padding(.vertical, 2)
             .background(bgColor, in: RoundedRectangle(cornerRadius: 3))
-            .foregroundStyle(state == .none ? Color.secondary : Color.primary)
+            .foregroundStyle(isCut ? Color.secondary.opacity(0.5)
+                             : state == .none ? Color.secondary : Color.primary)
             .contentShape(Rectangle())
             .onTapGesture(perform: onTap)
             .animation(.easeInOut(duration: 0.08), value: state == .none)

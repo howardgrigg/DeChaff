@@ -29,34 +29,39 @@ extension VoiceIsolationProcessor {
             try analyzer.add(request, withObserver: collector)
 
             let sr = format.sampleRate
-            let inFrame  = AVAudioFramePosition(options.trimInSeconds * sr)
-            let outFrame = min(options.trimOutSeconds > 0
-                ? AVAudioFramePosition(options.trimOutSeconds * sr)
-                : audioFile.length, audioFile.length)
-            let trimLength = AVAudioFrameCount(max(0, outFrame - inFrame))
+            // Walk exactly the spans `runAUPass` will render, in the same order —
+            // otherwise the reported segment times drift out of step with the
+            // render loop's `totalFrames` and isolation is bypassed over the
+            // wrong audio.
+            let ranges = keptFrameRanges(options: options, fileLength: audioFile.length, sampleRate: sr)
+            let trimLength = AVAudioFrameCount(ranges.reduce(0) { $0 + ($1.end - $1.start) })
             guard trimLength > 0 else { return [] }
 
             let chunkSize: AVAudioFrameCount = 4096
             guard let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkSize) else { return nil }
 
-            audioFile.framePosition = inFrame
             var readFrames: AVAudioFrameCount = 0
-            // Frame position handed to the analyzer, relative to the trimmed start —
-            // this is what makes the observer's timeRange values trim-relative too.
+            // Frame position handed to the analyzer, relative to the start of the kept
+            // audio — this is what makes the observer's timeRange values K-relative too.
             var relativeFramePosition: AVAudioFramePosition = 0
 
-            while readFrames < trimLength {
-                if isCancelled { logHandler("⏹ Cancelled"); return nil }
-                let toRead = min(chunkSize, trimLength - readFrames)
-                buf.frameLength = toRead
-                try audioFile.read(into: buf, frameCount: toRead)
-                guard buf.frameLength > 0 else { break }
+            for range in ranges {
+                audioFile.framePosition = range.start
+                var framesInRange = AVAudioFrameCount(range.end - range.start)
+                while framesInRange > 0 {
+                    if isCancelled { logHandler("⏹ Cancelled"); return nil }
+                    let toRead = min(chunkSize, framesInRange)
+                    buf.frameLength = toRead
+                    try audioFile.read(into: buf, frameCount: toRead)
+                    guard buf.frameLength > 0 else { break }
 
-                analyzer.analyze(buf, atAudioFramePosition: relativeFramePosition)
+                    analyzer.analyze(buf, atAudioFramePosition: relativeFramePosition)
 
-                relativeFramePosition += AVAudioFramePosition(buf.frameLength)
-                readFrames += buf.frameLength
-                progressHandler(progressStart + (progressEnd - progressStart) * Double(readFrames) / Double(trimLength))
+                    relativeFramePosition += AVAudioFramePosition(buf.frameLength)
+                    framesInRange -= buf.frameLength
+                    readFrames += buf.frameLength
+                    progressHandler(progressStart + (progressEnd - progressStart) * Double(readFrames) / Double(trimLength))
+                }
             }
             analyzer.completeAnalysis()
 

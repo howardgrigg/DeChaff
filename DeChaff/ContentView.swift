@@ -69,6 +69,7 @@ struct ContentView: View {
         .focusedSceneValue(\.appActions, AppActions(
             openFile: { openFilePicker() },
             addChapter: { addChapterAtPlayhead() },
+            excludeSelection: { excludeSelection() },
             startProcessing: { startProcessing() }
         ))
         .focusedSceneValue(\.windowUndoManager, undoManager)
@@ -204,7 +205,9 @@ struct ContentView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
-                .disabled(model.isProcessing || model.isLoadingWaveform)
+                // Excluding everything would leave the pipeline nothing to write.
+                .disabled(model.isProcessing || model.isLoadingWaveform
+                          || (model.inputDuration > 0 && model.keptDurationSeconds < 1))
             }
         }
     }
@@ -477,7 +480,9 @@ struct ContentView: View {
                     trimOut: $model.trimOutSeconds,
                     playhead: model.playback.playheadSeconds,
                     chapters: showChapters ? model.chapters : [],
-                    trimInOffset: model.trimInSeconds,
+                    keptSpans: model.keptSpans,
+                    selectionStart: $model.selectionStart,
+                    selectionEnd: $model.selectionEnd,
                     onSeek: { model.seekPlayback(to: $0) },
                     onChapterMove: showChapters ? { id, newTime in
                         if let idx = model.chapters.firstIndex(where: { $0.id == id }) {
@@ -548,8 +553,25 @@ struct ContentView: View {
                     registerTrimUndo(oldIn: oldIn, oldOut: oldOut)
                 }
                 .buttonStyle(.bordered).controlSize(.small).disabled(model.waveformSamples.isEmpty)
+
+                Divider().frame(height: 16)
+
+                Button {
+                    excludeSelection()
+                } label: {
+                    Label("Exclude", systemImage: "scissors")
+                }
+                .buttonStyle(.bordered).controlSize(.small)
+                .disabled(!model.hasSelection)
+                .help("Cut the selected span out of the recording (shift-drag the waveform to select)")
             }
         }
+    }
+
+    /// Turns the pending waveform/transcript selection into an excluded range.
+    func excludeSelection() {
+        guard let range = model.excludeSelection() else { return }
+        registerExclusionAddUndo(range: range)
     }
 
     var playPauseButton: some View {
@@ -633,6 +655,52 @@ struct ContentView: View {
             self.undoManager?.setActionName("Remove Chapter")
         }
         undoManager?.setActionName("Remove Chapter")
+    }
+
+    func registerExclusionAddUndo(range: ExcludedRange) {
+        undoManager?.registerUndo(withTarget: model) { m in
+            m.excludedRanges.removeAll { $0.id == range.id }
+            self.undoManager?.registerUndo(withTarget: m) { m in
+                m.excludedRanges.append(range)
+                m.excludedRanges.sort { $0.startSeconds < $1.startSeconds }
+            }
+            self.undoManager?.setActionName("Exclude Section")
+        }
+        undoManager?.setActionName("Exclude Section")
+    }
+
+    func registerExclusionRemoveUndo(range: ExcludedRange) {
+        undoManager?.registerUndo(withTarget: model) { m in
+            m.excludedRanges.append(range)
+            m.excludedRanges.sort { $0.startSeconds < $1.startSeconds }
+            self.undoManager?.registerUndo(withTarget: m) { m in
+                m.excludedRanges.removeAll { $0.id == range.id }
+            }
+            self.undoManager?.setActionName("Restore Section")
+        }
+        undoManager?.setActionName("Restore Section")
+    }
+
+    func registerExclusionEditUndo(id: UUID, oldStart: Double, oldEnd: Double) {
+        guard let idx = model.excludedRanges.firstIndex(where: { $0.id == id }) else { return }
+        let newStart = model.excludedRanges[idx].startSeconds
+        let newEnd   = model.excludedRanges[idx].endSeconds
+        undoManager?.registerUndo(withTarget: model) { m in
+            if let i = m.excludedRanges.firstIndex(where: { $0.id == id }) {
+                m.excludedRanges[i].startSeconds = oldStart
+                m.excludedRanges[i].endSeconds = oldEnd
+                m.excludedRanges.sort { $0.startSeconds < $1.startSeconds }
+            }
+            self.undoManager?.registerUndo(withTarget: m) { m in
+                if let i = m.excludedRanges.firstIndex(where: { $0.id == id }) {
+                    m.excludedRanges[i].startSeconds = newStart
+                    m.excludedRanges[i].endSeconds = newEnd
+                    m.excludedRanges.sort { $0.startSeconds < $1.startSeconds }
+                }
+            }
+            self.undoManager?.setActionName("Edit Excluded Section")
+        }
+        undoManager?.setActionName("Edit Excluded Section")
     }
 
     func registerArtworkUndo(oldArtwork: Data?) {

@@ -15,6 +15,9 @@ class ProcessingModel: ObservableObject {
     @Published var logs: [String] = []
     @Published var outputURL: URL?
     @Published var isDone = false
+    /// Duration of the finished MP3, measured once processing succeeds. Zero until
+    /// then — the AI assistant falls back to the pre-silence-shortening estimate.
+    @Published var outputDurationSeconds: Double = 0
 
     /// The processor for the run in flight — kept so Cancel can reach it.
     private var activeProcessor: EpisodeProcessor?
@@ -115,6 +118,43 @@ class ProcessingModel: ObservableObject {
     @Published var trimRefinementNotes: [String] = []
     private var trimRefinementTask: Task<Void, Never>? = nil
 
+    // Excluded ranges — spans cut out of the middle of the recording (source seconds).
+    @Published var excludedRanges: [ExcludedRange] = []
+    // Pending selection on the trim step, in source seconds. A selection is only
+    // meaningful once it spans more than a moment; `hasSelection` is the gate.
+    @Published var selectionStart: Double = 0
+    @Published var selectionEnd: Double = 0
+
+    var hasSelection: Bool { selectionEnd > selectionStart + 0.05 }
+
+    /// The spans of source audio that survive trim + exclusions — the K timeline.
+    /// Everything that needs to convert between timelines derives from this.
+    var keptSpans: [KeptSpan] {
+        keptRanges(trimIn: trimInSeconds,
+                   trimOut: trimOutSeconds > trimInSeconds ? trimOutSeconds : inputDuration,
+                   excluding: excludedRanges)
+    }
+
+    /// Duration of the audio that will be processed, before silence shortening.
+    var keptDurationSeconds: Double { keptDuration(keptSpans) }
+
+    /// Adds the pending selection as an excluded range and clears the selection.
+    /// Returns the range so the caller can register undo.
+    @discardableResult
+    func excludeSelection() -> ExcludedRange? {
+        guard hasSelection else { return nil }
+        let range = ExcludedRange(startSeconds: selectionStart, endSeconds: selectionEnd)
+        excludedRanges.append(range)
+        excludedRanges.sort { $0.startSeconds < $1.startSeconds }
+        clearSelection()
+        return range
+    }
+
+    func clearSelection() {
+        selectionStart = 0
+        selectionEnd = 0
+    }
+
     // Playback — isolated into @Observable so the 20 Hz timer updates only
     // redraw views that actually read playback.isPlaying / playback.playheadSeconds,
     // not the entire view hierarchy.
@@ -160,10 +200,13 @@ class ProcessingModel: ObservableObject {
         trimInSeconds = 0
         trimOutSeconds = 0
         trimRefinementTask?.cancel(); trimRefinementNotes = []
+        excludedRanges = []
+        clearSelection()
         isProcessing = false
         isDone = false
         logs = []
         outputURL = nil
+        outputDurationSeconds = 0
         chapters = []
         stopPlayback()
         waveformZoom = 1.0; waveformVisibleStart = 0.0
@@ -212,6 +255,8 @@ class ProcessingModel: ObservableObject {
 
         let trimIn  = trimInSeconds
         let trimOut = trimOutSeconds > trimIn ? trimOutSeconds : inputDuration
+        let exclusions = excludedRanges
+        let spans = keptRanges(trimIn: trimIn, trimOut: trimOut, excluding: exclusions)
 
         isProcessing = true
         isDone = false
@@ -219,6 +264,11 @@ class ProcessingModel: ObservableObject {
         logs = ["Input: \(url.lastPathComponent)"]
         if trimIn > 0 || trimOut < inputDuration - 0.1 {
             logs.append(String(format: "Trim: %@ – %@", formatPlaybackTime(trimIn), formatPlaybackTime(trimOut)))
+        }
+        if spans.count > 1 {
+            let cut = (trimOut - trimIn) - keptDuration(spans)
+            logs.append(String(format: "Excluded: %d section%@ (%@ removed)",
+                               spans.count - 1, spans.count == 2 ? "" : "s", formatPlaybackTime(cut)))
         }
         outputURL = URL(fileURLWithPath: outputPath)
 
@@ -235,6 +285,7 @@ class ProcessingModel: ObservableObject {
             slowLeveler:         doSlowLeveler,
             trimInSeconds:       trimIn,
             trimOutSeconds:      trimOut,
+            excludedRanges:      exclusions,
             skipIsolationOnMusic: skipIsolationOnMusic,
             compressorThreshold: Float(compressorThreshold),
             compressorHeadRoom:  Float(compressorHeadRoom),
@@ -285,7 +336,16 @@ class ProcessingModel: ObservableObject {
                 self?.activeProcessor = nil
                 Self.isAnyProcessing = false
                 Self.clearDockProgress()
-                if case .finished = outcome { self?.postFinishNotification() }
+                if case .finished = outcome {
+                    self?.postFinishNotification()
+                    // Measure the real output so {duration} is exact rather than the
+                    // estimate; silence shortening makes the two differ noticeably.
+                    let finished = URL(fileURLWithPath: outputPath)
+                    Task { @MainActor [weak self] in
+                        let seconds = try? await AVURLAsset(url: finished).load(.duration).seconds
+                        if let seconds, seconds > 0 { self?.outputDurationSeconds = seconds }
+                    }
+                }
             }
         }
     }
@@ -314,13 +374,24 @@ class ProcessingModel: ObservableObject {
     func togglePlayback() {
         // Auto-pause at trim-out; playing from beyond it auditions the cut region freely.
         playback.stopAt = playback.playheadSeconds < trimOutSeconds - 0.05 ? trimOutSeconds : nil
+        playback.skipRanges = excludedPlaybackRanges
         playback.toggle(url: inputURL)
     }
     func pausePlayback()  { playback.pause() }
     func stopPlayback()   { playback.stop() }
     func seekPlayback(to time: Double) {
         playback.stopAt = time < trimOutSeconds - 0.05 ? trimOutSeconds : nil
+        playback.skipRanges = excludedPlaybackRanges
         playback.seek(to: time)
+    }
+
+    /// Excluded spans as playback skip ranges, so auditioning the trim step plays
+    /// what the listener will actually hear. Derived from the gaps between kept
+    /// spans, so it reflects the same normalisation the pipeline uses.
+    private var excludedPlaybackRanges: [(start: Double, end: Double)] {
+        let spans = keptSpans
+        guard spans.count > 1 else { return [] }
+        return zip(spans, spans.dropFirst()).map { (start: $0.end, end: $1.start) }
     }
 
     /// Resolves the filename template into a sanitised file name (without extension).
@@ -436,11 +507,20 @@ extension ProcessingModel {
         aiAssistantTask?.cancel()
         aiAssistantResponse = ""; aiAssistantError = nil; isAIAssistantLoading = true
 
+        // Duration prefers the measured output; before processing finishes, the kept
+        // audio length is the closest available figure.
+        let durationSeconds = outputDurationSeconds > 0 ? outputDurationSeconds : keptDurationSeconds
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "dd/MM/yyyy"
+
         let systemPrompt = aiAssistantPrompt
             .replacingOccurrences(of: "{title}", with: tagSermonTitle)
             .replacingOccurrences(of: "{preacher}", with: tagPreacher)
             .replacingOccurrences(of: "{series}", with: tagSeries)
             .replacingOccurrences(of: "{reading}", with: tagBibleReading)
+            .replacingOccurrences(of: "{date}", with: dateFormatter.string(from: tagDate))
+            .replacingOccurrences(of: "{year}", with: tags.year)
+            .replacingOccurrences(of: "{duration}", with: formatPlaybackTime(durationSeconds))
         let transcript = transcriptText
 
         aiAssistantTask = Task {
@@ -461,9 +541,13 @@ extension ProcessingModel {
         transcriptionTask?.cancel()
         transcriptText = ""; transcriptError = nil; isTranscribing = true
 
+        // The transcript must describe the audio that ships, so excluded spans are
+        // dropped from it too — otherwise the AI assistant summarises cut content.
+        let spans = keptRanges(trimIn: trimIn, trimOut: trimOut, excluding: excludedRanges)
+
         // If the trim transcription has already finished, derive the text from its
         // word timings directly — no need to run the speech recogniser again.
-        if !isTrimTranscribing && deriveTranscriptFromTrimWords(trimIn: trimIn, trimOut: trimOut) {
+        if !isTrimTranscribing && deriveTranscriptFromTrimWords(trimIn: trimIn, trimOut: trimOut, spans: spans) {
             return
         }
 
@@ -474,20 +558,23 @@ extension ProcessingModel {
             transcriptionTask = Task { [weak self] in
                 await pending?.value
                 guard !Task.isCancelled, let self else { return }
-                if self.deriveTranscriptFromTrimWords(trimIn: trimIn, trimOut: trimOut) { return }
-                self.startFullTranscription(trimIn: trimIn, trimOut: trimOut)
+                if self.deriveTranscriptFromTrimWords(trimIn: trimIn, trimOut: trimOut, spans: spans) { return }
+                self.startFullTranscription(spans: spans)
             }
             return
         }
 
-        startFullTranscription(trimIn: trimIn, trimOut: trimOut)
+        startFullTranscription(spans: spans)
     }
 
     /// Builds the transcript from completed trim-transcription words.
-    /// Returns false if no words fall inside the trim range (caller runs a full pass).
+    /// Returns false if no words fall inside the kept audio (caller runs a full pass).
     @discardableResult
-    private func deriveTranscriptFromTrimWords(trimIn: Double, trimOut: Double) -> Bool {
-        let words = trimWords.filter { $0.startTime >= trimIn && $0.endTime <= trimOut + 0.5 }
+    private func deriveTranscriptFromTrimWords(trimIn: Double, trimOut: Double, spans: [KeptSpan]) -> Bool {
+        let words = trimWords.filter { word in
+            word.startTime >= trimIn && word.endTime <= trimOut + 0.5
+                && !isExcluded(word.startTime, keptRanges: spans)
+        }
         guard !words.isEmpty else { return false }
         transcriptText = words.map { $0.text }.joined(separator: " ")
         isTranscribing = false
@@ -495,8 +582,8 @@ extension ProcessingModel {
         return true
     }
 
-    private func startFullTranscription(trimIn: Double, trimOut: Double) {
-        guard let capturedURL = inputURL else { isTranscribing = false; return }
+    private func startFullTranscription(spans: [KeptSpan]) {
+        guard let capturedURL = inputURL, !spans.isEmpty else { isTranscribing = false; return }
         transcriptionTask = Task.detached(priority: .utility) { [weak self] in
             guard let self else { return }
             var tempURL: URL? = nil
@@ -526,7 +613,7 @@ extension ProcessingModel {
                     }
                 }
 
-                let extracted = try extractTrimmedAudio(from: capturedURL, trimIn: trimIn, trimOut: trimOut)
+                let extracted = try extractKeptAudio(from: capturedURL, spans: spans)
                 tempURL = extracted
 
                 let file = try AVAudioFile(forReading: extracted)

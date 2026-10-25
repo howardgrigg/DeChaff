@@ -473,7 +473,7 @@ struct DeChaffTools: Sendable {
                 guard t >= trimIn && t < trimOut else {
                     throw ToolError("Chapter \(i + 1) (\(formatTime(t))) is outside the trimmed range.")
                 }
-                chapters.append(Chapter(timeSeconds: t - trimIn, title: ch.string("title") ?? "Chapter \(i + 1)"))
+                chapters.append(Chapter(timeSeconds: t, title: ch.string("title") ?? "Chapter \(i + 1)"))
             }
 
             // Tags

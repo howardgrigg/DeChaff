@@ -20,6 +20,10 @@ final class PlaybackState {
     var playheadSeconds: Double = 0
     /// When set, playback auto-pauses once the playhead reaches this time (e.g. the trim-out point).
     var stopAt: Double? = nil
+    /// Spans the playhead jumps over during playback — the user's excluded ranges,
+    /// so auditioning the trim step plays what the listener will actually hear.
+    /// Explicit seeks are never redirected; only playback advancing into a range is.
+    var skipRanges: [(start: Double, end: Double)] = []
 
     private var audioPlayer: AVAudioPlayer?
     private var playerURL: URL?
@@ -52,6 +56,10 @@ final class PlaybackState {
                 self.isPlaying = false
                 self.playbackTimer?.invalidate()
                 return
+            }
+            // Jump the excluded spans rather than play audio the output won't contain.
+            if let skip = self.skipRanges.first(where: { p.currentTime >= $0.start && p.currentTime < $0.end }) {
+                p.currentTime = skip.end
             }
             self.playheadSeconds = p.currentTime
             if !p.isPlaying { self.isPlaying = false; self.playbackTimer?.invalidate() }

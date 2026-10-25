@@ -7,7 +7,8 @@ public struct EpisodeRequest: Sendable {
     /// Processing settings, including the trim range on the source timeline.
     public var options: ProcessingOptions
     public var metadata: ID3Metadata
-    /// Chapter times on the trimmed timeline (0 = trim-in), before silence shortening.
+    /// Chapter times on the source timeline (S). They are mapped through the trim and
+    /// any excluded ranges, then through shortened silences, when the file is tagged.
     public var chapters: [Chapter]
 
     public init(inputURL: URL, outputURL: URL, options: ProcessingOptions,
@@ -68,12 +69,19 @@ public final class EpisodeProcessor: @unchecked Sendable {
         }
 
         let segments = processor.detectedSilenceSegments
-        var chapters = request.chapters
-        if !segments.isEmpty {
-            chapters = chapters.map { c in
-                var c2 = c; c2.timeSeconds = remapChapterTime(c.timeSeconds, using: segments); return c2
-            }
+        // Chapters are stored in source time, so they always need the S→K map
+        // (trim + exclusions); silence shortening then composes K→O on top.
+        let options = request.options
+        let spans = keptRanges(trimIn: options.trimInSeconds,
+                               trimOut: options.trimOutSeconds > 0 ? options.trimOutSeconds : .greatestFiniteMagnitude,
+                               excluding: options.excludedRanges)
+        var chapters = request.chapters.map { c in
+            var c2 = c
+            let kept = sourceToKept(c.timeSeconds, keptRanges: spans)
+            c2.timeSeconds = segments.isEmpty ? kept : remapChapterTime(kept, using: segments)
+            return c2
         }
+        chapters = Self.collapseCoincidentChapters(chapters, log: log)
 
         if request.options.outputFormat == .mp3 {
             processor.writeTags(chapters: chapters, metadata: request.metadata, to: outputPath, logHandler: log)
@@ -81,5 +89,27 @@ public final class EpisodeProcessor: @unchecked Sendable {
 
         return .finished(EpisodeResult(outputURL: request.outputURL, chapters: chapters,
                                        silenceSegments: segments))
+    }
+
+    /// Chapters either side of a cut can map to the same output time — a chapter
+    /// inside an excluded range snaps to the cut point, where a chapter placed just
+    /// after the cut already sits. Two chapters at the same millisecond would emit a
+    /// zero-length CHAP frame, so keep the first and drop the rest.
+    public static func collapseCoincidentChapters(_ chapters: [Chapter],
+                                                  log: (String) -> Void) -> [Chapter] {
+        let sorted = chapters.sorted { $0.timeSeconds < $1.timeSeconds }
+        var result: [Chapter] = []
+        var dropped: [String] = []
+        for chapter in sorted {
+            if let last = result.last, abs(chapter.timeSeconds - last.timeSeconds) < 0.001 {
+                dropped.append(chapter.title.isEmpty ? "Untitled" : chapter.title)
+            } else {
+                result.append(chapter)
+            }
+        }
+        if !dropped.isEmpty {
+            log("⚠️ Dropped \(dropped.count) chapter\(dropped.count == 1 ? "" : "s") landing on a cut: \(dropped.joined(separator: ", "))")
+        }
+        return result
     }
 }
