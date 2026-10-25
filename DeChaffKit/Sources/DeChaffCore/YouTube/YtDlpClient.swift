@@ -78,7 +78,35 @@ public struct YtDlpClient: Sendable {
 
     // MARK: Video list
 
+    /// Lists a channel's latest videos. A bare channel URL makes yt-dlp walk the
+    /// Videos tab, then Live, then Shorts — so with a small limit the livestreamed
+    /// services never appear. Prefer the Live tab, falling back to the URL as given
+    /// for channels that have never streamed.
     public func fetchVideoList(channelURL: String, limit: Int) async throws -> [VideoEntry] {
+        if let streams = Self.liveTabURL(for: channelURL),
+           let entries = try? await listPlaylist(streams, limit: limit), !entries.isEmpty {
+            return entries
+        }
+        return try await listPlaylist(channelURL, limit: limit)
+    }
+
+    /// The Live tab of a bare YouTube channel URL (@handle, /channel/, /c/ or /user/),
+    /// or nil when the URL already names a tab or playlist, or isn't a channel.
+    static func liveTabURL(for channelURL: String) -> String? {
+        guard var components = URLComponents(string: channelURL.trimmingCharacters(in: .whitespaces)),
+              let host = components.host?.lowercased(),
+              host == "youtube.com" || host.hasSuffix(".youtube.com") else { return nil }
+        let parts = components.path.split(separator: "/").map(String.init)
+        let isBareChannel = (parts.count == 1 && parts[0].hasPrefix("@"))
+            || (parts.count == 2 && ["channel", "c", "user"].contains(parts[0]))
+        guard isBareChannel else { return nil }
+        components.path = "/" + (parts + ["streams"]).joined(separator: "/")
+        components.query = nil
+        components.fragment = nil
+        return components.string
+    }
+
+    private func listPlaylist(_ playlistURL: String, limit: Int) async throws -> [VideoEntry] {
         let process = Process()
         process.executableURL = binary
         process.arguments = [
@@ -86,7 +114,7 @@ public struct YtDlpClient: Sendable {
             "--dump-json",
             "--playlist-end", "\(limit)",
             "--no-warnings",
-            channelURL
+            playlistURL
         ]
         // PYTHONUNBUFFERED=1 prevents Python's block-buffering on pipes.
         // Without it, output only arrives in ~8 KB chunks instead of line-by-line.
@@ -301,8 +329,20 @@ private struct VideoEntryRaw: Decodable {
     var entry: VideoEntry {
         // YouTube thumbnail URLs are predictable from the video ID — more reliable
         // than the thumbnail field in --flat-playlist output which is often absent.
-        VideoEntry(id: id, title: title, durationSeconds: duration.map { Int($0) },
+        VideoEntry(id: id, title: Self.decodeEntities(title), durationSeconds: duration.map { Int($0) },
                    uploadDate: upload_date ?? "",
                    thumbnailURL: URL(string: "https://img.youtube.com/vi/\(id)/mqdefault.jpg"))
+    }
+
+    /// --flat-playlist titles come straight from YouTube's page HTML, so "&" arrives
+    /// as "&amp;" (e.g. "John 1 &amp; Col 1"). Decode the entities that show up there.
+    static func decodeEntities(_ s: String) -> String {
+        guard s.contains("&") else { return s }
+        var out = s
+        for (entity, char) in [("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'"),
+                               ("&lt;", "<"), ("&gt;", ">"), ("&amp;", "&")] {
+            out = out.replacingOccurrences(of: entity, with: char)
+        }
+        return out
     }
 }
