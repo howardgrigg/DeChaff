@@ -377,7 +377,7 @@ struct WaveformView: View {
                     .onEnded { _ in lastMagnification = 1.0 }
             )
             .onTapGesture(count: 2) {
-                withAnimation(.easeOut(duration: 0.2)) { zoom = 1.0; visibleStart = 0 }
+                withMotion(.easeOut(duration: 0.2)) { zoom = 1.0; visibleStart = 0 }
                 tileCache.invalidateAll()
             }
             .onContinuousHover { phase in

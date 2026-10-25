@@ -257,7 +257,7 @@ extension ContentView {
                 if !metadata.series.isEmpty      { model.tagSeries       = metadata.series }
             }
             if let uploadDate { model.tagDate = uploadDate }
-            withAnimation(.easeInOut(duration: 0.2)) { currentStep = 1 }
+            withMotion(.easeInOut(duration: 0.2)) { currentStep = 1 }
         }
     }
 
@@ -267,7 +267,7 @@ extension ContentView {
         youtube.selectURL(ytDirectURL, manager: ytManager) { url in
             model.loadFile(url: url)
             ytDirectURL = ""
-            withAnimation(.easeInOut(duration: 0.2)) { currentStep = 1 }
+            withMotion(.easeInOut(duration: 0.2)) { currentStep = 1 }
         }
     }
 

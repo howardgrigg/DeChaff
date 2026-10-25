@@ -23,6 +23,8 @@ struct ContentView: View {
     @AppStorage("dechaff.youtube.videoLimit") var ytVideoLimit = 10
     @State var ytTab: Int = 2   // 0 = YouTube URL, 1 = Videos, 2 = Live Streams
     @State var trimTab: Int = 0  // 0 = Waveform, 1 = Transcript
+    /// The last unfinished episode, offered on the Load step at launch.
+    @State var resumablePlan: EpisodePlan? = nil
     @State var ytDirectURL: String = ""
     @Environment(\.undoManager) var undoManager
 
@@ -52,8 +54,8 @@ struct ContentView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .animation(.easeInOut(duration: 0.2), value: model.isProcessing)
-            .animation(.easeInOut(duration: 0.2), value: model.isDone)
+            .motionAnimation(.easeInOut(duration: 0.2), value: model.isProcessing)
+            .motionAnimation(.easeInOut(duration: 0.2), value: model.isDone)
 
             if !model.isProcessing && !model.isDone {
                 Divider()
@@ -75,6 +77,7 @@ struct ContentView: View {
         .focusedSceneValue(\.windowUndoManager, undoManager)
         .focusedSceneValue(\.isTextInputFocused, isTextEditing)
         .onAppear {
+            resumablePlan = EpisodePlanFile.resumable()
             setupMonitors()
             Task { await ytManager.checkAndUpdate() }
         }
@@ -82,20 +85,20 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .openAudioFile)) { notif in
             guard let url = notif.object as? URL else { return }
             model.loadFile(url: url)
-            withAnimation { currentStep = 1 }
+            withMotion { currentStep = 1 }
         }
         .onReceive(NotificationCenter.default.publisher(for: .openEpisodePlan)) { notif in
             openEpisodePlan(step: notif.object as? String)
         }
         .onReceive(NotificationCenter.default.publisher(for: .downloadFromURL)) { notif in
             guard let rawURL = notif.object as? String else { return }
-            withAnimation { currentStep = 0 }
+            withMotion { currentStep = 0 }
             ytTab = 0
             ytDirectURL = rawURL
             youtube.selectURL(rawURL, manager: ytManager) { fileURL in
                 model.loadFile(url: fileURL)
                 ytDirectURL = ""
-                withAnimation { currentStep = 1 }
+                withMotion { currentStep = 1 }
             }
         }
     }
@@ -126,7 +129,7 @@ struct ContentView: View {
         model.isDone = false
         model.applyEpisodePlan(plan)
         let steps = ["trim": 1, "info": 2, "chapters": 3, "output": 4]
-        withAnimation { currentStep = steps[step ?? "chapters"] ?? 3 }
+        withMotion { currentStep = steps[step ?? "chapters"] ?? 3 }
     }
 
     // MARK: - App Header
@@ -136,7 +139,7 @@ struct ContentView: View {
             if let img = NSImage(named: "Wheat") {
                 Image(nsImage: img).resizable().scaledToFit().frame(width: 22, height: 22)
             }
-            Text("DeChaff").font(.system(size: 17, weight: .semibold))
+            Text("DeChaff").font(.title2.weight(.semibold))
             Spacer()
             if let url = model.inputURL {
                 HStack(spacing: 6) {
@@ -162,7 +165,7 @@ struct ContentView: View {
                             .fill(step < currentStep ? Color.accentColor.opacity(0.6) : Color.secondary.opacity(0.2))
                             .frame(height: 1.5)
                             .frame(maxWidth: .infinity)
-                            .animation(.easeInOut(duration: 0.25), value: currentStep)
+                            .motionAnimation(.easeInOut(duration: 0.25), value: currentStep)
                     }
                 }
             }
@@ -179,7 +182,7 @@ struct ContentView: View {
                           : isCurrent  ? Color.accentColor.opacity(0.12)
                           : Color.secondary.opacity(0.1))
                     .frame(width: 30, height: 30)
-                    .animation(.easeInOut(duration: 0.25), value: currentStep)
+                    .motionAnimation(.easeInOut(duration: 0.25), value: currentStep)
                 if isCompleted {
                     Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(.white)
                 } else {
@@ -189,10 +192,10 @@ struct ContentView: View {
                 }
             }
             Text(stepTitles[step])
-                .font(.system(size: 10, weight: isCurrent ? .semibold : .regular))
+                .font(.caption.weight(isCurrent ? .semibold : .regular))
                 .foregroundStyle(isCurrent ? .primary : .secondary)
         }
-        .animation(.easeInOut(duration: 0.25), value: currentStep)
+        .motionAnimation(.easeInOut(duration: 0.25), value: currentStep)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Step \(step + 1): \(stepTitles[step])")
         .accessibilityValue(isCompleted ? "completed" : isCurrent ? "current" : "upcoming")
@@ -205,7 +208,7 @@ struct ContentView: View {
         HStack {
             if currentStep > 0 {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.2)) { currentStep -= 1 }
+                    withMotion(.easeInOut(duration: 0.2)) { currentStep -= 1 }
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "chevron.left").font(.system(size: 12, weight: .semibold))
@@ -218,7 +221,7 @@ struct ContentView: View {
             Spacer()
             if currentStep < stepTitles.count - 1 {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.2)) { currentStep += 1 }
+                    withMotion(.easeInOut(duration: 0.2)) { currentStep += 1 }
                 } label: {
                     HStack(spacing: 4) {
                         Text("Next")
@@ -263,7 +266,7 @@ struct ContentView: View {
             if currentStep == 3 { step4View.transition(.opacity) }
             if currentStep == 4 { step5View.transition(.opacity) }
         }
-        .animation(.easeInOut(duration: 0.18), value: currentStep)
+        .motionAnimation(.easeInOut(duration: 0.18), value: currentStep)
         .onChange(of: currentStep) { newStep in
             if newStep != 1 && newStep != 3 { model.pausePlayback() }
             if newStep == 1 { model.startTrimTranscription() }  // begin in background; ready if user opens Transcript tab
@@ -283,7 +286,7 @@ struct ContentView: View {
             VStack(spacing: 6) {
                 Text(model.processingStageLabel)
                     .font(.title3.weight(.medium))
-                    .animation(.default, value: model.processingStageLabel)
+                    .motionAnimation(.default, value: model.processingStageLabel)
                 Text("This may take a few minutes for long recordings")
                     .font(.subheadline).foregroundStyle(.secondary)
             }
@@ -302,7 +305,7 @@ struct ContentView: View {
                 .help("Stop processing — no file will be written")
             if !model.logs.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
-                    Button { withAnimation { showLog.toggle() } } label: {
+                    Button { withMotion { showLog.toggle() } } label: {
                         HStack(spacing: 4) {
                             Image(systemName: showLog ? "chevron.down" : "chevron.right").font(.caption2)
                             Text("Show details").font(.caption)
@@ -327,7 +330,7 @@ struct ContentView: View {
                             .background(Color(NSColor.textBackgroundColor))
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                             .onChange(of: model.logs.count) { count in
-                                if count > 0 { withAnimation { proxy.scrollTo(count - 1) } }
+                                if count > 0 { withMotion { proxy.scrollTo(count - 1) } }
                             }
                         }
                     }
@@ -375,7 +378,7 @@ struct ContentView: View {
                     }
                     Button("Process Another") {
                         model.isDone = false; model.outputURL = nil
-                        withAnimation { currentStep = 0 }
+                        withMotion { currentStep = 0 }
                     }
                     .buttonStyle(.bordered).controlSize(.large)
                 }
@@ -547,7 +550,7 @@ struct ContentView: View {
                         .fill(Color.accentColor.opacity(model.isTrimTranscribing ? 0.5 : 0.25))
                         .frame(width: max(6, geo.size.width * model.trimTranscriptProgress),
                                height: 3)
-                        .animation(.linear(duration: 0.3), value: model.trimTranscriptProgress)
+                        .motionAnimation(.linear(duration: 0.3), value: model.trimTranscriptProgress)
                 }
                 .frame(height: 3)
                 .padding(.horizontal, 12)
@@ -841,3 +844,28 @@ struct ContentView: View {
 }
 
 #Preview { ContentView() }
+
+// MARK: - Reduce Motion
+
+/// `withAnimation` that honours System Settings › Accessibility › Display › Reduce motion:
+/// with it on, changes happen immediately instead of animating.
+func withMotion<Result>(_ animation: Animation? = .default, _ body: () throws -> Result) rethrows -> Result {
+    try withAnimation(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : animation, body)
+}
+
+private struct MotionAnimation<Value: Equatable>: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let animation: Animation?
+    let value: Value
+
+    func body(content: Content) -> some View {
+        content.animation(reduceMotion ? nil : animation, value: value)
+    }
+}
+
+extension View {
+    /// `.animation(_:value:)` that's switched off when Reduce motion is on.
+    func motionAnimation<Value: Equatable>(_ animation: Animation?, value: Value) -> some View {
+        modifier(MotionAnimation(animation: animation, value: value))
+    }
+}

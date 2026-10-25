@@ -225,6 +225,14 @@ class ProcessingModel: ObservableObject {
         try? EpisodePlanFile.save(plan)
     }
 
+    /// Saves the finished plan with its output, so it isn't offered for resuming.
+    func markEpisodePlanProcessed(output: URL) {
+        guard var plan = currentEpisodePlan else { return }
+        plan.processedOutput = output.path
+        lastPlan = plan
+        try? EpisodePlanFile.save(plan)
+    }
+
     /// Loads an episode an assistant prepared: its recording (unless already open), trim,
     /// cut sections, chapters and tags, plus the transcript if the server already made one.
     func applyEpisodePlan(_ plan: EpisodePlan) {
@@ -418,6 +426,7 @@ class ProcessingModel: ObservableObject {
                 switch outcome {
                 case .finished:
                     self?.isDone = true
+                    self?.markEpisodePlanProcessed(output: URL(fileURLWithPath: outputPath))
                 case .failed:
                     self?.isDone = false
                     self?.outputURL = nil

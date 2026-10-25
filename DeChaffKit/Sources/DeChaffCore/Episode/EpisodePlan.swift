@@ -36,11 +36,14 @@ public struct EpisodePlan: Codable, Equatable, Sendable {
     public var artwork: Data?
     public var editedBy: Editor
     public var updatedAt: Date
+    /// Where the episode was saved once processed; nil while it's still being worked on.
+    /// Lets the app offer to resume an unfinished episode, but not a finished one.
+    public var processedOutput: String?
 
     public init(sourcePath: String, trimIn: Double, trimOut: Double, excluded: [Span] = [],
                 chapters: [Marker] = [], title: String = "", reading: String = "", preacher: String = "",
                 series: String = "", date: Date = Date(), artwork: Data? = nil,
-                editedBy: Editor, updatedAt: Date = Date()) {
+                editedBy: Editor, updatedAt: Date = Date(), processedOutput: String? = nil) {
         self.sourcePath = sourcePath
         self.trimIn = trimIn
         self.trimOut = trimOut
@@ -54,13 +57,16 @@ public struct EpisodePlan: Codable, Equatable, Sendable {
         self.artwork = artwork
         self.editedBy = editedBy
         self.updatedAt = updatedAt
+        self.processedOutput = processedOutput
     }
 
-    /// Equal apart from who saved it and when — used to skip writes that change nothing.
+    /// Equal apart from who saved it, when, and whether it's been processed — used to skip
+    /// writes that change nothing. (An edit after processing still counts as a change.)
     public func hasSameContent(as other: EpisodePlan) -> Bool {
         var a = self, b = other
         a.editedBy = .app; b.editedBy = .app
         a.updatedAt = .distantPast; b.updatedAt = .distantPast
+        a.processedOutput = nil; b.processedOutput = nil
         return a == b
     }
 }
@@ -72,6 +78,20 @@ public enum EpisodePlanFile {
     public static func load() -> EpisodePlan? {
         guard let data = try? Data(contentsOf: url) else { return nil }
         return try? decoder.decode(EpisodePlan.self, from: data)
+    }
+
+    /// The plan the user can pick up again: not yet processed, and its recording still there.
+    public static func resumable() -> EpisodePlan? {
+        guard let plan = load(), plan.processedOutput == nil,
+              FileManager.default.fileExists(atPath: plan.sourcePath) else { return nil }
+        return plan
+    }
+
+    /// Records that the plan's episode was processed, if the plan is for this recording.
+    public static func markProcessed(source: URL, output: URL) {
+        guard var plan = load(), plan.sourcePath == source.path else { return }
+        plan.processedOutput = output.path
+        try? save(plan)
     }
 
     public static func save(_ plan: EpisodePlan) throws {

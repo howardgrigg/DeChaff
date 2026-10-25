@@ -233,7 +233,7 @@ struct YouTubeSettingsView: View {
                     Text(name).font(.subheadline)
                     if isActive {
                         Text("IN USE")
-                            .font(.system(size: 9, weight: .bold))
+                            .font(.caption2.weight(.bold))
                             .foregroundStyle(Color.accentColor)
                             .padding(.horizontal, 4)
                             .padding(.vertical, 1)

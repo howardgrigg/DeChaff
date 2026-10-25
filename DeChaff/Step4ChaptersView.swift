@@ -73,7 +73,7 @@ extension ContentView {
                                 }
                             ) {
                                 let removed = chapter
-                                withAnimation { model.chapters.removeAll { $0.id == chapter.id } }
+                                withMotion { model.chapters.removeAll { $0.id == chapter.id } }
                                 registerChapterRemoveUndo(chapter: removed)
                             }
                             if chapter.id != model.chapters.last?.id {
@@ -107,7 +107,7 @@ extension ContentView {
         default: title = "Chapter \(idx + 1)"
         }
         let newChapter = Chapter(timeSeconds: sourceTime, title: title)
-        withAnimation {
+        withMotion {
             model.chapters.append(newChapter)
             model.chapters.sort { $0.timeSeconds < $1.timeSeconds }
         }

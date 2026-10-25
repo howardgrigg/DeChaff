@@ -1,6 +1,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import AppKit
+import DeChaffCore
 
 extension ContentView {
 
@@ -9,6 +10,9 @@ extension ContentView {
     var step1View: some View {
         ScrollView {
             VStack(spacing: 24) {
+                if model.inputURL == nil, let plan = resumablePlan {
+                    resumeBanner(plan)
+                }
                 VStack(spacing: 16) {
                     dropZone
                     if let url = model.inputURL, !model.isLoadingWaveform {
@@ -38,7 +42,7 @@ extension ContentView {
                     RoundedRectangle(cornerRadius: 20)
                         .fill(isTargeted ? Color.accentColor.opacity(0.05) : Color(NSColor.controlBackgroundColor))
                 )
-                .animation(.easeInOut(duration: 0.15), value: isTargeted)
+                .motionAnimation(.easeInOut(duration: 0.15), value: isTargeted)
 
             if model.isLoadingWaveform {
                 VStack(spacing: 10) {
@@ -88,6 +92,46 @@ extension ContentView {
         .accessibilityAction { if youtube.downloadingVideoID == nil { openFilePicker() } }
     }
 
+    /// Offers to pick up the episode that was being worked on when DeChaff last closed.
+    func resumeBanner(_ plan: EpisodePlan) -> some View {
+        let name = plan.title.isEmpty ? URL(fileURLWithPath: plan.sourcePath).lastPathComponent : plan.title
+        let kept = keptDuration(keptRanges(trimIn: plan.trimIn, trimOut: plan.trimOut,
+                                           excluding: plan.excluded.map { ExcludedRange(startSeconds: $0.start, endSeconds: $0.end) }))
+        var details = ["\(formatPlaybackTime(kept)) kept"]
+        if !plan.chapters.isEmpty { details.append("\(plan.chapters.count) chapter\(plan.chapters.count == 1 ? "" : "s")") }
+        if plan.editedBy == .assistant { details.append("prepared by Claude") }
+        return HStack(spacing: 12) {
+            Image(systemName: "clock.arrow.circlepath")
+                .font(.title2).foregroundStyle(Color.accentColor)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Pick up where you left off").font(.subheadline.weight(.semibold))
+                Text(name).font(.subheadline).lineLimit(1).truncationMode(.middle)
+                Text(details.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Resume") {
+                model.applyEpisodePlan(plan)
+                resumablePlan = nil
+                withMotion(.easeInOut(duration: 0.2)) { currentStep = 1 }
+            }
+            .buttonStyle(.borderedProminent)
+            .keyboardShortcut(.defaultAction)
+            Button {
+                withMotion { resumablePlan = nil }
+            } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.borderless)
+            .help("Dismiss")
+            .accessibilityLabel("Dismiss")
+        }
+        .padding(14)
+        .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Pick up where you left off: \(name)")
+    }
+
     func fileInfoRow(url: URL) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).font(.subheadline)
@@ -115,7 +159,7 @@ extension ContentView {
             DispatchQueue.main.async {
                 self.model.loadFile(url: url)
                 if self.currentStep == 0 {
-                    withAnimation(.easeInOut(duration: 0.2)) { self.currentStep = 1 }
+                    withMotion(.easeInOut(duration: 0.2)) { self.currentStep = 1 }
                 }
             }
         }
@@ -131,7 +175,7 @@ extension ContentView {
             DispatchQueue.main.async {
                 self.model.loadFile(url: url)
                 if advanceStep && self.currentStep == 0 {
-                    withAnimation(.easeInOut(duration: 0.2)) { self.currentStep = 1 }
+                    withMotion(.easeInOut(duration: 0.2)) { self.currentStep = 1 }
                 }
             }
         }

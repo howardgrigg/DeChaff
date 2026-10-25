@@ -65,7 +65,7 @@ extension ContentView {
                         RoundedRectangle(cornerRadius: 12)
                             .fill(isArtworkTargeted ? Color.accentColor.opacity(0.05) : Color.secondary.opacity(0.04))
                     )
-                    .animation(.easeInOut(duration: 0.15), value: isArtworkTargeted)
+                    .motionAnimation(.easeInOut(duration: 0.15), value: isArtworkTargeted)
                 VStack(spacing: 8) {
                     Image(systemName: isArtworkTargeted ? "photo.fill" : "photo.badge.plus")
                         .font(.system(size: 30, weight: .light))

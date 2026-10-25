@@ -82,7 +82,7 @@ extension ContentView {
                                 onPlay: { model.seekPlayback(to: max(0, range.startSeconds - 3)) },
                                 onDelete: {
                                     let removed = range
-                                    withAnimation { model.excludedRanges.removeAll { $0.id == range.id } }
+                                    withMotion { model.excludedRanges.removeAll { $0.id == range.id } }
                                     registerExclusionRemoveUndo(range: removed)
                                 }
                             )
@@ -281,21 +281,21 @@ struct TranscriptTrimView: View {
             if startIdx < 0 {
                 Image(systemName: "hand.tap").foregroundStyle(.secondary)
                 Text("Tap a word to mark the start of your selection.")
-                    .font(.system(size: 13)).foregroundStyle(.secondary)
+                    .font(.body).foregroundStyle(.secondary)
                 Spacer()
             } else if endIdx < 0 {
                 Image(systemName: "1.circle.fill").foregroundStyle(.orange)
                 Text("Start: \(formatTime(words[startIdx].startTime))")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.body.weight(.medium))
                 Text("— now tap a word to mark the end.")
-                    .font(.system(size: 13)).foregroundStyle(.secondary)
+                    .font(.body).foregroundStyle(.secondary)
                 Spacer()
                 Button("Clear") { startIdx = -1 }
                     .buttonStyle(.bordered).controlSize(.small)
             } else {
                 Image(systemName: "text.insert").foregroundStyle(.orange)
                 Text("\(formatTime(words[startIdx].startTime)) → \(formatTime(words[endIdx].endTime))")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.body.weight(.medium))
                 Spacer()
                 Button("Keep Only This") { applyTrim() }
                     .buttonStyle(.borderedProminent).controlSize(.small)
@@ -315,8 +315,8 @@ struct TranscriptTrimView: View {
         .padding(.vertical, 8)
         .padding(.horizontal, 12)
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
-        .animation(.easeInOut(duration: 0.15), value: startIdx >= 0)
-        .animation(.easeInOut(duration: 0.15), value: endIdx >= 0)
+        .motionAnimation(.easeInOut(duration: 0.15), value: startIdx >= 0)
+        .motionAnimation(.easeInOut(duration: 0.15), value: endIdx >= 0)
     }
 
     /// Shown when a cut couldn't land in clean silence (words run together), so the
@@ -325,7 +325,7 @@ struct TranscriptTrimView: View {
     private var refinementNotes: some View {
         if !model.trimRefinementNotes.isEmpty && endIdx >= 0 {
             Label(model.trimRefinementNotes.joined(separator: " "), systemImage: "waveform.badge.exclamationmark")
-                .font(.system(size: 12))
+                .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -339,19 +339,19 @@ struct TranscriptTrimView: View {
             VStack(alignment: .leading, spacing: 6) {
                 let pct = Int(model.trimTranscriptProgress * 100)
                 Text(pct > 0 ? "Transcribing… \(pct)%" : "Transcribing…")
-                    .font(.system(size: 13)).foregroundStyle(.secondary)
+                    .font(.body).foregroundStyle(.secondary)
                 ProgressView(value: model.trimTranscriptProgress)
                     .progressViewStyle(.linear)
-                    .animation(.linear(duration: 0.3), value: model.trimTranscriptProgress)
+                    .motionAnimation(.linear(duration: 0.3), value: model.trimTranscriptProgress)
             }
             .padding(.top, 8)
         } else if let error = model.trimTranscriptError {
             Label(error, systemImage: "exclamationmark.triangle")
-                .font(.system(size: 13)).foregroundStyle(.secondary)
+                .font(.body).foregroundStyle(.secondary)
                 .padding(.top, 8)
         } else if model.trimWords.isEmpty {
             Text("No transcript available.")
-                .font(.system(size: 13)).foregroundStyle(.secondary)
+                .font(.body).foregroundStyle(.secondary)
                 .padding(.top, 8)
         } else {
             wordList
@@ -373,7 +373,7 @@ struct TranscriptTrimView: View {
                 if model.isTrimTranscribing {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.mini)
-                        Text("Transcribing…").font(.system(size: 11)).foregroundStyle(.secondary)
+                        Text("Transcribing…").font(.subheadline).foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.top, 4)
@@ -463,7 +463,7 @@ private struct WordChip: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 13))
+            .font(.body)
             .strikethrough(isCut, color: .red.opacity(0.5))
             .padding(.horizontal, 4)
             .padding(.vertical, 2)
@@ -472,7 +472,7 @@ private struct WordChip: View {
                              : state == .none ? Color.secondary : Color.primary)
             .contentShape(Rectangle())
             .onTapGesture(perform: onTap)
-            .animation(.easeInOut(duration: 0.08), value: state == .none)
+            .motionAnimation(.easeInOut(duration: 0.08), value: state == .none)
             // Selection and cuts are shown by colour and strikethrough; say them too.
             .accessibilityAddTraits(.isButton)
             .accessibilityValue(accessibilityState)

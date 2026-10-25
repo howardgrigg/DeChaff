@@ -118,4 +118,11 @@ import Testing
         a.chapters[1].time = 2801
         #expect(!a.hasSameContent(as: b))
     }
+
+    @Test func processingIsNotAContentChange() {
+        let a = plan()
+        var b = a
+        b.processedOutput = "/tmp/episode.mp3"
+        #expect(a.hasSameContent(as: b))
+    }
 }

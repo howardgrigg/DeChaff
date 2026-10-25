@@ -505,6 +505,7 @@ struct DeChaffTools: Sendable {
                     let failure = job.log.last { $0.hasPrefix("❌") } ?? job.log.last ?? "unknown error"
                     throw ToolError("Processing failed: \(failure)")
                 case .finished(let result):
+                    EpisodePlanFile.markProcessed(source: request.inputURL, output: result.outputURL)
                     // Like the app: the next episode starts from this one's preacher, series and artwork.
                     // Test renders (WAV, or no title) leave the saved defaults alone.
                     let remember = format == .mp3 && !finalTags.title.isEmpty
