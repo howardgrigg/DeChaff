@@ -65,6 +65,7 @@ Saved to the same folder as the original file, or to `~/Downloads` when the sour
 | **General** | YouTube channel URL/handle, number of videos to show, yt-dlp status and updates, Apple Intelligence availability |
 | **AI Assistant** | Enable/disable Claude API assistant, API key, Claude model selection, customisable prompt template |
 | **Templates** | YouTube title format (teach DeChaff your church's naming convention), output filename format |
+| **MCP** | Connect the DeChaff MCP server to Claude Desktop or Claude Code: choose the built server, add it to Claude Desktop in one click, or copy the Claude Code command |
 
 ## Requirements
 
@@ -83,7 +84,7 @@ open DeChaff.xcodeproj
 
 ## Use it from an AI assistant (MCP)
 
-DeChaff includes an MCP server, `dechaff-mcp`, that lets Claude Desktop, Claude Code and other MCP clients run the whole workflow. The assistant can find this week's video and transcribe it. It reads the transcript to decide where the sermon starts and ends and where the chapters go, then produces the tagged MP3 once you confirm. Cut points are moved into the silence around words, so no word is clipped. See [DeChaffKit/README.md](DeChaffKit/README.md) for setup.
+DeChaff includes an MCP server, `dechaff-mcp`, that lets Claude Desktop, Claude Code and other MCP clients run the whole workflow. The assistant can find this week's video and transcribe it. It reads the transcript to decide where the sermon starts and ends and where the chapters go, then produces the tagged MP3 once you confirm. Cut points are moved into the silence around words, so no word is clipped. Set it up from **Settings → MCP**, or see [DeChaffKit/README.md](DeChaffKit/README.md).
 
 ## Project layout
 

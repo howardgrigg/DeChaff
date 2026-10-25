@@ -28,6 +28,8 @@ swift build -c release
 # binary: DeChaffKit/.build/release/dechaff-mcp
 ```
 
+The easiest way to connect it is **DeChaff → Settings → MCP**. Choose the built file there and click **Add to Claude Desktop**, or copy the Claude Code command. The tab also checks that the server runs and that yt-dlp is installed. To set it up by hand instead:
+
 **Claude Code**
 
 ```bash

@@ -21,6 +21,9 @@ struct SettingsView: View {
             TemplatesSettingsView()
                 .tabItem { Label("Templates", systemImage: "doc.text") }
                 .tag(3)
+            MCPSettingsView()
+                .tabItem { Label("MCP", systemImage: "point.3.connected.trianglepath.dotted") }
+                .tag(4)
         }
         .frame(width: 480, height: 560)
     }
@@ -681,6 +684,291 @@ struct TemplatesSettingsView: View {
                 }
             }
             .padding(24)
+        }
+    }
+}
+
+// MARK: - MCP tab
+
+/// Explains and automates connecting the dechaff-mcp server to Claude Desktop / Claude Code.
+struct MCPSettingsView: View {
+    @AppStorage("dechaff.mcp.serverPath") private var serverPath = ""
+    @State private var serverVersion: String? = nil
+    @State private var serverError: String? = nil
+    @State private var desktopMessage: String? = nil
+    @State private var copiedID: String? = nil
+
+    private let buildCommand = "cd DeChaff/DeChaffKit\nswift build -c release"
+
+    private static let claudeDesktopConfig = FileManager.default
+        .urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        .appendingPathComponent("Claude/claude_desktop_config.json")
+
+    /// The chosen server binary, or a copy bundled inside the app.
+    private var resolvedServerPath: String? {
+        if !serverPath.isEmpty {
+            return FileManager.default.isExecutableFile(atPath: serverPath) ? serverPath : nil
+        }
+        return Bundle.main.url(forAuxiliaryExecutable: "dechaff-mcp")?.path
+    }
+
+    /// Pointing the server at this app's bundled LAME means it can encode MP3s
+    /// wherever DeChaff is installed.
+    private var lamePath: String? { Bundle.main.path(forResource: "lame", ofType: nil) }
+
+    private var displayedServerPath: String { resolvedServerPath ?? "/path/to/dechaff-mcp" }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                settingsGroup("Use DeChaff from an AI assistant") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("The DeChaff MCP server lets Claude Desktop, Claude Code and other MCP apps run DeChaff for you. It can find this week's video, transcribe it, work out where the sermon starts and ends and where chapters go, then produce the tagged MP3 once you confirm.")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("It uses the YouTube, Audio and Templates settings from this window. Once connected, try asking: “Prepare this week's sermon.”")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                }
+
+                settingsGroup("1. Build the server") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("The server is a command-line tool built from the DeChaff source code. Run this in Terminal from the folder containing the DeChaff repository (needs Xcode 26):")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        codeBlock(buildCommand, id: "build")
+                        Text("Then choose the built file, DeChaffKit/.build/release/dechaff-mcp:")
+                            .font(.caption).foregroundStyle(.secondary)
+                        HStack(spacing: 8) {
+                            Text(serverPath.isEmpty ? (resolvedServerPath ?? "Not chosen") : serverPath)
+                                .font(.system(.caption, design: .monospaced))
+                                .lineLimit(1).truncationMode(.middle)
+                                .foregroundStyle(serverPath.isEmpty && resolvedServerPath == nil ? .tertiary : .primary)
+                            Spacer()
+                            Button("Choose…") { chooseServer() }
+                                .buttonStyle(.bordered).controlSize(.small)
+                        }
+                        serverStatus
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                }
+
+                settingsGroup("2. Connect Claude Desktop") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Adds DeChaff to Claude Desktop's configuration file (your other servers are kept, and a .bak copy is saved). Quit and reopen Claude Desktop afterwards.")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        HStack(spacing: 8) {
+                            Button("Add to Claude Desktop") { addToClaudeDesktop() }
+                                .buttonStyle(.borderedProminent).controlSize(.small)
+                                .disabled(resolvedServerPath == nil)
+                            Button("Show Config File") { showClaudeDesktopConfig() }
+                                .buttonStyle(.bordered).controlSize(.small)
+                            Spacer()
+                        }
+                        if let desktopMessage {
+                            Text(desktopMessage).font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Text("Or add it by hand:").font(.caption).foregroundStyle(.secondary)
+                        codeBlock(claudeDesktopSnippet, id: "desktop")
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                }
+
+                settingsGroup("Or connect Claude Code") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Run this in Terminal to make DeChaff available in every Claude Code session:")
+                            .font(.caption).foregroundStyle(.secondary)
+                        codeBlock(claudeCodeCommand, id: "code")
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                }
+
+                settingsGroup("Requirements") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        requirementRow(YtDlpPaths.installedBinary != nil,
+                                       "yt-dlp installed",
+                                       "Check for updates on the YouTube tab to install it.")
+                        requirementRow(isAppleSilicon,
+                                       "Apple Silicon Mac",
+                                       "Needed for on-device transcription.")
+                        requirementRow(lamePath != nil,
+                                       "MP3 encoder (bundled with DeChaff)",
+                                       "Reinstall DeChaff — its bundled LAME encoder is missing.")
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                }
+            }
+            .padding(24)
+        }
+        .onAppear { testServer() }
+        .onChange(of: serverPath) { _, _ in testServer() }
+    }
+
+    // MARK: Pieces
+
+    @ViewBuilder
+    private var serverStatus: some View {
+        if let serverVersion {
+            Label("Found \(serverVersion)", systemImage: "checkmark.circle.fill")
+                .font(.caption).foregroundStyle(.green)
+        } else if let serverError {
+            Label(serverError, systemImage: "exclamationmark.triangle.fill")
+                .font(.caption).foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func codeBlock(_ text: String, id: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(text)
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button(copiedID == id ? "Copied" : "Copy") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+                copiedID = id
+            }
+            .buttonStyle(.bordered).controlSize(.mini)
+        }
+        .padding(8)
+        .background(Color(NSColor.textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func requirementRow(_ ok: Bool, _ title: String, _ fix: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: ok ? "checkmark.circle.fill" : "xmark.circle.fill")
+                .foregroundStyle(ok ? .green : .orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.caption)
+                if !ok { Text(fix).font(.caption2).foregroundStyle(.secondary) }
+            }
+        }
+    }
+
+    private var isAppleSilicon: Bool {
+        #if arch(arm64)
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    // MARK: Configuration text
+
+    /// The server entry for an MCP client's mcpServers map.
+    private func serverEntry(_ server: String) -> [String: Any] {
+        var entry: [String: Any] = ["command": server]
+        if let lamePath { entry["env"] = ["DECHAFF_LAME": lamePath] }
+        return entry
+    }
+
+    private var claudeDesktopSnippet: String {
+        let root: [String: Any] = ["mcpServers": ["dechaff": serverEntry(displayedServerPath)]]
+        guard let data = try? JSONSerialization.data(withJSONObject: root,
+                                                     options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+        else { return "" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private var claudeCodeCommand: String {
+        // The server name goes before -e: -e takes several values and would swallow it.
+        var command = "claude mcp add dechaff --scope user"
+        if let lamePath { command += " -e DECHAFF_LAME=\(shellQuoted(lamePath))" }
+        return command + " -- \(shellQuoted(displayedServerPath))"
+    }
+
+    private func shellQuoted(_ s: String) -> String {
+        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    // MARK: Actions
+
+    private func chooseServer() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.showsHiddenFiles = true   // the build lands in the hidden .build folder
+        panel.message = "Choose dechaff-mcp — it's in DeChaffKit/.build/release/ after building."
+        if panel.runModal() == .OK, let url = panel.url {
+            serverPath = url.path
+        }
+    }
+
+    /// Runs `dechaff-mcp --version` to confirm the chosen file is the server and that it launches.
+    private func testServer() {
+        serverVersion = nil
+        serverError = nil
+        guard let server = resolvedServerPath else {
+            if !serverPath.isEmpty { serverError = "No executable file at that path — build the server first." }
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: server)
+            process.arguments = ["--version"]
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = pipe
+            var output = ""
+            var ok = false
+            do {
+                try process.run()
+                output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                process.waitUntilExit()
+                ok = process.terminationStatus == 0 && output.hasPrefix("dechaff-mcp")
+            } catch {
+                output = error.localizedDescription
+            }
+            DispatchQueue.main.async {
+                if ok { serverVersion = output }
+                else { serverError = "That file didn't respond like dechaff-mcp. Choose DeChaffKit/.build/release/dechaff-mcp." }
+            }
+        }
+    }
+
+    private func addToClaudeDesktop() {
+        guard let server = resolvedServerPath else { return }
+        let url = Self.claudeDesktopConfig
+        do {
+            var root: [String: Any] = [:]
+            if let data = try? Data(contentsOf: url), !data.isEmpty {
+                // Refuse to touch a config we can't parse rather than overwrite it.
+                guard let parsed = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    desktopMessage = "Claude Desktop's config isn't a JSON object — add DeChaff by hand below."
+                    return
+                }
+                root = parsed
+                try data.write(to: url.appendingPathExtension("bak"), options: .atomic)
+            }
+            var servers = root["mcpServers"] as? [String: Any] ?? [:]
+            servers["dechaff"] = serverEntry(server)
+            root["mcpServers"] = servers
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let data = try JSONSerialization.data(withJSONObject: root,
+                                                  options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+            try data.write(to: url, options: .atomic)
+            desktopMessage = "Added. Quit and reopen Claude Desktop to start using DeChaff."
+        } catch {
+            desktopMessage = "Couldn't update Claude Desktop's config: \(error.localizedDescription)"
+        }
+    }
+
+    private func showClaudeDesktopConfig() {
+        let url = Self.claudeDesktopConfig
+        if FileManager.default.fileExists(atPath: url.path) {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } else {
+            desktopMessage = "Claude Desktop has no config file yet — use Add to Claude Desktop to create it."
         }
     }
 }
