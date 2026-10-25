@@ -300,6 +300,7 @@
     </a>
     <ul class="nav-links">
       <li><a href="index.html#features">Features</a></li>
+      <li><a href="index.html#mcp">Claude</a></li>
       <li><a href="user-guide.html">User Guide</a></li>
       <li><a href="tech-details.html" class="active">Tech Details</a></li>
     </ul>
@@ -322,6 +323,7 @@
     <a href="#yt-dlp">YouTube downloads</a>
     <a href="#transcription">Transcription</a>
     <a href="#ai-assistant">AI Assistant</a>
+    <a href="#mcp">MCP server</a>
   </div>
 </div>
 
@@ -1165,6 +1167,12 @@ process.arguments = [
         (<code>img.youtube.com/vi/{id}/mqdefault.jpg</code>) rather than using the often-absent thumbnail
         field in the JSON — YouTube's thumbnail URLs are predictable and reliable.
       </p>
+      <p class="prose" style="margin-top:12px;">
+        A bare channel URL (<code>@handle</code>, <code>/channel/…</code>) makes yt-dlp walk the Videos tab,
+        then Live, then Shorts — so with a limit of 10 a church that streams its services would only ever
+        see ordinary uploads. DeChaff lists the channel's <code>/streams</code> tab instead, falling back to
+        the URL as given for channels that have never streamed.
+      </p>
     </div>
 
   </div>
@@ -1313,6 +1321,81 @@ Bible Reading: {reading}</span></code></pre>
         generate sermon notes, or produce a summary for the church website. Because the transcript and
         metadata are always available as context, the prompt is the only thing that needs to change.
         A "Reset to Default" button in Settings restores the original prompt if needed.
+      </p>
+    </div>
+
+  </div>
+</section>
+
+
+<!-- ── MCP SERVER ─────────────────────────────────────────────────── -->
+<section id="mcp" class="tech-section">
+  <div class="tech-inner">
+    <span class="section-label">MCP server</span>
+    <h2 class="section-title">DeChaff for AI assistants</h2>
+    <p class="section-sub">
+      DeChaff ships a <a href="https://modelcontextprotocol.io" target="_blank" rel="noopener" style="color:var(--blue);">Model Context Protocol</a>
+      server, <code>dechaff-mcp</code>, that gives Claude Desktop, Claude Code and other MCP clients the
+      whole workflow as tools.
+    </p>
+
+    <div class="subsection" style="margin-top:0;">
+      <h3>One engine, two front ends</h3>
+      <p class="prose">
+        All processing lives in <strong>DeChaffKit</strong>, a Swift package with no UI. Its
+        <code>DeChaffCore</code> library holds the audio pipeline, transcription, cut-point refinement,
+        tagging and the yt-dlp client. The SwiftUI app and the MCP server are both thin layers over it,
+        so an episode made by the assistant is processed exactly like one made by hand.
+      </p>
+      <pre><code>DeChaff.app (SwiftUI) ─┐
+                       ├─► DeChaffCore ─► AVFoundation, AudioToolbox, Speech, SoundAnalysis
+dechaff-mcp ───────────┘        ▲
+     └─► MCPServer (JSON-RPC over stdio, Foundation only)</code></pre>
+      <p class="pre-caption">The server is embedded at <code>DeChaff.app/Contents/MacOS/dechaff-mcp</code>, signed with the app, and reads the app's settings, yt-dlp and bundled LAME.</p>
+    </div>
+
+    <div class="subsection">
+      <h3>Tools</h3>
+      <table class="settings-table">
+        <thead><tr><th>Tool</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><code>list_channel_videos</code></td><td>Recent livestreams on the channel, with a quick template parse of each title</td></tr>
+          <tr><td><code>download_audio</code></td><td>Downloads a video's audio; sermon fields extracted with on-device Apple Intelligence</td></tr>
+          <tr><td><code>analyze_audio</code></td><td>Duration, loudness, music segments and long silences</td></tr>
+          <tr><td><code>transcribe</code></td><td>On-device transcription with word timings, cached on disk</td></tr>
+          <tr><td><code>get_transcript</code> / <code>search_transcript</code></td><td>Reads the transcript as indexed sentences or words, or finds a phrase</td></tr>
+          <tr><td><code>refine_cuts</code></td><td>Previews where trim and chapter points land once moved into silence</td></tr>
+          <tr><td><code>process_sermon</code></td><td>Trims, cleans, encodes, tags and adds chapters; checks the output length</td></tr>
+          <tr><td><code>read_tags</code> / <code>write_tags</code></td><td>Checks or fixes a finished MP3's tags and chapters without re-encoding</td></tr>
+          <tr><td><code>get_settings</code> / <code>get_artwork</code></td><td>The app's settings (including the church's instructions) and the saved cover art, as an image</td></tr>
+          <tr><td><code>get_job</code> / <code>cancel_job</code></td><td>Waits for or stops a long-running job</td></tr>
+        </tbody>
+      </table>
+      <p class="prose" style="margin-top:12px;">
+        Downloading, transcribing and processing take minutes. Those tools wait up to
+        <code>wait_seconds</code> and otherwise return a <code>job_id</code> to poll with <code>get_job</code>,
+        which keeps every call inside MCP clients' request timeouts.
+      </p>
+    </div>
+
+    <div class="subsection">
+      <h3>Cuts that never clip a word</h3>
+      <p class="prose">
+        The assistant picks trim and chapter points as transcript word indexes. Speech recognisers routinely
+        clip word edges, so the server measures a short-hop energy envelope around each word and moves the
+        cut into the real silence: 0.15 s before speech at a start, and a 0.75 s tail after the last word at
+        an end (less if the next sound comes sooner). Where words run together it cuts at the quietest
+        point and says so, so the assistant can choose a sentence boundary instead.
+      </p>
+    </div>
+
+    <div class="subsection">
+      <h3>Guided like the app, adapted per church</h3>
+      <p class="prose">
+        The server's instructions walk the assistant through the app's own five steps (Load → Trim → Info →
+        Chapters → Output) and require the user's go-ahead before anything is written. Each church can add
+        its own instructions in <strong>Settings → MCP</strong>; they're appended to the server's
+        instructions and the <code>prepare_sermon</code> prompt, marked as taking priority over the defaults.
       </p>
     </div>
 

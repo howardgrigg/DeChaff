@@ -241,6 +241,7 @@
       <li><a href="index.html#how">How it works</a></li>
       <li><a href="index.html#features">Features</a></li>
       <li><a href="index.html#ai">AI</a></li>
+      <li><a href="index.html#mcp">Claude</a></li>
       <li><a href="index.html#shortcuts">Shortcuts</a></li>
       <li><a href="user-guide.html" class="active">User Guide</a></li>
       <li><a href="tech-details.html">Tech Details</a></li>
@@ -265,6 +266,7 @@
     <a href="#chapters"><span class="toc-num">4</span> Chapters</a>
     <a href="#output"><span class="toc-num">5</span> Output</a>
     <a href="#after">After processing</a>
+    <a href="#claude">Use with Claude</a>
     <a href="#keyboard">Keyboard shortcuts</a>
     <a href="#settings">Settings</a>
     <a href="#tips">Tips</a>
@@ -527,6 +529,50 @@
   </div>
 </section>
 
+<!-- USE WITH CLAUDE -->
+<section id="claude" class="guide-section">
+  <div class="guide-inner">
+    <span class="section-label">Use with Claude</span>
+    <h2 class="section-title">Let an assistant do the steps</h2>
+    <p class="section-sub">DeChaff includes an MCP server, so Claude Desktop, Claude Code or another MCP app can work through Load → Trim → Info → Chapters → Output for you. It uses the same settings as the app.</p>
+
+    <div class="method-cards">
+      <div class="method-card">
+        <h3>
+          <svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+          1. Connect
+        </h3>
+        <p>Open <strong>Settings → MCP</strong> and click <strong>Add to Claude Desktop</strong>, then quit and reopen Claude Desktop. For Claude Code, copy the command shown there into Terminal.</p>
+      </div>
+      <div class="method-card">
+        <h3>
+          <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          2. Ask
+        </h3>
+        <p>Say <em>“Prepare this week's sermon”</em>, or paste a YouTube link or a file path. In Claude Desktop you can also pick the <strong>Prepare this week's sermon</strong> prompt.</p>
+      </div>
+      <div class="method-card">
+        <h3>
+          <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+          3. Approve
+        </h3>
+        <p>The assistant shows you the trim points, tags and chapters before it writes anything. Correct whatever you like, then tell it to go ahead.</p>
+      </div>
+    </div>
+
+    <div class="subsection">
+      <h3>What it does</h3>
+      <p class="prose">It finds the newest livestream on your channel and downloads the audio. It transcribes the service on your Mac and looks at where the music is, then decides where the sermon starts and ends and where chapters belong. It reads the sermon title, reading, preacher and series from the video title with Apple Intelligence, and checks whether the series has changed so it can ask you for new artwork. Every cut is moved into the silence between words, so nothing is clipped. Downloading and transcribing a full service takes a few minutes.</p>
+    </div>
+
+    <div class="subsection">
+      <h3>Your church's instructions</h3>
+      <p class="prose">Every church does things a little differently. In <strong>Settings → MCP → Your church's instructions</strong>, write your preferences in plain English. For example: <em>“Start the episode at the Bible reader's greeting, including the reading, with a first chapter called ‘Reading: &lt;passage&gt;’.”</em> The assistant follows these over its usual approach. Restart Claude after you change them.</p>
+      <p class="prose" style="margin-top: 10px;">You can also use the box for names the transcript tends to get wrong, such as <em>“‘Sinner Hill’ in the transcript means City on a Hill”</em>. The assistant then knows what to search for.</p>
+    </div>
+  </div>
+</section>
+
 <!-- KEYBOARD SHORTCUTS -->
 <section id="keyboard" class="guide-section dark">
   <div class="guide-inner">
@@ -633,6 +679,20 @@
         </tbody>
       </table>
       <p class="prose" style="margin-top: 14px;">Tap any placeholder chip to append it to the template field.</p>
+    </div>
+
+    <div class="subsection">
+      <h3>MCP</h3>
+      <table class="option-table">
+        <thead><tr><th>Setting</th><th>Details</th></tr></thead>
+        <tbody>
+          <tr><td>Your church's instructions</td><td>Plain-English preferences the assistant follows over its defaults, such as where the episode should start. Read when Claude connects, so restart Claude after editing.</td></tr>
+          <tr><td>Connect Claude Desktop</td><td><strong>Add to Claude Desktop</strong> adds DeChaff to Claude Desktop's configuration (your other servers are kept and a backup is saved). Quit and reopen Claude Desktop afterwards.</td></tr>
+          <tr><td>Connect Claude Code</td><td>A one-line command to paste into Terminal that makes DeChaff available in every Claude Code session.</td></tr>
+          <tr><td>Requirements</td><td>Checks that yt-dlp is installed, the Mac has Apple Silicon (for transcription) and the MP3 encoder is present.</td></tr>
+          <tr><td>Advanced</td><td>For developers: point Claude at a server built from source instead of the one inside the app.</td></tr>
+        </tbody>
+      </table>
     </div>
   </div>
 </section>
