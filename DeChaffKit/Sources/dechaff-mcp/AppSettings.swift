@@ -1,5 +1,4 @@
 import Foundation
-import CryptoKit
 import MCPServer
 import DeChaffCore
 
@@ -105,40 +104,22 @@ struct AppSettings {
     }
 }
 
-/// Word-level transcripts, kept in memory and cached on disk so a file is only
-/// transcribed once. The cache key includes size and modification date, so an
-/// edited file is transcribed afresh.
+/// Word-level transcripts, kept in memory over the shared on-disk `TranscriptCache`
+/// (which the app reads too, so neither side transcribes a recording twice).
 actor TranscriptStore {
     private var memory: [String: [TranscriptWord]] = [:]
 
-    private static var cacheDirectory: URL {
-        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("DeChaff/transcripts", isDirectory: true)
-    }
-
     func words(for url: URL) -> [TranscriptWord]? {
-        guard let key = Self.key(for: url) else { return nil }
+        guard let key = TranscriptCache.key(for: url) else { return nil }
         if let words = memory[key] { return words }
-        guard let data = try? Data(contentsOf: Self.cacheDirectory.appendingPathComponent(key + ".json")),
-              let words = try? JSONDecoder().decode([TranscriptWord].self, from: data) else { return nil }
+        guard let words = TranscriptCache.words(for: url) else { return nil }
         memory[key] = words
         return words
     }
 
     func save(_ words: [TranscriptWord], for url: URL) {
-        guard let key = Self.key(for: url) else { return }
+        guard let key = TranscriptCache.key(for: url) else { return }
         memory[key] = words
-        try? FileManager.default.createDirectory(at: Self.cacheDirectory, withIntermediateDirectories: true)
-        if let data = try? JSONEncoder().encode(words) {
-            try? data.write(to: Self.cacheDirectory.appendingPathComponent(key + ".json"), options: .atomic)
-        }
-    }
-
-    private static func key(for url: URL) -> String? {
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path) else { return nil }
-        let size = (attrs[.size] as? NSNumber)?.int64Value ?? 0
-        let modified = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
-        let digest = SHA256.hash(data: Data("\(url.path)|\(size)|\(modified)".utf8))
-        return digest.map { String(format: "%02x", $0) }.joined()
+        TranscriptCache.save(words, for: url)
     }
 }

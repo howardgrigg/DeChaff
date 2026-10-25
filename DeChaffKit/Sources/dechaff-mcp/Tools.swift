@@ -11,7 +11,8 @@ struct DeChaffTools: Sendable {
 
     var all: [MCPTool] {
         [getSettings, getArtwork, listChannelVideos, downloadAudio, analyzeAudio, transcribe, getTranscript,
-         searchTranscript, refineCuts, processSermon, readTags, writeTags, getJob, cancelJob]
+         searchTranscript, refineCuts, openInDeChaff, getDeChaffPlan, processSermon, readTags, writeTags,
+         getJob, cancelJob]
     }
 
     private static let readOnly: JSONValue = ["readOnlyHint": true, "openWorldHint": false]
@@ -393,16 +394,10 @@ struct DeChaffTools: Sendable {
                     + "downloads) named by DeChaff's filename template. Confirm trim points and tags with the user "
                     + "before running. Takes several minutes for an hour of audio — returns a job_id to poll with "
                     + "get_job if it runs past wait_seconds.",
-                inputSchema: Schema.object([
-                    "path": Schema.path,
-                    "trim_start": Schema.cutPoint("First word to keep. Omit to start at the beginning."),
-                    "trim_end": Schema.cutPoint("Last word to keep. Omit to keep to the end."),
-                    "refine": Schema.boolean("Snap trim and chapter points into silence (default true)."),
-                    "tags": Schema.tags,
-                    "chapters": Schema.array(Schema.object([
-                        "at": Schema.cutPoint("First word of the chapter."),
-                        "title": Schema.string("Chapter title."),
-                    ], required: ["at", "title"]), "Chapter markers. Include one at the trim start (e.g. \"Introduction\")."),
+                inputSchema: Schema.object(Self.episodeSchema.merging([
+                    "from_plan": Schema.boolean("Process the episode exactly as it is in the DeChaff app (see "
+                        + "get_dechaff_plan) — its recording, trim, cut sections, chapters, tags and artwork, with no "
+                        + "refinement, since the user placed those points by hand. Episode arguments are then ignored."),
                     "options": Schema.object([
                         "voice_isolation": Schema.boolean("Default true."),
                         "preserve_music": Schema.boolean("Skip voice isolation where music is detected (default false)."),
@@ -420,77 +415,14 @@ struct DeChaffTools: Sendable {
                     "if_exists": Schema.string("When the output exists: keep_both (default), replace or error.",
                                                enum: ["keep_both", "replace", "error"]),
                     "wait_seconds": Schema.waitSeconds,
-                ], required: ["path"]),
+                ]) { a, _ in a }),
                 annotations: ["destructiveHint": false, "idempotentHint": false, "openWorldHint": false]) { raw, context in
             let args = Args(raw)
-            let url = try args.existingFile("path")
             let settings = AppSettings()
-            let words = await transcripts.words(for: url) ?? []
-            let refine = try args.bool("refine") ?? true
-            let refiner = CutPointRefiner()
-            let duration = audioDuration(url) ?? 0
-            var cutReports: [String: JSONValue] = [:]
-            var warnings: [JSONValue] = []
-
-            func cut(_ edge: CutEdge, _ key: String) throws -> Double? {
-                guard let spec = try CutPointSpec(args[key], name: key) else { return nil }
-                if refine {
-                    let r = try refiner.refine(edge: edge, spec, words: words, audioURL: url)
-                    cutReports[key] = refinementJSON(r)
-                    if r.quality != .clean { warnings.append(.string("\(key): " + r.notes.joined(separator: " "))) }
-                    return r.time
-                }
-                switch spec {
-                case .time(let t): return t
-                case .word(let i):
-                    guard words.indices.contains(i) else { throw ToolError("\(key).word_index \(i) is out of range.") }
-                    return edge == .start ? words[i].startTime : words[i].endTime
-                }
-            }
-            let trimIn = try cut(.start, "trim_start") ?? 0
-            let trimOut = min(try cut(.end, "trim_end") ?? duration, duration > 0 ? duration : .infinity)
-            guard trimOut > trimIn + 1 else {
-                throw ToolError("Trim end (\(formatTime(trimOut))) must be after trim start (\(formatTime(trimIn))).")
-            }
-
-            var chapters: [Chapter] = []
-            for (i, c) in (try args.array("chapters") ?? []).enumerated() {
-                let ch = Args(c)
-                guard let spec = try CutPointSpec(ch["at"], name: "chapters[\(i)].at") else {
-                    throw ToolError("chapters[\(i)] needs \"at\".")
-                }
-                var t: Double
-                if refine {
-                    let r = try refiner.refine(edge: .start, spec, words: words, audioURL: url)
-                    t = r.time
-                    if r.quality == .forced { warnings.append(.string("chapter \(i + 1): " + r.notes.joined(separator: " "))) }
-                } else if case .time(let s) = spec {
-                    t = s
-                } else if case .word(let w) = spec, words.indices.contains(w) {
-                    t = words[w].startTime
-                } else {
-                    throw ToolError("chapters[\(i)].at.word_index is out of range.")
-                }
-                // A chapter a hair before the trim start belongs at the very start.
-                if t < trimIn && t > trimIn - 1 { t = trimIn }
-                guard t >= trimIn && t < trimOut else {
-                    throw ToolError("Chapter \(i + 1) (\(formatTime(t))) is outside the trimmed range.")
-                }
-                chapters.append(Chapter(timeSeconds: t, title: ch.string("title") ?? "Chapter \(i + 1)"))
-            }
-
-            // Tags
-            let tagArgs = args.object("tags") ?? Args(.object([:]))
-            var tags = SermonTags(title: tagArgs.string("title") ?? "", reading: tagArgs.string("reading") ?? "",
-                                  preacher: tagArgs.string("preacher") ?? "", series: tagArgs.string("series") ?? "",
-                                  artwork: settings.artwork)
-            if let d = tagArgs.string("date") {
-                guard let date = parseExtractedDate(d) else { throw ToolError("Couldn't read date “\(d)” — use YYYY-MM-DD.") }
-                tags.date = date
-            }
-            if let art = tagArgs.string("artwork_path") {
-                tags.artwork = try loadArtwork(art)
-            }
+            let episode = try await parseEpisode(args, settings: settings)
+            let url = episode.url, trimIn = episode.trimIn, trimOut = episode.trimOut
+            let chapters = episode.chapters, tags = episode.tags, warnings = episode.warnings
+            let cutReports = episode.cutReports
 
             // Options
             let opt = args.object("options") ?? Args(.object([:]))
@@ -508,6 +440,7 @@ struct DeChaffTools: Sendable {
                 slowLeveler: try opt.bool("leveler") ?? true,
                 trimInSeconds: trimIn,
                 trimOutSeconds: trimOut,
+                excludedRanges: episode.excluded,
                 skipIsolationOnMusic: try opt.bool("preserve_music") ?? false,
                 compressorThreshold: Float(settings.compressorThreshold),
                 compressorHeadRoom: Float(settings.compressorHeadRoom),
@@ -547,7 +480,8 @@ struct DeChaffTools: Sendable {
                                          options: options, metadata: tags.id3, chapters: chapters)
             let finalTags = tags, finalWarnings = warnings
             let trimReport: JSONValue = [
-                "start": timeJSON(trimIn), "end": timeJSON(trimOut), "kept": .string(formatTime(trimOut - trimIn)),
+                "start": timeJSON(trimIn), "end": timeJSON(trimOut), "kept": .string(formatTime(keptDuration(keptRanges(trimIn: trimIn, trimOut: trimOut,
+                                                                  excluding: episode.excluded)))),
                 "refinements": .object(cutReports),
             ]
             let job = jobs.start(kind: "process", summary: "Process \(url.lastPathComponent)") { job in
@@ -621,6 +555,202 @@ struct DeChaffTools: Sendable {
     }
 
     // MARK: - Tags
+
+
+
+    // MARK: - Hand-off to the app
+
+    var openInDeChaff: MCPTool {
+        MCPTool(name: "open_in_dechaff", title: "Open in DeChaff",
+                description: "Opens the episode in the DeChaff app so the user can adjust it by hand — drag a chapter "
+                    + "marker, fine-tune the trim, cut a passage, fix a tag. Takes the same episode arguments as "
+                    + "process_sermon (cuts are refined into silence unless refine is false) and opens the app on the "
+                    + "chosen step with everything filled in. When the user says they're done, call get_dechaff_plan to "
+                    + "see what they changed. They may also process it in the app themselves.",
+                inputSchema: Schema.object(Self.episodeSchema.merging([
+                    "step": Schema.string("Which step to open on (default chapters).",
+                                          enum: ["trim", "info", "chapters", "output"]),
+                ]) { a, _ in a }, required: ["path"]),
+                annotations: ["destructiveHint": false, "openWorldHint": false]) { raw, _ in
+            let args = Args(raw)
+            let episode = try await parseEpisode(args, settings: AppSettings())
+            let plan = EpisodePlan(
+                sourcePath: episode.url.path, trimIn: episode.trimIn, trimOut: episode.trimOut,
+                excluded: episode.excluded.map { .init(start: $0.startSeconds, end: $0.endSeconds) },
+                chapters: episode.chapters.map { .init(time: $0.timeSeconds, title: $0.title) },
+                title: episode.tags.title, reading: episode.tags.reading, preacher: episode.tags.preacher,
+                series: episode.tags.series, date: episode.tags.date, artwork: episode.tags.artwork,
+                editedBy: .assistant)
+            try EpisodePlanFile.save(plan)
+            let step = args.string("step") ?? "chapters"
+            let opener = Process()
+            opener.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            // Send it to the app this server is embedded in, so both are the same version;
+            // a server built from source falls back to whichever DeChaff is the default.
+            let link = "dechaff://open-plan?step=\(step)"
+            let app = Bundle.main.bundleURL
+            opener.arguments = app.pathExtension == "app" ? ["-a", app.path, link] : [link]
+            try opener.run()
+            opener.waitUntilExit()
+            guard opener.terminationStatus == 0 else {
+                throw ToolError("Saved the plan but couldn't open DeChaff. Is it installed?")
+            }
+            var o = planJSON(plan)
+            o["opened_on"] = .string(step)
+            o["warnings"] = .array(episode.warnings)
+            o["next_step"] = .string("Tell the user it's open in DeChaff. When they say they're done, call "
+                + "get_dechaff_plan, summarise what they changed, and process with process_sermon from_plan: true once "
+                + "they confirm.")
+            return .json(.object(o))
+        }
+    }
+
+    var getDeChaffPlan: MCPTool {
+        MCPTool(name: "get_dechaff_plan", title: "Read the episode from DeChaff",
+                description: "Returns the episode as it currently stands in the DeChaff app — recording, trim, cut "
+                    + "sections, chapters and tags — including any changes the user made by hand. edited_by says whether "
+                    + "the user (app) or you (assistant) changed it last.",
+                inputSchema: Schema.object([:]),
+                annotations: Self.readOnly) { _, _ in
+            guard let plan = EpisodePlanFile.load() else {
+                throw ToolError("There's no episode open in DeChaff.")
+            }
+            var o = planJSON(plan)
+            o["next_step"] = "To process it exactly as it is, run process_sermon with from_plan: true."
+            return .json(.object(o))
+        }
+    }
+
+    // MARK: - Episodes (shared by process_sermon and open_in_dechaff)
+
+    /// The arguments that describe an episode — what open_in_dechaff hands to the app and
+    /// process_sermon processes.
+    static let episodeSchema: [String: JSONValue] = [
+        "path": Schema.path,
+        "trim_start": Schema.cutPoint("First word to keep. Omit to start at the beginning."),
+        "trim_end": Schema.cutPoint("Last word to keep. Omit to keep to the end."),
+        "refine": Schema.boolean("Snap trim and chapter points into silence (default true)."),
+        "exclude": Schema.array(Schema.object([
+            "start": Schema.number("Start of the passage to cut, in source seconds."),
+            "end": Schema.number("End of the passage to cut, in source seconds."),
+        ], required: ["start", "end"]), "Passages to cut out of the middle (e.g. notices), in source seconds."),
+        "tags": Schema.tags,
+        "chapters": Schema.array(Schema.object([
+            "at": Schema.cutPoint("First word of the chapter."),
+            "title": Schema.string("Chapter title."),
+        ], required: ["at", "title"]), "Chapter markers. Include one at the trim start (e.g. \"Introduction\")."),
+    ]
+
+    struct ParsedEpisode {
+        var url: URL
+        var trimIn: Double
+        var trimOut: Double
+        var excluded: [ExcludedRange]
+        var chapters: [Chapter]
+        var tags: SermonTags
+        var warnings: [JSONValue]
+        var cutReports: [String: JSONValue]
+    }
+
+    /// Reads an episode from tool arguments — refining cuts into silence unless refine is
+    /// false — or, with from_plan, from the plan the user last left in the app.
+    func parseEpisode(_ args: Args, settings: AppSettings) async throws -> ParsedEpisode {
+        if try args.bool("from_plan") == true {
+            guard let plan = EpisodePlanFile.load() else {
+                throw ToolError("There's no episode open in DeChaff. Use open_in_dechaff first.")
+            }
+            guard FileManager.default.fileExists(atPath: plan.sourcePath) else {
+                throw ToolError("The recording in DeChaff's plan is gone: \(plan.sourcePath).")
+            }
+            var tags = SermonTags(title: plan.title, reading: plan.reading, preacher: plan.preacher,
+                                  series: plan.series, artwork: plan.artwork ?? settings.artwork)
+            tags.date = plan.date
+            return ParsedEpisode(
+                url: URL(fileURLWithPath: plan.sourcePath), trimIn: plan.trimIn, trimOut: plan.trimOut,
+                excluded: plan.excluded.map { ExcludedRange(startSeconds: $0.start, endSeconds: $0.end) },
+                chapters: plan.chapters.map { Chapter(timeSeconds: $0.time, title: $0.title) },
+                tags: tags, warnings: [], cutReports: [:])
+        }
+
+        let url = try args.existingFile("path")
+        let words = await transcripts.words(for: url) ?? []
+        let refine = try args.bool("refine") ?? true
+        let refiner = CutPointRefiner()
+        let duration = audioDuration(url) ?? 0
+        var cutReports: [String: JSONValue] = [:]
+        var warnings: [JSONValue] = []
+
+        func cut(_ edge: CutEdge, _ key: String) throws -> Double? {
+            guard let spec = try CutPointSpec(args[key], name: key) else { return nil }
+            if refine {
+                let r = try refiner.refine(edge: edge, spec, words: words, audioURL: url)
+                cutReports[key] = refinementJSON(r)
+                if r.quality != .clean { warnings.append(.string("\(key): " + r.notes.joined(separator: " "))) }
+                return r.time
+            }
+            switch spec {
+            case .time(let t): return t
+            case .word(let i):
+                guard words.indices.contains(i) else { throw ToolError("\(key).word_index \(i) is out of range.") }
+                return edge == .start ? words[i].startTime : words[i].endTime
+            }
+        }
+        let trimIn = try cut(.start, "trim_start") ?? 0
+        let trimOut = min(try cut(.end, "trim_end") ?? duration, duration > 0 ? duration : .infinity)
+        guard trimOut > trimIn + 1 else {
+            throw ToolError("Trim end (\(formatTime(trimOut))) must be after trim start (\(formatTime(trimIn))).")
+        }
+
+        var chapters: [Chapter] = []
+        for (i, c) in (try args.array("chapters") ?? []).enumerated() {
+            let ch = Args(c)
+            guard let spec = try CutPointSpec(ch["at"], name: "chapters[\(i)].at") else {
+                throw ToolError("chapters[\(i)] needs \"at\".")
+            }
+            var t: Double
+            if refine {
+                let r = try refiner.refine(edge: .start, spec, words: words, audioURL: url)
+                t = r.time
+                if r.quality == .forced { warnings.append(.string("chapter \(i + 1): " + r.notes.joined(separator: " "))) }
+            } else if case .time(let s) = spec {
+                t = s
+            } else if case .word(let w) = spec, words.indices.contains(w) {
+                t = words[w].startTime
+            } else {
+                throw ToolError("chapters[\(i)].at.word_index is out of range.")
+            }
+            // A chapter a hair before the trim start belongs at the very start.
+            if t < trimIn && t > trimIn - 1 { t = trimIn }
+            guard t >= trimIn && t < trimOut else {
+                throw ToolError("Chapter \(i + 1) (\(formatTime(t))) is outside the trimmed range.")
+            }
+            chapters.append(Chapter(timeSeconds: t, title: ch.string("title") ?? "Chapter \(i + 1)"))
+        }
+
+        // Tags
+        let tagArgs = args.object("tags") ?? Args(.object([:]))
+        var tags = SermonTags(title: tagArgs.string("title") ?? "", reading: tagArgs.string("reading") ?? "",
+                              preacher: tagArgs.string("preacher") ?? "", series: tagArgs.string("series") ?? "",
+                              artwork: settings.artwork)
+        if let d = tagArgs.string("date") {
+            guard let date = parseExtractedDate(d) else { throw ToolError("Couldn't read date “\(d)” — use YYYY-MM-DD.") }
+            tags.date = date
+        }
+        if let art = tagArgs.string("artwork_path") {
+            tags.artwork = try loadArtwork(art)
+        }
+
+        var excluded: [ExcludedRange] = []
+        for (i, e) in (try args.array("exclude") ?? []).enumerated() {
+            let ex = Args(e)
+            guard let a = try ex.double("start"), let b = try ex.double("end"), b > a else {
+                throw ToolError("exclude[\(i)] needs start < end, in seconds.")
+            }
+            excluded.append(ExcludedRange(startSeconds: a, endSeconds: b))
+        }
+        return ParsedEpisode(url: url, trimIn: trimIn, trimOut: trimOut, excluded: excluded, chapters: chapters,
+                             tags: tags, warnings: warnings, cutReports: cutReports)
+    }
 
     var readTags: MCPTool {
         MCPTool(name: "read_tags", title: "Read ID3 tags",
@@ -759,6 +889,27 @@ struct DeChaffTools: Sendable {
 
 private func isoDate(_ date: Date) -> String {
     let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f.string(from: date)
+}
+
+/// A plan as the assistant sees it: times in seconds and as m:ss, artwork as a yes/no.
+private func planJSON(_ plan: EpisodePlan) -> [String: JSONValue] {
+    let kept = keptDuration(keptRanges(trimIn: plan.trimIn, trimOut: plan.trimOut,
+                                       excluding: plan.excluded.map { ExcludedRange(startSeconds: $0.start, endSeconds: $0.end) }))
+    let dateFormatter = DateFormatter()
+    dateFormatter.dateFormat = "yyyy-MM-dd"
+    return [
+        "path": .string(plan.sourcePath),
+        "trim": ["start": timeJSON(plan.trimIn), "end": timeJSON(plan.trimOut), "kept": .string(formatTime(kept))],
+        "excluded": .array(plan.excluded.map { ["start": timeJSON($0.start), "end": timeJSON($0.end)] }),
+        "chapters": .array(plan.chapters.sorted { $0.time < $1.time }.map { ["time": timeJSON($0.time), "title": .string($0.title)] }),
+        "tags": [
+            "title": .string(plan.title), "reading": .string(plan.reading), "preacher": .string(plan.preacher),
+            "series": .string(plan.series), "date": .string(dateFormatter.string(from: plan.date)),
+            "artwork": .bool(plan.artwork != nil),
+        ],
+        "edited_by": .string(plan.editedBy == .app ? "user (in the DeChaff app)" : "assistant"),
+        "updated_at": .string(ISO8601DateFormatter().string(from: plan.updatedAt)),
+    ]
 }
 
 /// The user's AI Assistant prompt with its placeholders filled exactly as the app fills

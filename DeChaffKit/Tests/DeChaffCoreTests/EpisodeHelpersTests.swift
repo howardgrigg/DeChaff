@@ -91,3 +91,31 @@ import Testing
         #expect(remapChapterTime(12, using: segments) == 10)
     }
 }
+
+@Suite struct EpisodePlanTests {
+    private func plan(editedBy: EpisodePlan.Editor = .assistant) -> EpisodePlan {
+        EpisodePlan(sourcePath: "/tmp/service.m4a", trimIn: 2486, trimOut: 4790,
+                    excluded: [.init(start: 3000, end: 3060)],
+                    chapters: [.init(time: 2486, title: "Reading: Romans 11"), .init(time: 2800, title: "Sermon")],
+                    title: "A Story of Mercy for All", reading: "Romans 11", preacher: "Andrew Southerton",
+                    series: "The Power of the Gospel", date: Date(timeIntervalSince1970: 1_793_000_000),
+                    artwork: Data([1, 2, 3]), editedBy: editedBy)
+    }
+
+    @Test func roundTripsThroughJSON() throws {
+        let original = plan()
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(EpisodePlan.self, from: try encoder.encode(original))
+        #expect(decoded.hasSameContent(as: original))
+        #expect(decoded.editedBy == .assistant)
+    }
+
+    @Test func sameContentIgnoresWhoSavedItAndWhen() {
+        var a = plan(editedBy: .assistant), b = plan(editedBy: .app)
+        b.updatedAt = a.updatedAt.addingTimeInterval(60)
+        #expect(a.hasSameContent(as: b))
+        a.chapters[1].time = 2801
+        #expect(!a.hasSameContent(as: b))
+    }
+}

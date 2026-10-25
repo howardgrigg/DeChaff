@@ -29,6 +29,8 @@ let prepareSermonPrompt = MCPPrompt(
     from last_series, show me the saved artwork (get_artwork) and ask for the new series artwork.
     4. Chapters: choose 3–6 chapters at clear structural turns, the first at the trim start (e.g. "Introduction"), \
     and check them with refine_cuts.
+    If I want to adjust anything myself, open it in DeChaff with open_in_dechaff, and when I'm done read my \
+    changes back with get_dechaff_plan and process with from_plan: true.
     5. Output: show me the plan — trim start and end (times and the words there), the tags, and chapter titles \
     and times — and wait for my go-ahead or corrections. Then run process_sermon, check the result with \
     read_tags, and finish with the output path. If process_sermon returns website_copy, follow its prompt with \

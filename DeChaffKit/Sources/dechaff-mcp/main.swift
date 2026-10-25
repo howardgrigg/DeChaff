@@ -52,6 +52,12 @@ otherwise a short episode description written from the transcript is a welcome f
 Only Output writes a file; steps 1–4 just gather decisions, so it's fine to revisit an earlier step \
 before processing. Don't run process_sermon until the user has confirmed.
 
+The user can take over in the app at any point. If they want to adjust something by hand — slide a chapter, \
+fine-tune the trim, cut a passage — or would rather see it in DeChaff, call open_in_dechaff with the episode \
+as planned so far; it opens the app on that step with everything filled in. When they say they're done, \
+call get_dechaff_plan, tell them briefly what changed, and process with process_sermon from_plan: true \
+(no refinement — they placed those points by hand). They may also just press Process in the app.
+
 All trim and chapter points are on the source recording's timeline. Prefer transcript word indexes \
 over times: the server refines every cut into the surrounding silence so no word is clipped. \
 Long-running tools return a job_id if they run past wait_seconds; call get_job to keep waiting.

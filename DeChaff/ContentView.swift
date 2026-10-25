@@ -84,6 +84,9 @@ struct ContentView: View {
             model.loadFile(url: url)
             withAnimation { currentStep = 1 }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .openEpisodePlan)) { notif in
+            openEpisodePlan(step: notif.object as? String)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .downloadFromURL)) { notif in
             guard let rawURL = notif.object as? String else { return }
             withAnimation { currentStep = 0 }
@@ -95,6 +98,35 @@ struct ContentView: View {
                 withAnimation { currentStep = 1 }
             }
         }
+    }
+
+    // MARK: - Episode plan from the MCP server
+
+    /// Opens the episode an assistant prepared, on the step it asked for. If a different
+    /// recording is already open, asks before replacing it.
+    private func openEpisodePlan(step: String?) {
+        guard !model.isProcessing, let plan = EpisodePlanFile.load() else { return }
+        let planURL = URL(fileURLWithPath: plan.sourcePath)
+        guard FileManager.default.fileExists(atPath: planURL.path) else {
+            let alert = NSAlert()
+            alert.messageText = "Recording not found"
+            alert.informativeText = "The assistant's episode uses \(planURL.lastPathComponent), which is no longer there."
+            alert.runModal()
+            return
+        }
+        if let current = model.inputURL, current.standardizedFileURL != planURL.standardizedFileURL {
+            let alert = NSAlert()
+            alert.messageText = "Open the assistant's episode?"
+            alert.informativeText = "Claude has prepared “\(plan.title.isEmpty ? planURL.lastPathComponent : plan.title)”. "
+                + "Opening it replaces the recording you're working on."
+            alert.addButton(withTitle: "Open")
+            alert.addButton(withTitle: "Keep Current")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        model.isDone = false
+        model.applyEpisodePlan(plan)
+        let steps = ["trim": 1, "info": 2, "chapters": 3, "output": 4]
+        withAnimation { currentStep = steps[step ?? "chapters"] ?? 3 }
     }
 
     // MARK: - App Header

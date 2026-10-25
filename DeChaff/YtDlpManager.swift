@@ -32,7 +32,10 @@ class YtDlpManager: ObservableObject {
     func cleanupTempFiles() {
         let tempDir = URL(fileURLWithPath: NSTemporaryDirectory())
         let files = (try? FileManager.default.contentsOfDirectory(at: tempDir, includingPropertiesForKeys: nil)) ?? []
-        for file in files where file.lastPathComponent.hasPrefix("dechaff-yt-") {
+        // Keep the recording the shared episode plan points at — the MCP server may
+        // still be working on it after the app quits.
+        let planSource = EpisodePlanFile.load()?.sourcePath
+        for file in files where file.lastPathComponent.hasPrefix("dechaff-yt-") && file.path != planSource {
             try? FileManager.default.removeItem(at: file)
         }
     }

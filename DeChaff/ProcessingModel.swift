@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import AppKit
 import AVFoundation
 import Speech
@@ -174,6 +175,89 @@ class ProcessingModel: ObservableObject {
         cachedArtworkImage = tagArtwork.flatMap { NSImage(data: $0) }
         let stored  = UserDefaults.standard.double(forKey: "dechaff.date")
         if stored != 0 { tagDate = Date(timeIntervalSinceReferenceDate: stored) }
+
+        // Keep the shared episode plan in step with what's on screen, so an assistant
+        // using the MCP server sees the user's edits. Debounced: trim drags and typing
+        // change these many times a second, and only the settled values matter.
+        let edits: [AnyPublisher<Void, Never>] = [
+            $inputURL.map { _ in () }.eraseToAnyPublisher(),
+            $inputDuration.map { _ in () }.eraseToAnyPublisher(),
+            $trimInSeconds.map { _ in () }.eraseToAnyPublisher(),
+            $trimOutSeconds.map { _ in () }.eraseToAnyPublisher(),
+            $excludedRanges.map { _ in () }.eraseToAnyPublisher(),
+            $chapters.map { _ in () }.eraseToAnyPublisher(),
+            $tagSermonTitle.map { _ in () }.eraseToAnyPublisher(),
+            $tagBibleReading.map { _ in () }.eraseToAnyPublisher(),
+            $tagPreacher.map { _ in () }.eraseToAnyPublisher(),
+            $tagSeries.map { _ in () }.eraseToAnyPublisher(),
+            $tagDate.map { _ in () }.eraseToAnyPublisher(),
+            $tagArtwork.map { _ in () }.eraseToAnyPublisher(),
+        ]
+        planSaveCancellable = Publishers.MergeMany(edits)
+            .debounce(for: .seconds(1), scheduler: RunLoop.main)
+            .sink { [weak self] in self?.saveEpisodePlan() }
+    }
+
+    // MARK: - Episode plan (hand-off with the MCP server)
+
+    private var planSaveCancellable: AnyCancellable?
+    /// The last plan written or applied, so unchanged state isn't rewritten — and an
+    /// assistant's plan isn't immediately re-saved as the user's.
+    private var lastPlan: EpisodePlan?
+
+    /// The episode on screen as a plan, or nil until a file has loaded.
+    var currentEpisodePlan: EpisodePlan? {
+        guard let url = inputURL, inputDuration > 0 else { return nil }
+        return EpisodePlan(
+            sourcePath: url.path,
+            trimIn: trimInSeconds,
+            trimOut: trimOutSeconds > trimInSeconds ? trimOutSeconds : inputDuration,
+            excluded: excludedRanges.map { .init(start: $0.startSeconds, end: $0.endSeconds) },
+            chapters: chapters.map { .init(time: $0.timeSeconds, title: $0.title) },
+            title: tagSermonTitle, reading: tagBibleReading, preacher: tagPreacher, series: tagSeries,
+            date: tagDate, artwork: tagArtwork, editedBy: .app)
+    }
+
+    private func saveEpisodePlan() {
+        guard let plan = currentEpisodePlan, !isProcessing else { return }
+        if let lastPlan, lastPlan.hasSameContent(as: plan) { return }
+        lastPlan = plan
+        try? EpisodePlanFile.save(plan)
+    }
+
+    /// Loads an episode an assistant prepared: its recording (unless already open), trim,
+    /// cut sections, chapters and tags, plus the transcript if the server already made one.
+    func applyEpisodePlan(_ plan: EpisodePlan) {
+        let url = URL(fileURLWithPath: plan.sourcePath)
+        // Chapters and cuts go in once the trim is known: views place them on the kept
+        // timeline, which doesn't exist until the recording has loaded.
+        let placeMarkers = { [weak self] in
+            guard let self else { return }
+            self.excludedRanges = plan.excluded.map { ExcludedRange(startSeconds: $0.start, endSeconds: $0.end) }
+            self.chapters = plan.chapters.map { Chapter(timeSeconds: $0.time, title: $0.title) }
+        }
+        if inputURL?.standardizedFileURL != url.standardizedFileURL || inputDuration == 0 {
+            loadFile(url: url, initialTrim: (plan.trimIn, plan.trimOut), onLoaded: placeMarkers)
+        } else {
+            trimInSeconds = plan.trimIn
+            trimOutSeconds = min(plan.trimOut, inputDuration)
+            placeMarkers()
+        }
+        tagSermonTitle = plan.title
+        tagBibleReading = plan.reading
+        if !plan.preacher.isEmpty { tagPreacher = plan.preacher }
+        if !plan.series.isEmpty { tagSeries = plan.series }
+        tagDate = plan.date
+        if let art = plan.artwork { tagArtwork = art }
+        if trimWords.isEmpty, let words = TranscriptCache.words(for: url) {
+            trimTranscriptionTask?.cancel()
+            trimWords = words
+            isTrimTranscribing = false
+            trimTranscriptProgress = 1
+        }
+        var applied = plan
+        applied.editedBy = .app
+        lastPlan = applied
     }
 
     var processingStageLabel: String {
@@ -183,7 +267,10 @@ class ProcessingModel: ObservableObject {
         return "Finishing up…"
     }
 
-    func loadFile(url: URL) {
+    /// - Parameter initialTrim: trim points to apply once the file's duration is known
+    ///   (an episode plan's), instead of keeping the whole recording.
+    /// - Parameter onLoaded: runs once the duration is known and the trim is set.
+    func loadFile(url: URL, initialTrim: (in: Double, out: Double)? = nil, onLoaded: (() -> Void)? = nil) {
         // Clean up any previous yt-dlp temp download
         if let old = inputURL, old.lastPathComponent.hasPrefix("dechaff-yt-") {
             try? FileManager.default.removeItem(at: old)
@@ -224,7 +311,13 @@ class ProcessingModel: ObservableObject {
             let (data, duration) = await generateMultiResWaveform(url: url)
             await MainActor.run {
                 self.inputDuration = duration
-                self.trimOutSeconds = duration
+                if let initialTrim {
+                    self.trimInSeconds = max(0, min(initialTrim.in, duration))
+                    self.trimOutSeconds = min(initialTrim.out, duration)
+                } else {
+                    self.trimOutSeconds = duration
+                }
+                onLoaded?()
                 self.waveformData = data
                 // Keep waveformSamples populated for isEmpty checks elsewhere
                 self.waveformSamples = data?.level2 ?? []
@@ -656,6 +749,11 @@ extension ProcessingModel {
     func startTrimTranscription() {
         guard let url = inputURL else { return }
         guard !isTrimTranscribing && trimWords.isEmpty else { return }  // already running or done
+        // The MCP server (or an earlier session) may already have transcribed this file.
+        if let cached = TranscriptCache.words(for: url) {
+            trimWords = cached; trimTranscriptProgress = 1
+            return
+        }
         trimTranscriptionTask?.cancel()
         trimWords = []; trimTranscriptError = nil; isTrimTranscribing = true; trimTranscriptProgress = 0
         let capturedURL = url
@@ -669,6 +767,7 @@ extension ProcessingModel {
                     onProgress: { p in await MainActor.run { self.trimTranscriptProgress = p } },
                     onPartial:  { words in await MainActor.run { self.trimWords = words } }
                 )
+                TranscriptCache.save(merged, for: capturedURL)
                 await MainActor.run { [weak self] in
                     self?.trimWords = merged
                     self?.isTrimTranscribing = false

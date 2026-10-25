@@ -31,6 +31,12 @@ struct DeChaffApp: App {
                               !sourceURL.isEmpty {
                         NSApp.activate(ignoringOtherApps: true)
                         NotificationCenter.default.post(name: .downloadFromURL, object: sourceURL)
+                    } else if url.scheme == "dechaff", url.host == "open-plan" {
+                        // Sent by the MCP server's open_in_dechaff tool; the plan itself is in the shared file.
+                        let step = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                            .queryItems?.first(where: { $0.name == "step" })?.value
+                        NSApp.activate(ignoringOtherApps: true)
+                        NotificationCenter.default.post(name: .openEpisodePlan, object: step)
                     }
                 }
         }
@@ -75,4 +81,5 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 extension Notification.Name {
     static let openAudioFile   = Notification.Name("openAudioFile")
     static let downloadFromURL = Notification.Name("downloadFromURL")
+    static let openEpisodePlan = Notification.Name("openEpisodePlan")
 }
