@@ -41,6 +41,7 @@
 		DC0000000000000000000118 /* WaveformView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000117 /* WaveformView.swift */; };
 		DC000000000000000000011A /* PlaybackState.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000119 /* PlaybackState.swift */; };
 		DC000000000000000000011D /* MusicDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC000000000000000000011C /* MusicDetector.swift */; };
+		DC000000000000000000011F /* TimelineMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC000000000000000000011E /* TimelineMap.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -102,6 +103,7 @@
 		DC0000000000000000000117 /* WaveformView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaveformView.swift; sourceTree = "<group>"; };
 		DC0000000000000000000119 /* PlaybackState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackState.swift; sourceTree = "<group>"; };
 		DC000000000000000000011C /* MusicDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicDetector.swift; sourceTree = "<group>"; };
+		DC000000000000000000011E /* TimelineMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineMap.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -198,6 +200,7 @@
 				DC0000000000000000000108 /* MP3Encoder.swift */,
 				DC000000000000000000010A /* ID3Tagger.swift */,
 				DC000000000000000000011C /* MusicDetector.swift */,
+				DC000000000000000000011E /* TimelineMap.swift */,
 			);
 			path = AudioProcessing;
 			sourceTree = "<group>";
@@ -372,6 +375,7 @@
 				DC0000000000000000000109 /* MP3Encoder.swift in Sources */,
 				DC000000000000000000010B /* ID3Tagger.swift in Sources */,
 				DC000000000000000000011D /* MusicDetector.swift in Sources */,
+				DC000000000000000000011F /* TimelineMap.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

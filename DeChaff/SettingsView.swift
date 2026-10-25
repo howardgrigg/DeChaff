@@ -603,7 +603,7 @@ struct AIAssistantSettingsView: View {
                                 .overlay(RoundedRectangle(cornerRadius: 8)
                                     .strokeBorder(Color.secondary.opacity(0.15), lineWidth: 1))
                             HStack {
-                                Text("Placeholders: {title} {preacher} {series} {reading}")
+                                Text("Placeholders: {title} {preacher} {series} {reading} {date} {year} {duration}")
                                     .font(.caption).foregroundStyle(.secondary)
                                 Spacer()
                                 Button("Reset to Default") { promptTemplate = Self.defaultPrompt }

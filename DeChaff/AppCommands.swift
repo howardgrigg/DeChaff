@@ -51,6 +51,7 @@ extension FocusedValues {
 struct AppActions {
     var openFile: () -> Void
     var addChapter: () -> Void
+    var excludeSelection: () -> Void
     var startProcessing: () -> Void
 }
 
@@ -136,6 +137,22 @@ struct DechaffCommands: Commands {
             }
             .keyboardShortcut("o", modifiers: [])
             .disabled(model?.inputURL == nil || step?.wrappedValue != 1 || textEditing)
+
+            Divider()
+
+            Button("Exclude Selection") {
+                actions?.excludeSelection()
+            }
+            .keyboardShortcut("x", modifiers: [])
+            .disabled(model?.hasSelection != true || step?.wrappedValue != 1 || textEditing)
+
+            Button("Clear Selection") {
+                model?.clearSelection()
+            }
+            // Escape doubles as Cancel during processing — stay out of its way.
+            .keyboardShortcut(.escape, modifiers: [])
+            .disabled(model?.hasSelection != true || step?.wrappedValue != 1
+                      || textEditing || model?.isProcessing == true)
 
             Divider()
 

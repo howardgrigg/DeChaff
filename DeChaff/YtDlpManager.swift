@@ -396,13 +396,14 @@ class YtDlpManager: ObservableObject {
             }
         }
         try? FileManager.default.removeItem(at: extractDir)
-        // Ensure yt-dlp is at the canonical path — zip names the binary yt-dlp_macos
-        if !FileManager.default.fileExists(atPath: Self.binaryPath.path) {
-            let alt = Self.supportDir.appendingPathComponent("yt-dlp_macos")
-            if FileManager.default.fileExists(atPath: alt.path) {
-                try? FileManager.default.copyItem(at: alt, to: Self.binaryPath)
-                try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: Self.binaryPath.path)
-            }
+        // Ensure yt-dlp is at the canonical path — zip names the binary yt-dlp_macos.
+        // Always replace it: a stale copy left from a previous release would be paired
+        // with the _internal/ tree we just overwrote and would fail to import at launch.
+        let alt = Self.supportDir.appendingPathComponent("yt-dlp_macos")
+        if FileManager.default.fileExists(atPath: alt.path) {
+            try? FileManager.default.removeItem(at: Self.binaryPath)
+            try? FileManager.default.copyItem(at: alt, to: Self.binaryPath)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: Self.binaryPath.path)
         }
 
         UserDefaults.standard.set(version, forKey: "dechaff.ytdlp.version")

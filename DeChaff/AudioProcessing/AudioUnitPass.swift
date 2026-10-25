@@ -163,74 +163,88 @@ extension VoiceIsolationProcessor {
             var router = MusicRouter(segments: musicSegments, crossfadeSeconds: Self.musicCrossfadeSeconds)
 
             let sr = format.sampleRate
-            let inFrame  = AVAudioFramePosition(options.trimInSeconds * sr)
-            let outFrame = min(options.trimOutSeconds > 0
-                ? AVAudioFramePosition(options.trimOutSeconds * sr)
-                : audioFile.length, audioFile.length)
-            let trimLength = AVAudioFrameCount(max(0, outFrame - inFrame))
+            // The kept spans of the source file: the trim range minus any excluded
+            // ranges. Reading them back-to-back is what materialises the K timeline.
+            let ranges = keptFrameRanges(options: options, fileLength: audioFile.length, sampleRate: sr)
+            let trimLength = AVAudioFrameCount(ranges.reduce(0) { $0 + ($1.end - $1.start) })
+            guard trimLength > 0 else { logHandler("❌ Nothing left to process after trim/exclusions"); return false }
+            let fadeFrames = AVAudioFrameCount(Self.cutFadeSeconds * sr)
             var totalFrames: AVAudioFrameCount = 0
             let startTime = Date()
-            audioFile.framePosition = inFrame
 
-            while totalFrames < trimLength {
-                if isCancelled { logHandler("⏹ Cancelled"); return false }
-                let toRead = min(frameCount, trimLength - totalFrames)
-                inBuf.frameLength = toRead
-                try audioFile.read(into: inBuf, frameCount: toRead)
-                guard inBuf.frameLength > 0 else { break }
+            for (rangeIdx, range) in ranges.enumerated() {
+                audioFile.framePosition = range.start
+                let rangeLength = AVAudioFrameCount(range.end - range.start)
+                // Fade only across internal cuts — the trim boundaries are left as
+                // hard cuts, exactly as before this feature existed.
+                let fadeIn  = rangeIdx > 0 ? fadeFrames : 0
+                let fadeOut = rangeIdx < ranges.count - 1 ? fadeFrames : 0
+                var framesInRange: AVAudioFrameCount = 0
 
-                var current: AVAudioPCMBuffer = inBuf
+                while framesInRange < rangeLength {
+                    if isCancelled { logHandler("⏹ Cancelled"); return false }
+                    let toRead = min(frameCount, rangeLength - framesInRange)
+                    inBuf.frameLength = toRead
+                    try audioFile.read(into: inBuf, frameCount: toRead)
+                    guard inBuf.frameLength > 0 else { break }
 
-                if let au = isolationAU {
-                    // Always render isolation with continuous sample time — the AU may
-                    // carry internal/adaptive state that a skipped chunk could disrupt.
-                    // Whether the isolated or raw result is used downstream is decided
-                    // afterward, based on whether this chunk falls in a music segment.
-                    midBuf.frameLength = inBuf.frameLength
-                    guard renderAU(au, from: inBuf, into: midBuf, sampleTime: Float64(totalFrames)) else {
-                        logHandler("❌ Isolation render failed"); return false
-                    }
-                    if musicSegments.isEmpty {
-                        current = midBuf
-                    } else {
-                        let chunkStartSec = Double(totalFrames) / sr
-                        let chunkEndSec   = Double(totalFrames + inBuf.frameLength) / sr
-                        switch router.classify(chunkStart: chunkStartSec, chunkEnd: chunkEndSec) {
-                        case .speech:
+                    var current: AVAudioPCMBuffer = inBuf
+
+                    if let au = isolationAU {
+                        // Always render isolation with continuous sample time — the AU may
+                        // carry internal/adaptive state that a skipped chunk could disrupt.
+                        // Whether the isolated or raw result is used downstream is decided
+                        // afterward, based on whether this chunk falls in a music segment.
+                        midBuf.frameLength = inBuf.frameLength
+                        guard renderAU(au, from: inBuf, into: midBuf, sampleTime: Float64(totalFrames)) else {
+                            logHandler("❌ Isolation render failed"); return false
+                        }
+                        if musicSegments.isEmpty {
                             current = midBuf
-                        case .music:
-                            current = inBuf
-                        case .transition(let segment):
-                            if let blend = blendBuf {
-                                blendMusicCrossfade(raw: inBuf, isolated: midBuf, into: blend,
-                                                    chunkStartFrame: totalFrames, sampleRate: sr,
-                                                    segment: segment, crossfadeSeconds: Self.musicCrossfadeSeconds)
-                                current = blend
-                            } else {
+                        } else {
+                            // Music segments are in K, and so is totalFrames — it counts
+                            // written frames, not source frames.
+                            let chunkStartSec = Double(totalFrames) / sr
+                            let chunkEndSec   = Double(totalFrames + inBuf.frameLength) / sr
+                            switch router.classify(chunkStart: chunkStartSec, chunkEnd: chunkEndSec) {
+                            case .speech:
                                 current = midBuf
+                            case .music:
+                                current = inBuf
+                            case .transition(let segment):
+                                if let blend = blendBuf {
+                                    blendMusicCrossfade(raw: inBuf, isolated: midBuf, into: blend,
+                                                        chunkStartFrame: totalFrames, sampleRate: sr,
+                                                        segment: segment, crossfadeSeconds: Self.musicCrossfadeSeconds)
+                                    current = blend
+                                } else {
+                                    current = midBuf
+                                }
                             }
                         }
                     }
-                }
 
-                if let au = compressorAU {
-                    outBuf.frameLength = current.frameLength
-                    guard renderAU(au, from: current, into: outBuf, sampleTime: Float64(totalFrames)) else {
-                        logHandler("❌ Compressor render failed"); return false
+                    if let au = compressorAU {
+                        outBuf.frameLength = current.frameLength
+                        guard renderAU(au, from: current, into: outBuf, sampleTime: Float64(totalFrames)) else {
+                            logHandler("❌ Compressor render failed"); return false
+                        }
+                        current = outBuf
                     }
-                    current = outBuf
-                }
 
-                if let mono = monoBuf {
-                    mono.frameLength = current.frameLength
-                    convertToMono(src: current, dst: mono)
-                    try outFile.write(from: mono)
-                } else {
+                    if let mono = monoBuf {
+                        mono.frameLength = current.frameLength
+                        convertToMono(src: current, dst: mono)
+                        current = mono
+                    }
+                    applyCutFades(current, framesIntoRange: framesInRange, rangeLength: rangeLength,
+                                  fadeInFrames: fadeIn, fadeOutFrames: fadeOut)
                     try outFile.write(from: current)
-                }
 
-                totalFrames += inBuf.frameLength
-                progressHandler(progressStart + (progressEnd - progressStart) * Double(totalFrames) / Double(trimLength))
+                    framesInRange += inBuf.frameLength
+                    totalFrames   += inBuf.frameLength
+                    progressHandler(progressStart + (progressEnd - progressStart) * Double(totalFrames) / Double(trimLength))
+                }
             }
 
             let elapsed = Date().timeIntervalSince(startTime)
@@ -264,29 +278,38 @@ extension VoiceIsolationProcessor {
                                    frameCapacity: chunkSize)
                 : nil
 
-            let inFrame  = AVAudioFramePosition(options.trimInSeconds * sr)
-            let outFrame = min(options.trimOutSeconds > 0
-                ? AVAudioFramePosition(options.trimOutSeconds * sr)
-                : file.length, file.length)
-            let trimLength = AVAudioFrameCount(max(0, outFrame - inFrame))
+            let ranges = keptFrameRanges(options: options, fileLength: file.length, sampleRate: sr)
+            let trimLength = AVAudioFrameCount(ranges.reduce(0) { $0 + ($1.end - $1.start) })
+            guard trimLength > 0 else { logHandler("❌ Nothing left to process after trim/exclusions"); return false }
+            let fadeFrames = AVAudioFrameCount(Self.cutFadeSeconds * sr)
             var totalFrames: AVAudioFrameCount = 0
-            file.framePosition = inFrame
 
-            while totalFrames < trimLength {
-                if isCancelled { logHandler("⏹ Cancelled"); return false }
-                let toRead = min(chunkSize, trimLength - totalFrames)
-                buf.frameLength = toRead
-                try file.read(into: buf, frameCount: toRead)
-                guard buf.frameLength > 0 else { break }
-                if let mono = monoBuf {
-                    mono.frameLength = buf.frameLength
-                    convertToMono(src: buf, dst: mono)
-                    try outFile.write(from: mono)
-                } else {
-                    try outFile.write(from: buf)
+            for (rangeIdx, range) in ranges.enumerated() {
+                file.framePosition = range.start
+                let rangeLength = AVAudioFrameCount(range.end - range.start)
+                let fadeIn  = rangeIdx > 0 ? fadeFrames : 0
+                let fadeOut = rangeIdx < ranges.count - 1 ? fadeFrames : 0
+                var framesInRange: AVAudioFrameCount = 0
+
+                while framesInRange < rangeLength {
+                    if isCancelled { logHandler("⏹ Cancelled"); return false }
+                    let toRead = min(chunkSize, rangeLength - framesInRange)
+                    buf.frameLength = toRead
+                    try file.read(into: buf, frameCount: toRead)
+                    guard buf.frameLength > 0 else { break }
+                    var current: AVAudioPCMBuffer = buf
+                    if let mono = monoBuf {
+                        mono.frameLength = buf.frameLength
+                        convertToMono(src: buf, dst: mono)
+                        current = mono
+                    }
+                    applyCutFades(current, framesIntoRange: framesInRange, rangeLength: rangeLength,
+                                  fadeInFrames: fadeIn, fadeOutFrames: fadeOut)
+                    try outFile.write(from: current)
+                    framesInRange += buf.frameLength
+                    totalFrames   += buf.frameLength
+                    progressHandler(progressStart + (progressEnd - progressStart) * Double(totalFrames) / Double(trimLength))
                 }
-                totalFrames += buf.frameLength
-                progressHandler(progressStart + (progressEnd - progressStart) * Double(totalFrames) / Double(trimLength))
             }
             return true
         } catch {
@@ -346,6 +369,44 @@ extension VoiceIsolationProcessor {
             return (t - (exit - crossfadeSeconds)) / (2 * crossfadeSeconds)
         }
         return 1.0
+    }
+
+    // MARK: - Excluded-range cuts
+
+    /// Ramp length applied either side of an internal cut so splicing two
+    /// unrelated moments together doesn't produce an audible click.
+    static let cutFadeSeconds = 0.015
+
+    /// Fades `buf` in/out where it overlaps the head or tail of its kept span.
+    /// Both fade lengths are zero on the outermost spans, and the per-sample loop
+    /// only runs on the two chunks per cut that actually touch a ramp, so this
+    /// costs nothing on the overwhelming majority of chunks.
+    func applyCutFades(_ buf: AVAudioPCMBuffer,
+                       framesIntoRange: AVAudioFrameCount, rangeLength: AVAudioFrameCount,
+                       fadeInFrames: AVAudioFrameCount, fadeOutFrames: AVAudioFrameCount) {
+        let n = AVAudioFrameCount(buf.frameLength)
+        guard n > 0 else { return }
+        let chunkEnd = framesIntoRange + n
+        let fadeOutStart = rangeLength > fadeOutFrames ? rangeLength - fadeOutFrames : 0
+        let touchesIn  = fadeInFrames  > 0 && framesIntoRange < fadeInFrames
+        let touchesOut = fadeOutFrames > 0 && chunkEnd > fadeOutStart
+        guard touchesIn || touchesOut else { return }
+
+        for ch in 0..<Int(buf.format.channelCount) {
+            guard let data = buf.floatChannelData?[ch] else { continue }
+            for i in 0..<Int(n) {
+                let p = framesIntoRange + AVAudioFrameCount(i)
+                var gain: Float = 1
+                if touchesIn, p < fadeInFrames {
+                    gain *= Float(p) / Float(fadeInFrames)
+                }
+                if touchesOut, p >= fadeOutStart {
+                    let remaining = rangeLength > p ? rangeLength - 1 - min(p, rangeLength - 1) : 0
+                    gain *= min(1, Float(remaining) / Float(fadeOutFrames))
+                }
+                data[i] *= gain
+            }
+        }
     }
 
     // MARK: - Helpers

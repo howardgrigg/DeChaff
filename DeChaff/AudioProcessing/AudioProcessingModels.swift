@@ -39,6 +39,10 @@ struct ProcessingOptions {
     var slowLeveler: Bool = true           // windowed RMS gain envelope
     var trimInSeconds: Double = 0
     var trimOutSeconds: Double = 0  // 0 = use full file duration
+    /// Spans cut out of the middle of the recording, in source seconds.
+    /// Removed by the same pass that materialises the trim, so every later pass
+    /// sees an already-cut timeline. Empty = nothing excluded.
+    var excludedRanges: [ExcludedRange] = []
     var skipIsolationOnMusic: Bool = false  // only meaningful when voiceIsolation == true
 
     // Compressor parameters (used when compression == true)

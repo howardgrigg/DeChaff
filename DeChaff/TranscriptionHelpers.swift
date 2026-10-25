@@ -17,13 +17,26 @@ struct TranscriptWord: Identifiable {
 
 func extractTrimmedAudio(from sourceURL: URL, trimIn: Double, trimOut: Double) throws -> URL {
     let source = try AVAudioFile(forReading: sourceURL)
+    let sr = source.processingFormat.sampleRate
+    let end = trimOut > trimIn + 0.5 ? trimOut : Double(source.length) / sr
+    return try extractKeptAudio(from: sourceURL, spans: [KeptSpan(start: trimIn, end: end)])
+}
+
+/// Writes the given source spans, back to back, into one mono temp file.
+/// A single span is the plain trim case; several spans splice out the user's
+/// excluded ranges so the transcript covers only what will ship.
+func extractKeptAudio(from sourceURL: URL, spans: [KeptSpan]) throws -> URL {
+    let source = try AVAudioFile(forReading: sourceURL)
     let format = source.processingFormat
     let sr = format.sampleRate
     let nch = Int(format.channelCount)
-    let startFrame = AVAudioFramePosition(trimIn * sr)
-    let endFrame: AVAudioFramePosition = trimOut > trimIn + 0.5
-        ? min(AVAudioFramePosition(trimOut * sr), source.length) : source.length
-    let totalFrames = AVAudioFrameCount(max(0, endFrame - startFrame))
+
+    let ranges: [(start: AVAudioFramePosition, end: AVAudioFramePosition)] = spans.compactMap { span in
+        let s = max(0, min(AVAudioFramePosition(span.start * sr), source.length))
+        let e = max(s, min(AVAudioFramePosition(span.end * sr), source.length))
+        return e > s ? (start: s, end: e) : nil
+    }
+    let totalFrames = ranges.reduce(AVAudioFramePosition(0)) { $0 + ($1.end - $1.start) }
     guard totalFrames > 0 else { throw CocoaError(.fileReadInvalidFileName) }
     let tempURL = FileManager.default.temporaryDirectory
         .appendingPathComponent("dechaff_transcript_\(UUID().uuidString).caf")
@@ -32,36 +45,39 @@ func extractTrimmedAudio(from sourceURL: URL, trimIn: Double, trimOut: Double) t
     // files add up to gigabytes per sermon across the four parallel chunks.
     let monoFormat = AVAudioFormat(standardFormatWithSampleRate: sr, channels: 1)!
     let dest = try AVAudioFile(forWriting: tempURL, settings: monoFormat.settings)
-    source.framePosition = startFrame
     let chunkSize: AVAudioFrameCount = 65536
     guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkSize),
           let monoBuffer = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: chunkSize) else {
         throw CocoaError(.fileReadUnknown)
     }
-    var remaining = totalFrames
-    while remaining > 0 {
-        let toRead = min(chunkSize, remaining)
-        buffer.frameLength = toRead
-        try source.read(into: buffer, frameCount: toRead)
-        let n = Int(buffer.frameLength)
-        guard n > 0 else { break }
-        monoBuffer.frameLength = buffer.frameLength
-        if let out = monoBuffer.floatChannelData?[0] {
-            if nch == 1, let src = buffer.floatChannelData?[0] {
-                memcpy(out, src, n * MemoryLayout<Float>.size)
-            } else {
-                // Average all channels
-                vDSP_vclr(out, 1, vDSP_Length(n))
-                for ch in 0..<nch {
-                    guard let src = buffer.floatChannelData?[ch] else { continue }
-                    vDSP_vadd(out, 1, src, 1, out, 1, vDSP_Length(n))
+
+    for range in ranges {
+        source.framePosition = range.start
+        var remaining = AVAudioFrameCount(range.end - range.start)
+        while remaining > 0 {
+            let toRead = min(chunkSize, remaining)
+            buffer.frameLength = toRead
+            try source.read(into: buffer, frameCount: toRead)
+            let n = Int(buffer.frameLength)
+            guard n > 0 else { break }
+            monoBuffer.frameLength = buffer.frameLength
+            if let out = monoBuffer.floatChannelData?[0] {
+                if nch == 1, let src = buffer.floatChannelData?[0] {
+                    memcpy(out, src, n * MemoryLayout<Float>.size)
+                } else {
+                    // Average all channels
+                    vDSP_vclr(out, 1, vDSP_Length(n))
+                    for ch in 0..<nch {
+                        guard let src = buffer.floatChannelData?[ch] else { continue }
+                        vDSP_vadd(out, 1, src, 1, out, 1, vDSP_Length(n))
+                    }
+                    var divisor = Float(nch)
+                    vDSP_vsdiv(out, 1, &divisor, out, 1, vDSP_Length(n))
                 }
-                var divisor = Float(nch)
-                vDSP_vsdiv(out, 1, &divisor, out, 1, vDSP_Length(n))
             }
+            try dest.write(from: monoBuffer)
+            remaining -= AVAudioFrameCount(n)
         }
-        try dest.write(from: monoBuffer)
-        remaining -= AVAudioFrameCount(n)
     }
     return tempURL
 }

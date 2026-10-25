@@ -9,8 +9,13 @@ struct WaveformView: View {
     @Binding var trimIn: Double
     @Binding var trimOut: Double
     let playhead: Double
+    /// Chapter times are source seconds, the same timeline as trimIn/trimOut and
+    /// the playhead — so exclusions never move them.
     let chapters: [Chapter]
-    let trimInOffset: Double
+    /// Spans surviving trim + exclusions; the gaps between them are drawn as cuts.
+    let keptSpans: [KeptSpan]
+    @Binding var selectionStart: Double
+    @Binding var selectionEnd: Double
     var onSeek: (Double) -> Void
     var onChapterMove: ((UUID, Double) -> Void)?
     var onTrimDragEnd: ((_ oldIn: Double, _ oldOut: Double) -> Void)?
@@ -22,8 +27,11 @@ struct WaveformView: View {
     let tileCache: WaveformTileCache
     var transcriptWords: [TranscriptWord] = []
 
-    @State private var dragHandle: Int? = nil   // 0=trimIn 1=trimOut -1=tap -2=chapter -3=pan
+    // 0=trimIn 1=trimOut 2=selectionStart 3=selectionEnd
+    // -1=tap -2=chapter -3=pan -4=new selection
+    @State private var dragHandle: Int? = nil
     @State private var dragChapterID: UUID? = nil
+    @State private var selectionAnchor: Double = 0
     @State private var dragStartTrimIn: Double = 0
     @State private var dragStartTrimOut: Double = 0
     @State private var dragStartChapterTime: Double = 0
@@ -35,6 +43,15 @@ struct WaveformView: View {
     private var fullWidth: CGFloat { viewportWidth * CGFloat(zoom) }
 
     private func clampStart(_ s: Double) -> Double { max(0, min(s, duration - visibleDuration)) }
+
+    private var hasSelection: Bool { selectionEnd > selectionStart + 0.05 }
+
+    /// The cut spans — the gaps between kept spans, i.e. exactly what the pipeline
+    /// will remove, rather than the raw (possibly overlapping) excluded ranges.
+    private var cutSpans: [(start: Double, end: Double)] {
+        guard keptSpans.count > 1 else { return [] }
+        return zip(keptSpans, keptSpans.dropFirst()).map { (start: $0.end, end: $1.start) }
+    }
 
     /// Map a time value to an x-coordinate in viewport space.
     private func viewportX(_ t: Double) -> CGFloat {
@@ -130,14 +147,52 @@ struct WaveformView: View {
                         ctx.fill(Path(CGRect(x: max(0, trimOutX), y: 0, width: vw - max(0, trimOutX), height: fh)), with: .color(dimColor))
                     }
 
+                    // Excluded (cut) spans — drawn over the trim dimming, since they
+                    // always fall inside the trim range.
+                    for cut in cutSpans {
+                        let x0 = max(0, viewportX(cut.start))
+                        let x1 = min(vw, viewportX(cut.end))
+                        guard x1 > 0, x0 < vw, x1 > x0 else { continue }
+                        ctx.fill(Path(CGRect(x: x0, y: 0, width: x1 - x0, height: fh)),
+                                 with: .color(Color.red.opacity(0.28)))
+                        for edge in [x0, x1] {
+                            ctx.stroke(Path { p in p.move(to: CGPoint(x: edge, y: 0)); p.addLine(to: CGPoint(x: edge, y: fh)) },
+                                       with: .color(Color.red.opacity(0.9)), lineWidth: 1.5)
+                        }
+                        if x1 - x0 > 46 {
+                            ctx.draw(Text("✂ cut").font(.system(size: 9, weight: .semibold))
+                                        .foregroundStyle(Color.red),
+                                     at: CGPoint(x: (x0 + x1) / 2, y: fh - 9), anchor: .center)
+                        }
+                    }
+
+                    // Pending selection
+                    if hasSelection {
+                        let x0 = max(0, viewportX(selectionStart))
+                        let x1 = min(vw, viewportX(selectionEnd))
+                        if x1 > 0, x0 < vw, x1 > x0 {
+                            ctx.fill(Path(CGRect(x: x0, y: 0, width: x1 - x0, height: fh)),
+                                     with: .color(Color.accentColor.opacity(0.22)))
+                            for edge in [viewportX(selectionStart), viewportX(selectionEnd)] {
+                                guard edge >= -4, edge <= vw + 4 else { continue }
+                                ctx.stroke(Path { p in p.move(to: CGPoint(x: edge, y: 0)); p.addLine(to: CGPoint(x: edge, y: fh)) },
+                                           with: .color(Color.accentColor), lineWidth: 2)
+                                ctx.fill(Path(roundedRect: CGRect(x: edge - 3, y: fh / 2 - 9, width: 6, height: 18), cornerRadius: 3),
+                                         with: .color(Color.accentColor))
+                            }
+                        }
+                    }
+
                     // Chapter markers
                     var lastLabelX: CGFloat = -100
                     for chapter in chapters.sorted(by: { $0.timeSeconds < $1.timeSeconds }) {
-                        let inputTime = chapter.timeSeconds + trimInOffset
-                        let x = viewportX(inputTime)
+                        let x = viewportX(chapter.timeSeconds)
                         guard x >= 0 && x <= vw else { continue }
                         let isDragging = chapter.id == dragChapterID
-                        let chapterColor = Color.accentColor
+                        // A chapter sitting in a cut will snap to the join at export —
+                        // show it greyed so that's visible before processing.
+                        let isCut = isExcluded(chapter.timeSeconds, keptRanges: keptSpans)
+                        let chapterColor = isCut ? Color.secondary : Color.accentColor
                         ctx.stroke(Path { p in p.move(to: CGPoint(x: x, y: 0)); p.addLine(to: CGPoint(x: x, y: fh)) },
                                    with: .color(isDragging ? Color.yellow : chapterColor.opacity(0.8)),
                                    lineWidth: isDragging ? 2 : 1.5)
@@ -193,19 +248,34 @@ struct WaveformView: View {
                                 let dy = value.translation.height
 
                                 if dragHandle == nil {
+                                    // Shift-drag paints a new selection anywhere on the
+                                    // waveform, so it never competes with the handles.
+                                    let shiftHeld = NSEvent.modifierFlags.contains(.shift)
                                     // Decide what was grabbed at the initial touch point
                                     let inX  = viewportX(trimIn)
                                     let outX = viewportX(trimOut)
                                     let dIn  = abs(startX - inX)
                                     let dOut = abs(startX - outX)
-                                    if dIn <= 12 || dOut <= 12 {
+                                    let selStartX = viewportX(selectionStart)
+                                    let selEndX   = viewportX(selectionEnd)
+                                    let dSelStart = hasSelection ? abs(startX - selStartX) : .greatestFiniteMagnitude
+                                    let dSelEnd   = hasSelection ? abs(startX - selEndX)   : .greatestFiniteMagnitude
+
+                                    if shiftHeld && (abs(dx) > 2 || abs(dy) > 2) {
+                                        dragHandle = -4
+                                        selectionAnchor = timeAt(startX)
+                                        selectionStart = selectionAnchor
+                                        selectionEnd = selectionAnchor
+                                    } else if dIn <= 12 || dOut <= 12 {
                                         dragHandle = dIn < dOut ? 0 : 1
                                         dragStartTrimIn = trimIn
                                         dragStartTrimOut = trimOut
+                                    } else if dSelStart <= 10 || dSelEnd <= 10 {
+                                        dragHandle = dSelStart < dSelEnd ? 2 : 3
                                     } else {
                                         var best: (dist: CGFloat, id: UUID)? = nil
                                         for ch in chapters {
-                                            let cx = viewportX(ch.timeSeconds + trimInOffset)
+                                            let cx = viewportX(ch.timeSeconds)
                                             let d  = abs(startX - cx)
                                             if d <= 10, best == nil || d < best!.dist { best = (d, ch.id) }
                                         }
@@ -228,10 +298,19 @@ struct WaveformView: View {
                                     trimIn = min(timeAt(curX), trimOut - 0.5); onSeek(trimIn)
                                 case 1:
                                     trimOut = max(timeAt(curX), trimIn + 0.5); onSeek(trimOut)
+                                case 2:
+                                    let t = min(timeAt(curX), selectionEnd - 0.05)
+                                    selectionStart = max(0, t)
+                                case 3:
+                                    selectionEnd = max(timeAt(curX), selectionStart + 0.05)
+                                case -4:
+                                    let t = timeAt(curX)
+                                    selectionStart = min(selectionAnchor, t)
+                                    selectionEnd   = max(selectionAnchor, t)
                                 case -2:
                                     if let id = dragChapterID {
                                         let time = timeAt(curX)
-                                        onChapterMove?(id, max(0, time - trimInOffset))
+                                        onChapterMove?(id, time)
                                         onSeek(time)
                                     }
                                 case -3:
@@ -244,8 +323,12 @@ struct WaveformView: View {
                             .onEnded { value in
                                 let totalMove = abs(value.translation.width) + abs(value.translation.height)
                                 if dragHandle == nil || (dragHandle == -1 && totalMove < 5) {
-                                    // Tap — seek to tapped position
+                                    // Tap — seek to tapped position and drop any selection
                                     onSeek(timeAt(value.startLocation.x))
+                                    if hasSelection { selectionStart = 0; selectionEnd = 0 }
+                                }
+                                if dragHandle == -4 && !hasSelection {
+                                    selectionStart = 0; selectionEnd = 0  // shift-click without a drag
                                 }
                                 if dragHandle == 0 || dragHandle == 1 {
                                     if trimIn != dragStartTrimIn || trimOut != dragStartTrimOut {
