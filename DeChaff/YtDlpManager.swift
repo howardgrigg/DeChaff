@@ -1,14 +1,7 @@
 import Foundation
+import DeChaffCore
 
 // MARK: - Data models
-
-struct VideoEntry: Identifiable {
-    let id: String
-    let title: String
-    let durationSeconds: Int?
-    let uploadDate: String   // raw "20240317" from yt-dlp
-    let thumbnailURL: URL?
-}
 
 enum YtDlpInstallStatus {
     case notInstalled
@@ -46,45 +39,20 @@ class YtDlpManager: ObservableObject {
 
     // MARK: Paths
 
-    private static var supportDir: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
-            .first!.appendingPathComponent("DeChaff")
-    }
+    private static var supportDir: URL { YtDlpPaths.supportDirectory }
+    private static var binaryPath: URL { YtDlpPaths.binary }
+    private static var ffmpegPath: URL { YtDlpPaths.bundledFFmpeg }
 
-    private static var binaryPath: URL {
-        supportDir.appendingPathComponent("yt-dlp")
-    }
+    var binaryURL: URL? { YtDlpPaths.installedBinary }
 
-    private static var ffmpegPath: URL {
-        supportDir.appendingPathComponent("ffmpeg")
-    }
-
-    var binaryURL: URL? {
-        let url = Self.binaryPath
-        return FileManager.default.fileExists(atPath: url.path) ? url : nil
-    }
-
-    var ffmpegURL: URL? {
-        // Prefer bundled ffmpeg in Application Support
-        let bundled = Self.ffmpegPath
-        if FileManager.default.fileExists(atPath: bundled.path) { return bundled }
-        // Fall back to system ffmpeg (Homebrew Apple Silicon / Intel)
-        let systemPaths = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"]
-        for path in systemPaths {
-            if FileManager.default.fileExists(atPath: path) {
-                return URL(fileURLWithPath: path)
-            }
-        }
-        return nil
-    }
+    var ffmpegURL: URL? { YtDlpPaths.installedFFmpeg }
 
     enum FFmpegSource { case bundled, system(path: String) }
 
     /// Where ffmpeg was found, or nil if not yet available.
     var ffmpegSource: FFmpegSource? {
         if FileManager.default.fileExists(atPath: Self.ffmpegPath.path) { return .bundled }
-        let systemPaths = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"]
-        for path in systemPaths where FileManager.default.fileExists(atPath: path) {
+        for path in YtDlpPaths.systemFFmpegPaths where FileManager.default.fileExists(atPath: path) {
             return .system(path: path)
         }
         return nil
@@ -132,55 +100,8 @@ class YtDlpManager: ObservableObject {
 
     func fetchVideoList(channelURL: String, limit: Int) async throws -> [VideoEntry] {
         guard let bin = binaryURL else { throw YtDlpError.notInstalled }
-        let process = Process()
-        process.executableURL = bin
-        process.arguments = [
-            "--flat-playlist",
-            "--dump-json",
-            "--playlist-end", "\(limit)",
-            "--no-warnings",
-            channelURL
-        ]
-        // PYTHONUNBUFFERED=1 prevents Python's block-buffering on pipes.
-        // Without it, output only arrives in ~8 KB chunks instead of line-by-line.
-        process.environment = ProcessInfo.processInfo.environment
-            .merging(["PYTHONUNBUFFERED": "1"]) { _, new in new }
-        let outPipe = Pipe()
-        let errPipe = Pipe()
-        process.standardOutput = outPipe
-        process.standardError = errPipe
-        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.path)
-        try process.run()
-
-        var entries: [VideoEntry] = []
-        let decoder = JSONDecoder()
-        for try await line in outPipe.fileHandleForReading.bytes.lines {
-            guard !line.isEmpty, let data = line.data(using: .utf8) else { continue }
-            if let raw = try? decoder.decode(VideoEntryRaw.self, from: data) {
-                // YouTube thumbnail URLs are predictable from the video ID — more reliable
-                // than the thumbnail field in --flat-playlist output which is often absent.
-                let thumbnailURL = URL(string: "https://img.youtube.com/vi/\(raw.id)/mqdefault.jpg")
-                entries.append(VideoEntry(
-                    id: raw.id,
-                    title: raw.title,
-                    durationSeconds: raw.duration,
-                    uploadDate: raw.upload_date ?? "",
-                    thumbnailURL: thumbnailURL
-                ))
-                if entries.count >= limit {
-                    // Stop reading and kill the process — leaving it running with nobody
-                    // draining stdout can block it on a full pipe and hang us below.
-                    process.terminate()
-                    break
-                }
-            }
-        }
-        await awaitTermination(of: process)
-        if process.terminationStatus != 0 && entries.isEmpty {
-            let errText = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-            throw YtDlpError.processFailed(errText.trimmingCharacters(in: .whitespacesAndNewlines))
-        }
-        return entries
+        return try await YtDlpClient(binary: bin, ffmpeg: ffmpegURL)
+            .fetchVideoList(channelURL: channelURL, limit: limit)
     }
 
     // MARK: - Download audio
@@ -191,103 +112,31 @@ class YtDlpManager: ObservableObject {
 
     func downloadAudio(url videoURL: String) async throws -> URL {
         guard let bin = binaryURL else { throw YtDlpError.notInstalled }
-        let uuid = UUID().uuidString
-        let tempDir = URL(fileURLWithPath: NSTemporaryDirectory())
-        let outputTemplate = tempDir.appendingPathComponent("dechaff-yt-\(uuid).%(ext)s").path
-
-        // Wrap yt-dlp in /usr/bin/script which allocates a PTY and runs the command
-        // inside it. This makes Python think it's writing to a terminal, bypassing
-        // PyInstaller's handling that silently swallows all pipe-based stderr output.
-        // script writes the PTY output to its own stdout, which we read via outPipe.
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/script")
-        var args: [String] = [
-            "-q", "/dev/null",      // quiet mode, discard transcript file
-            bin.path,               // yt-dlp binary
-            "-x",
-            "-f", "bestaudio[ext=m4a]/bestaudio/best",
-            "--no-playlist",
-            "--no-warnings",
-            "--fragment-retries", "10",
-            "--retries", "10",
-            "--progress",
-            "--progress-delta", "1",   // at most one progress line per second
-            "--newline",
-            "-o", outputTemplate,
-        ]
-        // Pass bundled ffmpeg so yt-dlp can stitch fragmented live-stream VODs
-        if let ffmpeg = ffmpegURL {
-            args += ["--ffmpeg-location", ffmpeg.path]
-        }
-        args.append(videoURL)
-        process.arguments = args
-        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.path)
-
-        let outPipe = Pipe()
-        process.standardOutput = outPipe
-        process.standardError = Pipe()
-
-        let (stream, continuation) = AsyncStream<String>.makeStream()
-        var lineBuffer = ""
-        outPipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            if data.isEmpty {
-                if !lineBuffer.isEmpty { continuation.yield(Self.stripANSI(lineBuffer)) }
-                continuation.finish()
-                handle.readabilityHandler = nil
-                return
-            }
-            guard let text = String(data: data, encoding: .utf8) else { return }
-            lineBuffer += text
-            var parts = lineBuffer.components(separatedBy: CharacterSet(charactersIn: "\r\n"))
-            lineBuffer = parts.removeLast()
-            for part in parts where !part.trimmingCharacters(in: .whitespaces).isEmpty {
-                continuation.yield(Self.stripANSI(part))
-            }
-        }
+        let client = YtDlpClient(binary: bin, ffmpeg: ffmpegURL)
 
         downloadLog = []
         downloadProgress = 0
-        activeDownloadProcess = process
-        try process.run()
-
-        var outputLines: [String] = []
-        for await line in stream {
-            outputLines.append(line)
-            // Publish only meaningful progress changes — every assignment
-            // invalidates all views observing this object.
-            if let pct = Self.parseProgress(line),
-               abs(pct - (downloadProgress ?? -1)) >= 0.001 {
-                downloadProgress = pct
+        defer {
+            downloadProgress = nil
+            activeDownloadProcess = nil
+        }
+        return try await client.downloadAudio(
+            url: videoURL,
+            onStart: { process in
+                await MainActor.run { self.activeDownloadProcess = process }
+            },
+            onLine: { line in
+                await MainActor.run {
+                    self.downloadLog.append(line)
+                    // Publish only meaningful progress changes — every assignment
+                    // invalidates all views observing this object.
+                    if let pct = YtDlpClient.parseProgress(line),
+                       abs(pct - (self.downloadProgress ?? -1)) >= 0.001 {
+                        self.downloadProgress = pct
+                    }
+                }
             }
-        }
-        downloadLog = outputLines
-        downloadProgress = nil
-        await awaitTermination(of: process)
-        activeDownloadProcess = nil
-
-        guard process.terminationStatus == 0 else {
-            // outputLines contains all PTY output; filter to lines that look like errors
-            let errorPrefixes = ["ERROR:", "error:", "Warning:"]
-            let errorLines = outputLines.filter { line in
-                errorPrefixes.contains(where: { line.hasPrefix($0) }) ||
-                (!line.hasPrefix("[download]") && !line.hasPrefix("[youtube]") &&
-                 !line.hasPrefix("[info]") && !line.hasPrefix("[ExtractAudio]"))
-            }
-            let msg = errorLines
-                .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-                .joined(separator: "\n")
-            throw YtDlpError.processFailed(msg.isEmpty
-                ? "yt-dlp exited with status \(process.terminationStatus)"
-                : msg)
-        }
-
-        // Locate the output file (extension determined by yt-dlp)
-        let files = (try? FileManager.default.contentsOfDirectory(at: tempDir, includingPropertiesForKeys: nil)) ?? []
-        guard let outputURL = files.first(where: { $0.lastPathComponent.hasPrefix("dechaff-yt-\(uuid)") }) else {
-            throw YtDlpError.processFailed("Download completed but output file not found")
-        }
-        return outputURL
+        )
     }
 
     // MARK: - Private helpers
@@ -301,53 +150,8 @@ class YtDlpManager: ObservableObject {
         p.standardError = Pipe()
         try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.path)
         guard (try? p.run()) != nil else { return false }
-        await awaitTermination(of: p)
+        await YtDlpClient.awaitTermination(of: p)
         return p.terminationStatus == 0
-    }
-
-    /// Waits for a Process to exit without blocking the current thread.
-    private nonisolated func awaitTermination(of process: Process) async {
-        // A handler installed after the process has already exited never fires, so:
-        // install the handler first, then re-check isRunning to close the race.
-        // Both paths can end up eligible to resume — guard with a locked flag.
-        final class ResumeOnce: @unchecked Sendable {
-            private let lock = NSLock()
-            private var resumed = false
-            func run(_ body: () -> Void) {
-                lock.lock(); defer { lock.unlock() }
-                guard !resumed else { return }
-                resumed = true
-                body()
-            }
-        }
-        let once = ResumeOnce()
-        await withCheckedContinuation { continuation in
-            process.terminationHandler = { _ in
-                once.run { continuation.resume() }
-            }
-            if !process.isRunning {
-                once.run { continuation.resume() }
-            }
-        }
-    }
-
-    /// Strips ANSI escape sequences (e.g. \u{1B}[K) produced by PTY output.
-    private nonisolated static func stripANSI(_ s: String) -> String {
-        s.replacingOccurrences(of: "\u{1B}\\[[0-9;]*[A-Za-z]", with: "", options: .regularExpression)
-    }
-
-    /// Parses a yt-dlp progress line like "[download]  47.3% of …" → 0.473
-    private nonisolated static func parseProgress(_ line: String) -> Double? {
-        // Match e.g. "[download]  47.3%" or "[download] 100%"
-        guard line.contains("[download]") else { return nil }
-        let parts = line.components(separatedBy: .whitespaces)
-        for part in parts {
-            let trimmed = part.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasSuffix("%"), let pct = Double(trimmed.dropLast()) {
-                return pct / 100.0
-            }
-        }
-        return nil
     }
 
     private func fetchLatestRelease() async throws -> GitHubRelease {
@@ -555,29 +359,7 @@ private final class FileDownloadDelegate: NSObject, URLSessionDownloadDelegate {
     }
 }
 
-// MARK: - Errors
-
-enum YtDlpError: LocalizedError {
-    case notInstalled
-    case processFailed(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .notInstalled: return "yt-dlp is not installed. Check Settings."
-        case .processFailed(let msg): return msg.isEmpty ? "yt-dlp process failed." : msg
-        }
-    }
-}
-
 // MARK: - Private decodable models
-
-private struct VideoEntryRaw: Decodable {
-    let id: String
-    let title: String
-    let duration: Int?
-    let upload_date: String?
-    let thumbnail: String?
-}
 
 private struct GitHubRelease: Decodable {
     let tag_name: String

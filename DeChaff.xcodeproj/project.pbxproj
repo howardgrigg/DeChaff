@@ -13,7 +13,6 @@
 		50AE96392F8765F0006663EF /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 50AE96382F8765F0006663EF /* Sparkle */; };
 		AA00000000000000000000B2 /* DeChaffApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000AF /* DeChaffApp.swift */; };
 		AA00000000000000000000B3 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000B0 /* ContentView.swift */; };
-		AA00000000000000000000B4 /* VoiceIsolationProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000B1 /* VoiceIsolationProcessor.swift */; };
 		AA00000000000000000000C4 /* lame in Resources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000C3 /* lame */; };
 		AA00000000000000000000C5 /* Wheat.png in Resources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000C6 /* Wheat.png */; };
 		DC00000000000000000000E2 /* Step1LoadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC00000000000000000000E1 /* Step1LoadView.swift */; };
@@ -27,20 +26,13 @@
 		DC00000000000000000000F2 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC00000000000000000000F1 /* SettingsView.swift */; };
 		DC00000000000000000000F4 /* SermonMetadataExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC00000000000000000000F3 /* SermonMetadataExtractor.swift */; };
 		DC00000000000000000000F6 /* WaveformTileCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC00000000000000000000F5 /* WaveformTileCache.swift */; };
-		DC0000000000000000000101 /* AudioProcessingModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000100 /* AudioProcessingModels.swift */; };
-		DC0000000000000000000103 /* AudioUnitPass.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000102 /* AudioUnitPass.swift */; };
-		DC0000000000000000000105 /* LoudnessProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000104 /* LoudnessProcessor.swift */; };
-		DC0000000000000000000107 /* SilenceProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000106 /* SilenceProcessor.swift */; };
-		DC0000000000000000000109 /* MP3Encoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000108 /* MP3Encoder.swift */; };
-		DC000000000000000000010B /* ID3Tagger.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC000000000000000000010A /* ID3Tagger.swift */; };
 		DC000000000000000000010E /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC000000000000000000010D /* KeychainHelper.swift */; };
 		DC0000000000000000000110 /* ClaudeAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC000000000000000000010F /* ClaudeAPIClient.swift */; };
 		DC0000000000000000000112 /* AppCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000111 /* AppCommands.swift */; };
 		DC0000000000000000000114 /* ProcessingModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000113 /* ProcessingModel.swift */; };
-		DC0000000000000000000116 /* TranscriptionHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000115 /* TranscriptionHelpers.swift */; };
 		DC0000000000000000000118 /* WaveformView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000117 /* WaveformView.swift */; };
+		DC0000000000000000000201 /* DeChaffCore in Frameworks */ = {isa = PBXBuildFile; productRef = DC0000000000000000000202 /* DeChaffCore */; };
 		DC000000000000000000011A /* PlaybackState.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000119 /* PlaybackState.swift */; };
-		DC000000000000000000011D /* MusicDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC000000000000000000011C /* MusicDetector.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -74,7 +66,6 @@
 		AA00000000000000000000AE /* DeChaff.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DeChaff.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA00000000000000000000AF /* DeChaffApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeChaffApp.swift; sourceTree = "<group>"; };
 		AA00000000000000000000B0 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
-		AA00000000000000000000B1 /* VoiceIsolationProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceIsolationProcessor.swift; sourceTree = "<group>"; };
 		AA00000000000000000000C3 /* lame */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; path = lame; sourceTree = "<group>"; };
 		AA00000000000000000000C6 /* Wheat.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = Wheat.png; sourceTree = "<group>"; };
 		DC00000000000000000000E1 /* Step1LoadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Step1LoadView.swift; sourceTree = "<group>"; };
@@ -88,20 +79,12 @@
 		DC00000000000000000000F1 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		DC00000000000000000000F3 /* SermonMetadataExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SermonMetadataExtractor.swift; sourceTree = "<group>"; };
 		DC00000000000000000000F5 /* WaveformTileCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaveformTileCache.swift; sourceTree = "<group>"; };
-		DC0000000000000000000100 /* AudioProcessingModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioProcessingModels.swift; sourceTree = "<group>"; };
-		DC0000000000000000000102 /* AudioUnitPass.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioUnitPass.swift; sourceTree = "<group>"; };
-		DC0000000000000000000104 /* LoudnessProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoudnessProcessor.swift; sourceTree = "<group>"; };
-		DC0000000000000000000106 /* SilenceProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SilenceProcessor.swift; sourceTree = "<group>"; };
-		DC0000000000000000000108 /* MP3Encoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MP3Encoder.swift; sourceTree = "<group>"; };
-		DC000000000000000000010A /* ID3Tagger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ID3Tagger.swift; sourceTree = "<group>"; };
 		DC000000000000000000010D /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
 		DC000000000000000000010F /* ClaudeAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeAPIClient.swift; sourceTree = "<group>"; };
 		DC0000000000000000000111 /* AppCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCommands.swift; sourceTree = "<group>"; };
 		DC0000000000000000000113 /* ProcessingModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessingModel.swift; sourceTree = "<group>"; };
-		DC0000000000000000000115 /* TranscriptionHelpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionHelpers.swift; sourceTree = "<group>"; };
 		DC0000000000000000000117 /* WaveformView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaveformView.swift; sourceTree = "<group>"; };
 		DC0000000000000000000119 /* PlaybackState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackState.swift; sourceTree = "<group>"; };
-		DC000000000000000000011C /* MusicDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicDetector.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -131,6 +114,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				50AE96392F8765F0006663EF /* Sparkle in Frameworks */,
+				DC0000000000000000000201 /* DeChaffCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -161,8 +145,6 @@
 				50AE95E62F85C6B5006663EF /* DownloadSermonIntent.swift */,
 				AA00000000000000000000AF /* DeChaffApp.swift */,
 				AA00000000000000000000B0 /* ContentView.swift */,
-				AA00000000000000000000B1 /* VoiceIsolationProcessor.swift */,
-				DC000000000000000000010C /* AudioProcessing */,
 				DC00000000000000000000E1 /* Step1LoadView.swift */,
 				DC00000000000000000000E3 /* Step2TrimView.swift */,
 				DC00000000000000000000E5 /* Step3InfoView.swift */,
@@ -177,7 +159,6 @@
 				DC000000000000000000010F /* ClaudeAPIClient.swift */,
 				DC0000000000000000000111 /* AppCommands.swift */,
 				DC0000000000000000000113 /* ProcessingModel.swift */,
-				DC0000000000000000000115 /* TranscriptionHelpers.swift */,
 				DC0000000000000000000117 /* WaveformView.swift */,
 				DC0000000000000000000119 /* PlaybackState.swift */,
 				DC00000000000000000000F5 /* WaveformTileCache.swift */,
@@ -186,20 +167,6 @@
 				5069CC302F64007A00F65B34 /* DeChaff.icon */,
 			);
 			path = DeChaff;
-			sourceTree = "<group>";
-		};
-		DC000000000000000000010C /* AudioProcessing */ = {
-			isa = PBXGroup;
-			children = (
-				DC0000000000000000000100 /* AudioProcessingModels.swift */,
-				DC0000000000000000000102 /* AudioUnitPass.swift */,
-				DC0000000000000000000104 /* LoudnessProcessor.swift */,
-				DC0000000000000000000106 /* SilenceProcessor.swift */,
-				DC0000000000000000000108 /* MP3Encoder.swift */,
-				DC000000000000000000010A /* ID3Tagger.swift */,
-				DC000000000000000000011C /* MusicDetector.swift */,
-			);
-			path = AudioProcessing;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -243,6 +210,10 @@
 				50AE96262F875396006663EF /* PBXTargetDependency */,
 			);
 			name = DeChaff;
+			packageProductDependencies = (
+				50AE96382F8765F0006663EF /* Sparkle */,
+				DC0000000000000000000202 /* DeChaffCore */,
+			);
 			productName = DeChaff;
 			productReference = AA00000000000000000000AE /* DeChaff.app */;
 			productType = "com.apple.product-type.application";
@@ -278,6 +249,7 @@
 			mainGroup = AA00000000000000000000A2;
 			packageReferences = (
 				50AE96372F8765F0006663EF /* XCRemoteSwiftPackageReference "Sparkle" */,
+				DC0000000000000000000203 /* XCLocalSwiftPackageReference "DeChaffKit" */,
 			);
 			productRefGroup = AA00000000000000000000A3 /* Products */;
 			projectDirPath = "";
@@ -345,7 +317,6 @@
 			files = (
 				AA00000000000000000000B2 /* DeChaffApp.swift in Sources */,
 				AA00000000000000000000B3 /* ContentView.swift in Sources */,
-				AA00000000000000000000B4 /* VoiceIsolationProcessor.swift in Sources */,
 				DC00000000000000000000E2 /* Step1LoadView.swift in Sources */,
 				DC00000000000000000000E4 /* Step2TrimView.swift in Sources */,
 				DC00000000000000000000E6 /* Step3InfoView.swift in Sources */,
@@ -361,17 +332,9 @@
 				DC0000000000000000000110 /* ClaudeAPIClient.swift in Sources */,
 				DC0000000000000000000112 /* AppCommands.swift in Sources */,
 				DC0000000000000000000114 /* ProcessingModel.swift in Sources */,
-				DC0000000000000000000116 /* TranscriptionHelpers.swift in Sources */,
 				DC0000000000000000000118 /* WaveformView.swift in Sources */,
 				DC000000000000000000011A /* PlaybackState.swift in Sources */,
 				DC00000000000000000000F6 /* WaveformTileCache.swift in Sources */,
-				DC0000000000000000000101 /* AudioProcessingModels.swift in Sources */,
-				DC0000000000000000000103 /* AudioUnitPass.swift in Sources */,
-				DC0000000000000000000105 /* LoudnessProcessor.swift in Sources */,
-				DC0000000000000000000107 /* SilenceProcessor.swift in Sources */,
-				DC0000000000000000000109 /* MP3Encoder.swift in Sources */,
-				DC000000000000000000010B /* ID3Tagger.swift in Sources */,
-				DC000000000000000000011D /* MusicDetector.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -668,6 +631,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		DC0000000000000000000203 /* XCLocalSwiftPackageReference "DeChaffKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = DeChaffKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		50AE96372F8765F0006663EF /* XCRemoteSwiftPackageReference "Sparkle" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -684,6 +654,10 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 50AE96372F8765F0006663EF /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
+		};
+		DC0000000000000000000202 /* DeChaffCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = DeChaffCore;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

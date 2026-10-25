@@ -1,4 +1,5 @@
 import Foundation
+import DeChaffCore
 
 @MainActor
 class YouTubeViewModel: ObservableObject {
@@ -97,17 +98,6 @@ class YouTubeViewModel: ObservableObject {
 }
 
 // MARK: - Date helpers
-
-/// Parses a yt-dlp upload date string like "20240317" into a Date, or nil if unparseable.
-/// Uses the local calendar at noon so DatePicker shows the correct day regardless of timezone.
-func parseYouTubeUploadDate(_ raw: String) -> Date? {
-    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard trimmed.count == 8,
-          let year  = Int(trimmed.prefix(4)),
-          let month = Int(trimmed.dropFirst(4).prefix(2)), (1...12).contains(month),
-          let day   = Int(trimmed.suffix(2)), (1...31).contains(day) else { return nil }
-    return Calendar.current.date(from: DateComponents(year: year, month: month, day: day, hour: 12))
-}
 
 func formatYouTubeDate(_ raw: String) -> String {
     // raw is "20240317"

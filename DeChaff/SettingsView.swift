@@ -1,5 +1,6 @@
 import SwiftUI
 import FoundationModels
+import DeChaffCore
 
 struct SettingsView: View {
     @EnvironmentObject var manager: YtDlpManager
@@ -642,20 +643,7 @@ struct TemplatesSettingsView: View {
     ]
 
     private func previewFilename(template: String) -> String {
-        let segments = template.components(separatedBy: "|")
-        let resolved = segments.compactMap { segment -> String? in
-            var s = segment
-            for (key, value) in exampleValues { s = s.replacingOccurrences(of: "{\(key)}", with: value) }
-            let stripped = s.trimmingCharacters(in: .whitespaces)
-                .trimmingCharacters(in: CharacterSet(charactersIn: ",-–"))
-                .trimmingCharacters(in: .whitespaces)
-            return stripped.isEmpty ? nil : s.trimmingCharacters(in: .whitespaces)
-        }
-        var result = resolved.joined(separator: " | ")
-            .replacingOccurrences(of: "/", with: "-")
-            .replacingOccurrences(of: ":", with: "-")
-            .trimmingCharacters(in: .whitespaces)
-        return (result.isEmpty ? "sermon_dechaff" : result) + ".mp3"
+        (FilenameTemplate.resolve(template, values: exampleValues) ?? "sermon_dechaff") + ".mp3"
     }
 
     var body: some View {

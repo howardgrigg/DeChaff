@@ -4,18 +4,9 @@ import Speech
 import CoreMedia
 import Accelerate
 
-// MARK: - TranscriptWord
-
-struct TranscriptWord: Identifiable {
-    let id = UUID()
-    let text: String
-    let startTime: Double   // seconds into the original file
-    let endTime: Double
-}
-
 // MARK: - Audio extraction
 
-func extractTrimmedAudio(from sourceURL: URL, trimIn: Double, trimOut: Double) throws -> URL {
+public func extractTrimmedAudio(from sourceURL: URL, trimIn: Double, trimOut: Double) throws -> URL {
     let source = try AVAudioFile(forReading: sourceURL)
     let format = source.processingFormat
     let sr = format.sampleRate
@@ -72,7 +63,7 @@ func extractTrimmedAudio(from sourceURL: URL, trimIn: Double, trimOut: Double) t
 /// `chunkDuration` is the non-overlapping chunk length used to normalise progress (0–1).
 /// `onProgress` is called for every result (including non-final) for smooth progress tracking.
 /// `onWords` is called with each batch of finalized words so the UI can update incrementally.
-func transcribeChunkWords(
+public func transcribeChunkWords(
     url: URL, timeOffset: Double, chunkDuration: Double,
     onProgress: @escaping @Sendable (Double) async -> Void = { _ in },
     onWords:    @escaping @Sendable ([TranscriptWord]) async -> Void = { _ in }
@@ -146,7 +137,7 @@ func transcribeChunkWords(
 
 /// Merges per-chunk word arrays, deduplicating each overlap region at its midpoint.
 /// Skips empty chunks so partial results during progressive updates look correct.
-func mergeTranscriptChunks(chunkWords: [[TranscriptWord]], chunkStarts: [Double], overlapSecs: Double) -> [TranscriptWord] {
+public func mergeTranscriptChunks(chunkWords: [[TranscriptWord]], chunkStarts: [Double], overlapSecs: Double) -> [TranscriptWord] {
     var merged: [TranscriptWord] = []
     for (i, words) in chunkWords.enumerated() {
         guard !words.isEmpty else { continue }
@@ -158,4 +149,107 @@ func mergeTranscriptChunks(chunkWords: [[TranscriptWord]], chunkStarts: [Double]
         }
     }
     return merged.sorted { $0.startTime < $1.startTime }
+}
+
+// MARK: - Chunked word-level transcription
+
+public enum TranscriptionError: LocalizedError {
+    case unsupported
+
+    public var errorDescription: String? {
+        switch self {
+        case .unsupported: return "On-device speech recognition requires Apple Silicon and macOS 26+."
+        }
+    }
+}
+
+/// Transcribes a whole file with word-level timings, splitting it into `chunkCount`
+/// equal chunks (each overlapping the next by `overlapSeconds`) that run in parallel.
+/// `onProgress` reports 0–1 across all chunks; `onPartial` delivers the merged words
+/// so far each time a chunk produces finalized results.
+public func transcribeWords(
+    url: URL, chunkCount: Int = 4, overlapSeconds: Double = 5.0,
+    onProgress: @escaping @Sendable (Double) async -> Void = { _ in },
+    onPartial:  @escaping @Sendable ([TranscriptWord]) async -> Void = { _ in }
+) async throws -> [TranscriptWord] {
+    // Check / install on-device speech models
+    let probe = SpeechTranscriber(locale: .current, preset: .timeIndexedProgressiveTranscription)
+    let status = await AssetInventory.status(forModules: [probe])
+    if status == .unsupported { throw TranscriptionError.unsupported }
+    if status < .installed {
+        if let dl = try await AssetInventory.assetInstallationRequest(supporting: [probe]) {
+            try await dl.downloadAndInstall()
+        }
+    }
+
+    // Get file duration and plan equal chunks with overlap
+    let asset = AVURLAsset(url: url)
+    let duration = try await asset.load(.duration).seconds
+    guard duration > 0 else { throw CocoaError(.fileReadInvalidFileName) }
+
+    let nChunks = max(1, chunkCount)
+    let chunkSecs = duration / Double(nChunks)
+    let chunkStarts = (0..<nChunks).map { Double($0) * chunkSecs }
+    let chunkEnds   = chunkStarts.map { min($0 + chunkSecs + overlapSeconds, duration) }
+
+    // Shared state accessed by concurrent chunk tasks via actors.
+    actor ChunkProgress {
+        private var values: [Double]
+        init(count: Int) { values = Array(repeating: 0.0, count: count) }
+        func update(index: Int, value: Double) { values[index] = value }
+        var overall: Double { values.reduce(0, +) / Double(values.count) }
+    }
+    actor ChunkAccumulator {
+        private var words: [[TranscriptWord]]
+        init(count: Int) { words = Array(repeating: [], count: count) }
+        func append(_ batch: [TranscriptWord], to index: Int) { words[index] += batch }
+        func set(_ final: [TranscriptWord], at index: Int) { words[index] = final }
+        var all: [[TranscriptWord]] { words }
+    }
+    let chunkProgress    = ChunkProgress(count: nChunks)
+    let chunkAccumulator = ChunkAccumulator(count: nChunks)
+
+    // Transcribe all chunks in parallel; words stream out via onPartial as each
+    // result is finalised.
+    try await withThrowingTaskGroup(of: (Int, [TranscriptWord]).self) { group in
+        for i in 0..<nChunks {
+            let s = chunkStarts[i], e = chunkEnds[i], idx = i
+            group.addTask {
+                let tempURL = try extractTrimmedAudio(from: url, trimIn: s, trimOut: e)
+                defer { try? FileManager.default.removeItem(at: tempURL) }
+                let words = try await transcribeChunkWords(
+                    url: tempURL, timeOffset: s, chunkDuration: chunkSecs,
+                    onProgress: { p in
+                        guard !Task.isCancelled else { return }
+                        await chunkProgress.update(index: idx, value: p)
+                        await onProgress(await chunkProgress.overall)
+                    },
+                    onWords: { batch in
+                        guard !Task.isCancelled else { return }
+                        await chunkAccumulator.append(batch, to: idx)
+                        await onPartial(mergeTranscriptChunks(
+                            chunkWords: await chunkAccumulator.all,
+                            chunkStarts: chunkStarts, overlapSecs: overlapSeconds))
+                    }
+                )
+                // Chunk fully done — snap its progress to 1.0 so the bar
+                // doesn't stall waiting for recogniser lookahead to drain.
+                await chunkProgress.update(index: idx, value: 1.0)
+                await onProgress(await chunkProgress.overall)
+                return (idx, words)
+            }
+        }
+        // As each chunk completes, replace its accumulated words with the
+        // authoritative final list (handles any overlap-dedup edge cases).
+        for try await (idx, words) in group {
+            try Task.checkCancellation()
+            await chunkAccumulator.set(words, at: idx)
+            await onPartial(mergeTranscriptChunks(
+                chunkWords: await chunkAccumulator.all,
+                chunkStarts: chunkStarts, overlapSecs: overlapSeconds))
+        }
+    }
+
+    return mergeTranscriptChunks(chunkWords: await chunkAccumulator.all,
+                                 chunkStarts: chunkStarts, overlapSecs: overlapSeconds)
 }

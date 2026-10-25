@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import DeChaffCore
 
 // MARK: - WaveformView (viewport-rendered waveform with pan + zoom)
 

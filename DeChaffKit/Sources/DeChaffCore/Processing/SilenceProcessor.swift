@@ -172,20 +172,3 @@ extension VoiceIsolationProcessor {
         try file.write(from: scratch)
     }
 }
-
-/// Remaps a chapter timestamp from the original audio timeline to the shortened output timeline.
-/// Chapters falling inside a removed silent region snap to the end of the kept tail.
-func remapChapterTime(_ timeSeconds: Double, using segments: [SilenceSegment]) -> Double {
-    var removedBefore = 0.0
-    for seg in segments {
-        let removedInSeg     = (seg.endSeconds - seg.startSeconds) - seg.keptSeconds
-        let removedRegionEnd = seg.startSeconds + removedInSeg
-        if timeSeconds <= seg.startSeconds { break }
-        else if timeSeconds < removedRegionEnd {
-            removedBefore += (timeSeconds - seg.startSeconds); break
-        } else {
-            removedBefore += removedInSeg
-        }
-    }
-    return max(0, timeSeconds - removedBefore)
-}

@@ -1,5 +1,6 @@
 import SwiftUI
 import CoreMedia
+import DeChaffCore
 
 extension ContentView {
 
@@ -82,6 +83,7 @@ struct TranscriptTrimView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             selectionBar
+            refinementNotes
             mainContent
         }
         .onAppear { regroupSentences(); syncIndicesFromTrimPoints() }
@@ -94,17 +96,17 @@ struct TranscriptTrimView: View {
         }
     }
 
-    /// Map the current trimIn/trimOut values back to the nearest word indices.
+    /// Map the current trimIn/trimOut values back to the first and last words they keep.
     /// Called when the waveform view changes trim points so the transcript selection stays in sync.
+    /// Cuts refined into silence sit just outside their words, so "kept" (not "nearest")
+    /// is what keeps the selection on the words the user tapped.
     private func syncIndicesFromTrimPoints() {
         guard !words.isEmpty else { return }
-        // Only sync if trim points differ from what the current selection already represents
-        let currentIn  = startIdx >= 0 ? words[startIdx].startTime : -1
-        let currentOut = endIdx   >= 0 ? words[endIdx].endTime     : -1
-        guard trimIn != currentIn || trimOut != currentOut else { return }
-
-        if let idx = words.indices.min(by: { abs(words[$0].startTime - trimIn)  < abs(words[$1].startTime - trimIn)  }) { startIdx = idx }
-        if let idx = words.indices.min(by: { abs(words[$0].endTime   - trimOut) < abs(words[$1].endTime   - trimOut) }) { endIdx   = idx }
+        let tolerance = 0.001
+        startIdx = words.firstIndex { $0.startTime >= trimIn - tolerance }
+            ?? words.indices.min { abs(words[$0].startTime - trimIn) < abs(words[$1].startTime - trimIn) }!
+        endIdx = words.lastIndex { $0.endTime <= trimOut + tolerance }
+            ?? words.indices.min { abs(words[$0].endTime - trimOut) < abs(words[$1].endTime - trimOut) }!
         // Ensure ordering
         if startIdx > endIdx { swap(&startIdx, &endIdx) }
     }
@@ -130,7 +132,7 @@ struct TranscriptTrimView: View {
                     .buttonStyle(.bordered).controlSize(.small)
             } else {
                 Image(systemName: "scissors").foregroundStyle(.orange)
-                Text("Keeping \(formatTime(words[startIdx].startTime)) → \(formatTime(words[endIdx].endTime))")
+                Text("Keeping \(formatTime(trimIn)) → \(formatTime(trimOut))")
                     .font(.system(size: 13, weight: .medium))
                 Spacer()
                 Button("Clear") { startIdx = -1; endIdx = -1 }
@@ -142,6 +144,18 @@ struct TranscriptTrimView: View {
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
         .animation(.easeInOut(duration: 0.15), value: startIdx >= 0)
         .animation(.easeInOut(duration: 0.15), value: endIdx >= 0)
+    }
+
+    /// Shown when a cut couldn't land in clean silence (words run together), so the
+    /// user knows to check that edge by ear.
+    @ViewBuilder
+    private var refinementNotes: some View {
+        if !model.trimRefinementNotes.isEmpty && endIdx >= 0 {
+            Label(model.trimRefinementNotes.joined(separator: " "), systemImage: "waveform.badge.exclamationmark")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     // MARK: Main content
@@ -221,8 +235,8 @@ struct TranscriptTrimView: View {
 
     private func apply() {
         guard startIdx >= 0, endIdx >= 0 else { return }
-        trimIn  = words[startIdx].startTime
-        trimOut = words[endIdx].endTime
+        // Sets the transcript timings, then snaps both cuts into silence in the background.
+        model.applyTranscriptTrim(startWord: startIdx, endWord: endIdx)
     }
 
     private func formatTime(_ seconds: Double) -> String {

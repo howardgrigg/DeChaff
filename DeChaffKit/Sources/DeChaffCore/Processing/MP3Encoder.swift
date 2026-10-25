@@ -6,7 +6,7 @@ extension VoiceIsolationProcessor {
 
     func encodeToMP3(inputWAV: String, outputMP3: String, bitrate: Int, mono: Bool,
                      progressStart: Double, progressEnd: Double) -> Bool {
-        guard let lamePath = Bundle.main.path(forResource: "lame", ofType: nil) else {
+        guard let lamePath = lamePath ?? Bundle.main.path(forResource: "lame", ofType: nil) else {
             logHandler("❌ Bundled LAME binary not found"); return false
         }
 

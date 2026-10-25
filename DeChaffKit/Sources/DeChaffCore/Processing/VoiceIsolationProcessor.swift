@@ -3,11 +3,14 @@ import AudioToolbox
 import AVFoundation
 import Accelerate
 
-class VoiceIsolationProcessor {
+public final class VoiceIsolationProcessor {
     let isolationSubType: UInt32 = 0x766f6973
+    /// Path to the LAME encoder. Nil = the `lame` resource in the main bundle (the app),
+    /// which is what a command-line host without a bundle must override.
+    public var lamePath: String?
     var logHandler: (String) -> Void = { _ in }
     var progressHandler: (Double) -> Void = { _ in }
-    private(set) var detectedSilenceSegments: [SilenceSegment] = []
+    public private(set) var detectedSilenceSegments: [SilenceSegment] = []
 
     // Cancellation — cancel() is called from the main thread while the pass
     // loops poll isCancelled from the processing queue.
@@ -15,12 +18,14 @@ class VoiceIsolationProcessor {
     private var cancelledFlag = false
     private var encoderProcess: Process?
 
-    var isCancelled: Bool {
+    public init() {}
+
+    public var isCancelled: Bool {
         cancelLock.lock(); defer { cancelLock.unlock() }
         return cancelledFlag
     }
 
-    func cancel() {
+    public func cancel() {
         cancelLock.lock()
         cancelledFlag = true
         let encoder = encoderProcess
@@ -50,7 +55,7 @@ class VoiceIsolationProcessor {
         }
     }
 
-    func process(
+    public func process(
         inputPath: String,
         outputPath: String,
         options: ProcessingOptions,

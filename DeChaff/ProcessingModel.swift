@@ -4,6 +4,7 @@ import AVFoundation
 import Speech
 import CoreMedia
 import UserNotifications
+import DeChaffCore
 
 // MARK: - ProcessingModel
 
@@ -16,7 +17,7 @@ class ProcessingModel: ObservableObject {
     @Published var isDone = false
 
     /// The processor for the run in flight — kept so Cancel can reach it.
-    private var activeProcessor: VoiceIsolationProcessor?
+    private var activeProcessor: EpisodeProcessor?
     /// Read by the app delegate to guard against quitting mid-run.
     private(set) static var isAnyProcessing = false
 
@@ -82,10 +83,10 @@ class ProcessingModel: ObservableObject {
         didSet { UserDefaults.standard.set(tagDate.timeIntervalSinceReferenceDate, forKey: "dechaff.date") }
     }
 
-    var tagYear: String { String(Calendar.current.component(.year, from: tagDate)) }
-
-    var tagDatePrefix: String {
-        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f.string(from: tagDate)
+    /// The Info-step fields as one value for the processing core.
+    var tags: SermonTags {
+        SermonTags(title: tagSermonTitle, reading: tagBibleReading, preacher: tagPreacher,
+                   series: tagSeries, date: tagDate, artwork: tagArtwork)
     }
 
     @Published var tagArtwork: Data? = nil {
@@ -110,6 +111,9 @@ class ProcessingModel: ObservableObject {
     // Trim
     @Published var trimInSeconds: Double = 0
     @Published var trimOutSeconds: Double = 0
+    /// Notes from snapping transcript-chosen trim points to silence; empty when both cuts were clean.
+    @Published var trimRefinementNotes: [String] = []
+    private var trimRefinementTask: Task<Void, Never>? = nil
 
     // Playback — isolated into @Observable so the 20 Hz timer updates only
     // redraw views that actually read playback.isPlaying / playback.playheadSeconds,
@@ -155,6 +159,7 @@ class ProcessingModel: ObservableObject {
         isLoadingWaveform = true
         trimInSeconds = 0
         trimOutSeconds = 0
+        trimRefinementTask?.cancel(); trimRefinementNotes = []
         isProcessing = false
         isDone = false
         logs = []
@@ -189,20 +194,17 @@ class ProcessingModel: ObservableObject {
         guard let url = inputURL, !isProcessing else { return }
         let inputPath = url.path
         let baseName = url.deletingPathExtension().lastPathComponent
-        let isYouTubeDownload = url.lastPathComponent.hasPrefix("dechaff-yt-")
-        let dir = isYouTubeDownload
-            ? (FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first?.path ?? url.deletingLastPathComponent().path)
-            : url.deletingLastPathComponent().path
+        let dir = defaultOutputDirectory(for: url).path
         let namePart = resolveFilename(template: filenameTemplate, fallback: baseName)
         var resolvedPath = "\(dir)/\(namePart).\(outputFormat.fileExtension)"
 
         if resolvedPath == inputPath {
             // Never write over the file we're reading from
-            resolvedPath = Self.uniquePath(for: resolvedPath)
+            resolvedPath = uniqueOutputPath(for: resolvedPath)
         } else if FileManager.default.fileExists(atPath: resolvedPath) {
             switch confirmOverwrite(filename: URL(fileURLWithPath: resolvedPath).lastPathComponent) {
             case .replace:  break
-            case .keepBoth: resolvedPath = Self.uniquePath(for: resolvedPath)
+            case .keepBoth: resolvedPath = uniqueOutputPath(for: resolvedPath)
             case .cancel:   return
             }
         }
@@ -241,12 +243,11 @@ class ProcessingModel: ObservableObject {
             compressorMakeupGain: Float(compressorMakeupGain)
         )
 
-        let metadata = ID3Metadata(
-            title: [tagSermonTitle, tagBibleReading].filter { !$0.isEmpty }.joined(separator: ", "),
-            artist: tagPreacher, album: tagSeries, year: tagYear, artwork: tagArtwork
+        let request = EpisodeRequest(
+            inputURL: url, outputURL: URL(fileURLWithPath: outputPath),
+            options: options, metadata: tags.id3, chapters: chapters
         )
-        let capturedChapters = chapters
-        let processor = VoiceIsolationProcessor()
+        let processor = EpisodeProcessor()
         activeProcessor = processor
         Self.isAnyProcessing = true
 
@@ -255,11 +256,9 @@ class ProcessingModel: ObservableObject {
             // chunk (hundreds of times/sec) and every published update re-renders
             // the whole window. 0.1% steps are finer than the bar can display.
             var lastReported: Double = -1
-            let success = processor.process(
-                inputPath: inputPath,
-                outputPath: outputPath,
-                options: options,
-                progressHandler: { p in
+            let outcome = processor.run(
+                request,
+                progress: { p in
                     guard p - lastReported >= 0.001 || p >= 1.0 else { return }
                     lastReported = p
                     DispatchQueue.main.async {
@@ -267,36 +266,26 @@ class ProcessingModel: ObservableObject {
                         Self.updateDockProgress(p)
                     }
                 },
-                logHandler:      { m in DispatchQueue.main.async { self?.logs.append(m) } }
+                log: { m in DispatchQueue.main.async { self?.logs.append(m) } }
             )
-            let segments = processor.detectedSilenceSegments
-
-            var outputChapters: [Chapter] = capturedChapters
-            if success && !segments.isEmpty {
-                outputChapters = capturedChapters.map { c in
-                    var c2 = c; c2.timeSeconds = remapChapterTime(c.timeSeconds, using: segments); return c2
-                }
-            }
-
-            if success && options.outputFormat == .mp3 {
-                processor.writeTags(chapters: outputChapters, metadata: metadata, to: outputPath) { msg in
-                    DispatchQueue.main.async { self?.logs.append(msg) }
-                }
-            }
 
             DispatchQueue.main.async {
-                let cancelled = processor.isCancelled && !success
                 self?.isProcessing = false
-                self?.isDone = success
-                if !success { self?.outputURL = nil }
-                if cancelled {
+                switch outcome {
+                case .finished:
+                    self?.isDone = true
+                case .failed:
+                    self?.isDone = false
+                    self?.outputURL = nil
+                case .cancelled:
+                    self?.isDone = false
+                    self?.outputURL = nil
                     self?.logs.append("⏹ Processing cancelled")
-                    try? FileManager.default.removeItem(atPath: outputPath)
                 }
                 self?.activeProcessor = nil
                 Self.isAnyProcessing = false
                 Self.clearDockProgress()
-                if success { self?.postFinishNotification() }
+                if case .finished = outcome { self?.postFinishNotification() }
             }
         }
     }
@@ -320,21 +309,6 @@ class ProcessingModel: ObservableObject {
         }
     }
 
-    /// Appends " (2)", " (3)", … to the file name until it doesn't collide.
-    private static func uniquePath(for path: String) -> String {
-        let url  = URL(fileURLWithPath: path)
-        let dir  = url.deletingLastPathComponent()
-        let base = url.deletingPathExtension().lastPathComponent
-        let ext  = url.pathExtension
-        var n = 2
-        var candidate = dir.appendingPathComponent("\(base) (\(n)).\(ext)")
-        while FileManager.default.fileExists(atPath: candidate.path) {
-            n += 1
-            candidate = dir.appendingPathComponent("\(base) (\(n)).\(ext)")
-        }
-        return candidate.path
-    }
-
     // MARK: - Playback (forwarded to PlaybackState)
 
     func togglePlayback() {
@@ -352,34 +326,7 @@ class ProcessingModel: ObservableObject {
     /// Resolves the filename template into a sanitised file name (without extension).
     /// Empty placeholder segments are collapsed so the result is clean.
     func resolveFilename(template: String, fallback: String) -> String {
-        let values: [String: String] = [
-            "date":     tagDatePrefix,
-            "title":    tagSermonTitle,
-            "reading":  tagBibleReading,
-            "preacher": tagPreacher,
-            "series":   tagSeries,
-        ]
-
-        // Split template on | so we can drop empty pipe-segments entirely
-        let segments = template.components(separatedBy: "|")
-        let resolved = segments.compactMap { segment -> String? in
-            var s = segment
-            for (key, value) in values {
-                s = s.replacingOccurrences(of: "{\(key)}", with: value)
-            }
-            // If this segment is now only whitespace and punctuation (no real content), drop it
-            let stripped = s.trimmingCharacters(in: .whitespaces)
-                .trimmingCharacters(in: CharacterSet(charactersIn: ",-–"))
-                .trimmingCharacters(in: .whitespaces)
-            return stripped.isEmpty ? nil : s.trimmingCharacters(in: .whitespaces)
-        }
-
-        var result = resolved.joined(separator: " | ")
-            .replacingOccurrences(of: "/", with: "-")
-            .replacingOccurrences(of: ":", with: "-")
-            .trimmingCharacters(in: .whitespaces)
-
-        return result.isEmpty ? "\(fallback)_dechaff" : result
+        FilenameTemplate.resolve(template, values: tags.templateValues) ?? "\(fallback)_dechaff"
     }
 
     /// Pan by a horizontal scroll delta (points).
@@ -629,98 +576,12 @@ extension ProcessingModel {
         trimTranscriptionTask = Task.detached(priority: .utility) { [weak self] in
             guard let self else { return }
             do {
-                // Check / install on-device speech models
-                let probe = SpeechTranscriber(locale: .current, preset: .timeIndexedProgressiveTranscription)
-                let status = await AssetInventory.status(forModules: [probe])
-                if status == .unsupported {
-                    await MainActor.run { [weak self] in
-                        self?.trimTranscriptError = "On-device speech recognition requires Apple Silicon and macOS 26+."
-                        self?.isTrimTranscribing = false
-                    }
-                    return
-                }
-                if status < .installed {
-                    if let dl = try await AssetInventory.assetInstallationRequest(supporting: [probe]) {
-                        try await dl.downloadAndInstall()
-                    }
-                }
-
-                // Get file duration and plan 4 equal chunks with 5 s overlap
-                let asset = AVURLAsset(url: capturedURL)
-                let duration = try await asset.load(.duration).seconds
-                guard duration > 0 else { throw CocoaError(.fileReadInvalidFileName) }
-
-                let nChunks = 4
-                let chunkSecs = duration / Double(nChunks)
-                let overlapSecs = 5.0
-                let chunkStarts = (0..<nChunks).map { Double($0) * chunkSecs }
-                let chunkEnds   = chunkStarts.map { min($0 + chunkSecs + overlapSecs, duration) }
-
-                // Shared state accessed by concurrent chunk tasks via actors.
-                actor ChunkProgress {
-                    private var values: [Double]
-                    init(count: Int) { values = Array(repeating: 0.0, count: count) }
-                    func update(index: Int, value: Double) { values[index] = value }
-                    var overall: Double { values.reduce(0, +) / Double(values.count) }
-                }
-                actor ChunkAccumulator {
-                    private var words: [[TranscriptWord]]
-                    init(count: Int) { words = Array(repeating: [], count: count) }
-                    func append(_ batch: [TranscriptWord], to index: Int) { words[index] += batch }
-                    func set(_ final: [TranscriptWord], at index: Int) { words[index] = final }
-                    var all: [[TranscriptWord]] { words }
-                }
-                let chunkProgress   = ChunkProgress(count: nChunks)
-                let chunkAccumulator = ChunkAccumulator(count: nChunks)
-
-                // Transcribe all 4 chunks in parallel.
-                // Words stream into the UI via onWords as each result is finalised.
-                try await withThrowingTaskGroup(of: (Int, [TranscriptWord]).self) { group in
-                    for i in 0..<nChunks {
-                        let s = chunkStarts[i], e = chunkEnds[i], idx = i
-                        group.addTask {
-                            let tempURL = try extractTrimmedAudio(from: capturedURL, trimIn: s, trimOut: e)
-                            defer { try? FileManager.default.removeItem(at: tempURL) }
-                            let words = try await transcribeChunkWords(
-                                url: tempURL, timeOffset: s, chunkDuration: chunkSecs,
-                                onProgress: { p in
-                                    guard !Task.isCancelled else { return }
-                                    await chunkProgress.update(index: idx, value: p)
-                                    let overall = await chunkProgress.overall
-                                    await MainActor.run { self.trimTranscriptProgress = overall }
-                                },
-                                onWords: { batch in
-                                    guard !Task.isCancelled else { return }
-                                    await chunkAccumulator.append(batch, to: idx)
-                                    let partial = mergeTranscriptChunks(
-                                        chunkWords: await chunkAccumulator.all,
-                                        chunkStarts: chunkStarts, overlapSecs: overlapSecs)
-                                    await MainActor.run { self.trimWords = partial }
-                                }
-                            )
-                            // Chunk fully done — snap its progress to 1.0 so the bar
-                            // doesn't stall waiting for recogniser lookahead to drain.
-                            await chunkProgress.update(index: idx, value: 1.0)
-                            let overall = await chunkProgress.overall
-                            await MainActor.run { self.trimTranscriptProgress = overall }
-                            return (idx, words)
-                        }
-                    }
-                    // As each chunk completes, replace its accumulated words with the
-                    // authoritative final list (handles any overlap-dedup edge cases).
-                    for try await (idx, words) in group {
-                        try Task.checkCancellation()
-                        await chunkAccumulator.set(words, at: idx)
-                        let partial = mergeTranscriptChunks(
-                            chunkWords: await chunkAccumulator.all,
-                            chunkStarts: chunkStarts, overlapSecs: overlapSecs)
-                        await MainActor.run { [weak self] in self?.trimWords = partial }
-                    }
-                }
-
-                let merged = mergeTranscriptChunks(
-                    chunkWords: await chunkAccumulator.all,
-                    chunkStarts: chunkStarts, overlapSecs: overlapSecs)
+                // Words stream into the UI via onPartial as each result is finalised.
+                let merged = try await transcribeWords(
+                    url: capturedURL,
+                    onProgress: { p in await MainActor.run { self.trimTranscriptProgress = p } },
+                    onPartial:  { words in await MainActor.run { self.trimWords = words } }
+                )
                 await MainActor.run { [weak self] in
                     self?.trimWords = merged
                     self?.isTrimTranscribing = false
@@ -738,6 +599,37 @@ extension ProcessingModel {
             await MainActor.run { [weak self] in
                 self?.trimTranscriptProgress = 1.0
                 self?.isTrimTranscribing = false
+            }
+        }
+    }
+
+    // MARK: - Transcript trim refinement
+
+    /// Trims to keep `trimWords[startWord]…trimWords[endWord]`. The transcript's word
+    /// timings apply immediately, then each cut is moved into the surrounding silence
+    /// so neither edge clips the start or end of a word.
+    func applyTranscriptTrim(startWord: Int, endWord: Int) {
+        guard let url = inputURL,
+              trimWords.indices.contains(startWord), trimWords.indices.contains(endWord) else { return }
+        let words = trimWords
+        trimInSeconds  = words[startWord].startTime
+        trimOutSeconds = words[endWord].endTime
+        trimRefinementNotes = []
+        trimRefinementTask?.cancel()
+
+        trimRefinementTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let refiner = CutPointRefiner()
+            let start = try? refiner.refine(edge: .start, wordIndex: startWord, words: words, audioURL: url)
+            let end   = try? refiner.refine(edge: .end, wordIndex: endWord, words: words, audioURL: url)
+            await MainActor.run { [weak self] in
+                guard let self, !Task.isCancelled, self.inputURL == url else { return }
+                if let start { self.trimInSeconds = start.time }
+                if let end {
+                    self.trimOutSeconds = self.inputDuration > 0 ? min(end.time, self.inputDuration) : end.time
+                }
+                self.trimRefinementNotes = [start, end].compactMap { $0 }
+                    .filter { $0.quality != .clean }
+                    .flatMap { $0.notes }
             }
         }
     }

@@ -81,6 +81,18 @@ cd DeChaff
 open DeChaff.xcodeproj
 ```
 
+## Use it from an AI assistant (MCP)
+
+DeChaff includes an MCP server, `dechaff-mcp`, that lets Claude Desktop, Claude Code and other MCP clients run the whole workflow. The assistant can find this week's video and transcribe it. It reads the transcript to decide where the sermon starts and ends and where the chapters go, then produces the tagged MP3 once you confirm. Cut points are moved into the silence around words, so no word is clipped. See [DeChaffKit/README.md](DeChaffKit/README.md) for setup.
+
+## Project layout
+
+| Path | Contents |
+|------|----------|
+| `DeChaff/` | The SwiftUI app: wizard steps, waveform, settings, YouTube browser |
+| `DeChaffKit/` | Swift package: `DeChaffCore` (all audio processing, transcription, tagging; no UI) and `dechaff-mcp` |
+| `DeChaffShareExtension/` | Safari share extension |
+
 ## How it works
 
 Processing runs through up to seven passes:

@@ -12,3 +12,7 @@ DerivedData/
 build/
 *.o
 *.d
+
+# Swift Package Manager
+.build/
+.swiftpm/
