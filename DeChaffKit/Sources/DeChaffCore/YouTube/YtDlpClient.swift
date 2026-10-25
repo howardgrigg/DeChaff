@@ -247,12 +247,14 @@ public struct YtDlpClient: Sendable {
         await Self.awaitTermination(of: process)
 
         guard process.terminationStatus == 0 else {
-            // outputLines contains all PTY output; filter to lines that look like errors
-            let errorPrefixes = ["ERROR:", "error:", "Warning:"]
-            let errorLines = outputLines.filter { line in
-                errorPrefixes.contains(where: { line.hasPrefix($0) }) ||
-                (!line.hasPrefix("[download]") && !line.hasPrefix("[youtube]") &&
-                 !line.hasPrefix("[info]") && !line.hasPrefix("[ExtractAudio]"))
+            // outputLines contains all PTY output; keep lines that mention an error —
+            // including "[download] Got error: HTTP Error 403…", which is often the only
+            // clue — else the last few non-progress lines so the failure is never silent.
+            var errorLines = outputLines.filter { line in
+                line.range(of: "error", options: .caseInsensitive) != nil || line.hasPrefix("Warning:")
+            }
+            if errorLines.isEmpty {
+                errorLines = Array(outputLines.filter { Self.parseProgress($0) == nil }.suffix(5))
             }
             let msg = errorLines
                 .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
