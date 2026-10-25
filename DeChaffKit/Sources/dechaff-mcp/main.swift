@@ -54,7 +54,17 @@ before processing. Don't run process_sermon until the user has confirmed.
 All trim and chapter points are on the source recording's timeline. Prefer transcript word indexes \
 over times: the server refines every cut into the surrounding silence so no word is clipped. \
 Long-running tools return a job_id if they run past wait_seconds; call get_job to keep waiting.
-"""
+""" + churchInstructions(AppSettings().assistantInstructions)
+
+/// The church's own preferences from Settings → MCP, which override the defaults above.
+func churchInstructions(_ text: String) -> String {
+    text.isEmpty ? "" : """
+
+
+    This church's own instructions, from DeChaff's settings — they take priority over the guidance above:
+    \(text)
+    """
+}
 
 let tools = DeChaffTools()
 let server = MCPServer(

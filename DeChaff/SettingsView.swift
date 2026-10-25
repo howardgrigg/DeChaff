@@ -693,6 +693,7 @@ struct TemplatesSettingsView: View {
 /// Explains and automates connecting the dechaff-mcp server to Claude Desktop / Claude Code.
 struct MCPSettingsView: View {
     @AppStorage("dechaff.mcp.serverPath") private var serverPath = ""
+    @AppStorage("dechaff.mcp.instructions") private var assistantInstructions = ""
     @State private var serverVersion: String? = nil
     @State private var serverError: String? = nil
     @State private var desktopMessage: String? = nil
@@ -736,6 +737,32 @@ struct MCPSettingsView: View {
                             .font(.caption).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         serverStatus
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                }
+
+                settingsGroup("Your church's instructions") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("How your church likes its episodes, in plain English. The assistant follows these over its usual approach. They take effect next time it connects — restart Claude after changing them.")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        TextEditor(text: $assistantInstructions)
+                            .font(.subheadline)
+                            .frame(minHeight: 90, maxHeight: 160)
+                            .scrollContentBackground(.hidden)
+                            .padding(8)
+                            .background(Color(NSColor.textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(alignment: .topLeading) {
+                                if assistantInstructions.isEmpty {
+                                    Text("e.g. Start the episode at the Bible reader's greeting, including the reading, with a first chapter called “Reading: <passage>”.")
+                                        .font(.subheadline).foregroundStyle(.tertiary)
+                                        .padding(.horizontal, 13).padding(.vertical, 8)
+                                        .allowsHitTesting(false)
+                                }
+                            }
+                            .overlay(RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(Color.secondary.opacity(0.15), lineWidth: 1))
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 16).padding(.vertical, 10)

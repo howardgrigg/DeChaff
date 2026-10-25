@@ -17,6 +17,10 @@ struct AppSettings {
     var videoLimit: Int { (defaults.object(forKey: "dechaff.youtube.videoLimit") as? Int) ?? 10 }
     var titleFormat: String { defaults.string(forKey: "dechaff.titleFormat") ?? defaultTitleFormat }
     var filenameTemplate: String { defaults.string(forKey: "dechaff.filenameTemplate") ?? defaultFilenameTemplate }
+    /// The church's own instructions for the assistant, from Settings → MCP.
+    var assistantInstructions: String {
+        (defaults.string(forKey: "dechaff.mcp.instructions") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
     var lastPreacher: String { defaults.string(forKey: "dechaff.preacher") ?? "" }
     var lastSeries: String { defaults.string(forKey: "dechaff.series") ?? "" }
     /// Cover art the app keeps between episodes — it's changed when the series changes.
@@ -65,6 +69,7 @@ struct AppSettings {
             "youtube_video_limit": .number(Double(videoLimit)),
             "title_format": .string(titleFormat),
             "filename_template": .string(filenameTemplate),
+            "church_instructions": .string(assistantInstructions),
             "last_preacher": .string(lastPreacher),
             "last_series": .string(lastSeries),
             "artwork": artwork.map { art -> JSONValue in

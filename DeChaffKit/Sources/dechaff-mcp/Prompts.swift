@@ -34,5 +34,5 @@ let prepareSermonPrompt = MCPPrompt(
     read_tags, and finish with the output path, a 2–3 sentence episode description and the key themes, written \
     from the transcript.
     \(notes.map { "\nNotes from me: \($0)" } ?? "")
-    """
+    """ + churchInstructions(AppSettings().assistantInstructions)
 }
