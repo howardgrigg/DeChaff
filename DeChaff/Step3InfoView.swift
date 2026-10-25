@@ -19,7 +19,7 @@ extension ContentView {
                     tagField("Series",        placeholder: "Sermon series name",        binding: $model.tagSeries)
                     VStack(alignment: .leading, spacing: 5) {
                         Text("Date").font(.caption).foregroundStyle(.secondary)
-                        DatePicker("", selection: $model.tagDate, displayedComponents: .date)
+                        DatePicker("Date", selection: $model.tagDate, displayedComponents: .date)
                             .datePickerStyle(.compact).labelsHidden().frame(alignment: .leading)
                     }
                 }
@@ -37,6 +37,7 @@ extension ContentView {
                 Image(nsImage: nsImg)
                     .resizable().aspectRatio(contentMode: .fill)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .accessibilityLabel("Cover artwork")
                 VStack {
                     HStack {
                         Spacer()
@@ -48,6 +49,8 @@ extension ContentView {
                             Image(systemName: "xmark.circle.fill").foregroundStyle(.white).shadow(radius: 2)
                         }
                         .buttonStyle(.borderless).padding(6)
+                        .accessibilityLabel("Remove artwork")
+                        .help("Remove artwork")
                     }
                     Spacer()
                 }
@@ -75,6 +78,12 @@ extension ContentView {
                 .allowsHitTesting(false)
             }
         }
+        // The empty drop zone works by tap gesture, so give VoiceOver an equivalent.
+        .accessibilityElement(children: model.tagArtwork == nil ? .ignore : .contain)
+        .accessibilityLabel(model.tagArtwork == nil ? "Cover artwork: none" : "Cover artwork")
+        .accessibilityHint(model.tagArtwork == nil ? "Choose an image, or drop one here" : "")
+        .accessibilityAddTraits(model.tagArtwork == nil ? .isButton : [])
+        .accessibilityAction { if model.tagArtwork == nil { openArtworkPicker() } }
         .contentShape(Rectangle())
         .onTapGesture { if model.tagArtwork == nil { openArtworkPicker() } }
         .onDrop(of: [UTType.fileURL], isTargeted: $isArtworkTargeted) { providers in
@@ -88,6 +97,7 @@ extension ContentView {
         VStack(alignment: .leading, spacing: 5) {
             Text(label).font(.caption).foregroundStyle(.secondary)
             TextField(placeholder, text: binding).textFieldStyle(.roundedBorder)
+                .accessibilityLabel(label)
         }
     }
 

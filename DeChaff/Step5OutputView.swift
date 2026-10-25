@@ -34,6 +34,8 @@ extension ContentView {
                         HStack(spacing: 12) {
                             Slider(value: $model.targetLUFS, in: -32 ... -6, step: 0.5)
                                 .padding(.leading, 16)
+                                .accessibilityLabel("Target loudness")
+                                .accessibilityValue(String(format: "%.0f LUFS", model.targetLUFS))
                             Text(String(format: "%.0f LUFS", model.targetLUFS))
                                 .font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
                                 .frame(width: 56, alignment: .trailing).padding(.trailing, 16)
@@ -54,6 +56,8 @@ extension ContentView {
                         HStack(spacing: 12) {
                             Slider(value: $model.maxSilenceDuration, in: 0.3...3.0, step: 0.1)
                                 .padding(.leading, 16)
+                                .accessibilityLabel("Longest pause kept")
+                                .accessibilityValue(String(format: "%.1f seconds", model.maxSilenceDuration))
                             Text(String(format: "%.1fs max", model.maxSilenceDuration))
                                 .font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
                                 .frame(width: 60, alignment: .trailing).padding(.trailing, 16)
@@ -64,21 +68,21 @@ extension ContentView {
 
                 settingsGroup("Output Format") {
                     settingsRow("Format") {
-                        Picker("", selection: $model.outputFormat) {
+                        Picker("Format", selection: $model.outputFormat) {
                             Text("MP3").tag(OutputFormat.mp3)
                             Text("WAV").tag(OutputFormat.wav)
                         }
-                        .pickerStyle(.segmented).frame(width: 110)
+                        .pickerStyle(.segmented).labelsHidden().frame(width: 110)
                     }
                     if model.outputFormat == .mp3 {
                         Divider().padding(.leading, 16)
                         settingsRow("Bitrate") {
-                            Picker("", selection: $model.mp3Bitrate) {
+                            Picker("Bitrate", selection: $model.mp3Bitrate) {
                                 ForEach([64, 96, 128, 192, 256], id: \.self) { br in
                                     Text("\(br) kbps").tag(br)
                                 }
                             }
-                            .pickerStyle(.segmented).frame(width: 290)
+                            .pickerStyle(.segmented).labelsHidden().frame(width: 290)
                         }
                     }
                 }
@@ -107,7 +111,9 @@ extension ContentView {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
-            Toggle("", isOn: isOn).toggleStyle(.switch).labelsHidden()
+            // The label stays for VoiceOver even though it's hidden on screen.
+            Toggle(label, isOn: isOn).toggleStyle(.switch).labelsHidden()
+                .accessibilityHint(subtitle)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)

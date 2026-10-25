@@ -47,6 +47,7 @@ extension ContentView {
             if model.chapters.isEmpty {
                 HStack(spacing: 8) {
                     Image(systemName: "list.bullet.indent").foregroundStyle(.quaternary)
+                        .accessibilityHidden(true)
                     Text("No chapters yet — navigate and tap + Add Chapter")
                         .font(.caption).foregroundStyle(.tertiary)
                 }
@@ -144,6 +145,7 @@ struct ChapterRow: View {
     var body: some View {
         HStack(spacing: 8) {
             TextField("0:00", text: $timeText)
+                .accessibilityLabel("Chapter time")
                 .font(.system(.caption, design: .monospaced))
                 .frame(width: 56)
                 .multilineTextAlignment(.center)
@@ -157,23 +159,28 @@ struct ChapterRow: View {
 
             TextField("Chapter title", text: $chapter.title)
                 .font(.caption).textFieldStyle(.plain)
+                .accessibilityLabel("Chapter title")
 
             if isExcluded {
                 Image(systemName: "scissors")
                     .font(.caption2).foregroundStyle(.red.opacity(0.7))
                     .help("This chapter sits in an excluded section — it will move to the cut")
+                    .accessibilityLabel("Inside an excluded section; it will move to the cut")
             }
 
             Button(action: onDelete) {
                 Image(systemName: "minus.circle.fill").foregroundStyle(.red.opacity(0.6))
             }
             .buttonStyle(.borderless)
+            .help("Delete chapter")
+            .accessibilityLabel("Delete chapter")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Chapter: \(chapter.title.isEmpty ? "Untitled" : chapter.title)")
-        .accessibilityValue("at \(formatChapterTime(keptTime))\(isExcluded ? ", inside an excluded section" : "")")
+        // .contain, not .combine: combining hid the time and title fields from VoiceOver,
+        // so chapters couldn't be renamed or moved without a mouse.
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Chapter: \(chapter.title.isEmpty ? "Untitled" : chapter.title), at \(formatChapterTime(keptTime))")
     }
 
     private func commitTime() {

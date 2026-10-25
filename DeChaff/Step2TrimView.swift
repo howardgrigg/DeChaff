@@ -14,7 +14,7 @@ extension ContentView {
             )
 
             // Tab switcher
-            Picker("", selection: $trimTab) {
+            Picker("Trim using", selection: $trimTab) {
                 Text("Waveform").tag(0)
                 Text("Transcript").tag(1)
             }
@@ -126,16 +126,20 @@ struct ExclusionRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "scissors").font(.caption2).foregroundStyle(.red.opacity(0.7))
+                .accessibilityHidden(true)
 
             TextField("0:00", text: $startText)
+                .accessibilityLabel("Cut start")
                 .font(.system(.caption, design: .monospaced))
                 .frame(width: 62).multilineTextAlignment(.center)
                 .focused($focusedField, equals: 0)
                 .onSubmit { commit() }
 
             Text("→").font(.caption2).foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
 
             TextField("0:00", text: $endText)
+                .accessibilityLabel("Cut end")
                 .font(.system(.caption, design: .monospaced))
                 .frame(width: 62).multilineTextAlignment(.center)
                 .focused($focusedField, equals: 1)
@@ -151,12 +155,14 @@ struct ExclusionRow: View {
             }
             .buttonStyle(.borderless)
             .help("Play from just before this cut")
+            .accessibilityLabel("Play from just before this cut")
 
             Button(action: onDelete) {
                 Image(systemName: "minus.circle.fill").foregroundStyle(.red.opacity(0.6))
             }
             .buttonStyle(.borderless)
             .help("Restore this section")
+            .accessibilityLabel("Restore this section")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 7)
@@ -164,9 +170,9 @@ struct ExclusionRow: View {
         .onChange(of: range.startSeconds) { _ in if focusedField == nil { syncText() } }
         .onChange(of: range.endSeconds)   { _ in if focusedField == nil { syncText() } }
         .onChange(of: focusedField) { field in if field == nil { commit() } }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Excluded section")
-        .accessibilityValue("\(formatPlaybackTime(range.startSeconds)) to \(formatPlaybackTime(range.endSeconds))")
+        // .contain, not .combine: combining hid the time fields and buttons from VoiceOver.
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Excluded section, \(formatPlaybackTime(range.startSeconds)) to \(formatPlaybackTime(range.endSeconds))")
     }
 
     private func syncText() {
@@ -467,6 +473,22 @@ private struct WordChip: View {
             .contentShape(Rectangle())
             .onTapGesture(perform: onTap)
             .animation(.easeInOut(duration: 0.08), value: state == .none)
+            // Selection and cuts are shown by colour and strikethrough; say them too.
+            .accessibilityAddTraits(.isButton)
+            .accessibilityValue(accessibilityState)
+            .accessibilityAction { onTap() }
+    }
+
+    private var accessibilityState: String {
+        var parts: [String] = []
+        switch state {
+        case .start:   parts.append("selection start")
+        case .end:     parts.append("selection end")
+        case .inRange: parts.append("selected")
+        case .none:    break
+        }
+        if isCut { parts.append("cut") }
+        return parts.joined(separator: ", ")
     }
 
     private var bgColor: Color {

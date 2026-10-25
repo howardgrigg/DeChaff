@@ -140,6 +140,29 @@ struct DechaffCommands: Commands {
 
             Divider()
 
+            // Keyboard (and VoiceOver) route to a selection, which otherwise needs a shift-drag.
+            Button("Set Selection Start") {
+                guard let m = model else { return }
+                let t = m.playback.playheadSeconds
+                m.selectionStart = t
+                if m.selectionEnd < t { m.selectionEnd = t }
+            }
+            .keyboardShortcut("[", modifiers: [])
+            .disabled(model?.inputURL == nil || step?.wrappedValue != 1 || textEditing)
+
+            Button("Set Selection End") {
+                guard let m = model else { return }
+                let t = m.playback.playheadSeconds
+                if t < m.selectionStart {
+                    m.selectionEnd = m.selectionStart
+                    m.selectionStart = t
+                } else {
+                    m.selectionEnd = t
+                }
+            }
+            .keyboardShortcut("]", modifiers: [])
+            .disabled(model?.inputURL == nil || step?.wrappedValue != 1 || textEditing)
+
             Button("Exclude Selection") {
                 actions?.excludeSelection()
             }

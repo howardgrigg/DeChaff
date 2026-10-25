@@ -141,6 +141,7 @@ struct ContentView: View {
             if let url = model.inputURL {
                 HStack(spacing: 6) {
                     Image(systemName: "waveform").foregroundStyle(.secondary).font(.caption)
+                        .accessibilityHidden(true)
                     Text(url.lastPathComponent)
                         .font(.caption).foregroundStyle(.secondary)
                         .lineLimit(1).truncationMode(.middle)
@@ -335,7 +336,8 @@ struct ContentView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity)
-        .accessibilityElement(children: .combine)
+        // .contain, not .combine: combining hid the Cancel and Show details buttons.
+        .accessibilityElement(children: .contain)
         .accessibilityLabel("Processing audio")
         .accessibilityValue("\(Int(model.progress * 100)) percent, \(model.processingStageLabel)")
     }
@@ -554,8 +556,16 @@ struct ContentView: View {
             }
         }
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.secondary.opacity(0.12), lineWidth: 1))
-        .accessibilityElement(children: .contain)
+        // The waveform is drawn on a canvas and driven by mouse gestures. As one adjustable
+        // element, VoiceOver's increment/decrement scrubs the playhead 5 s, and the Markers
+        // menu sets trims, selections and chapters at the playhead.
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel("Waveform editor")
+        .accessibilityHint("Adjust to move the playhead 5 seconds. Use the Markers menu to set trim points, selections and chapters at the playhead.")
+        .accessibilityAdjustableAction { direction in
+            let step: Double = direction == .increment ? 5 : -5
+            model.seekPlayback(to: max(0, min(model.inputDuration, model.playback.playheadSeconds + step)))
+        }
         .accessibilityValue(model.inputDuration > 0
             ? "Duration \(formatPlaybackTime(model.inputDuration)), trim \(formatPlaybackTime(model.trimInSeconds)) to \(formatPlaybackTime(model.trimOutSeconds))"
             : "No audio loaded")
@@ -595,7 +605,7 @@ struct ContentView: View {
                 }
                 .buttonStyle(.bordered).controlSize(.small)
                 .disabled(!model.hasSelection)
-                .help("Cut the selected span out of the recording (shift-drag the waveform to select)")
+                .help("Cut the selected span out of the recording (shift-drag the waveform to select, or use [ and ] at the playhead)")
             }
         }
     }
@@ -619,6 +629,8 @@ struct ContentView: View {
             .font(.system(.caption, design: .monospaced))
             .foregroundStyle(.secondary)
             .frame(width: 52, alignment: .leading)
+            .accessibilityLabel("Playhead")
+            .accessibilityValue(formatPlaybackTime(model.playback.playheadSeconds))
     }
 
     func stepHeader(title: String, subtitle: String) -> some View {

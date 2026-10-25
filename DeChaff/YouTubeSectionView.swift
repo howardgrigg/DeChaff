@@ -22,15 +22,15 @@ extension ContentView {
                 Label("From YouTube", systemImage: "play.rectangle")
                     .font(.headline)
                 Spacer()
-                Picker("", selection: $ytTab) {
+                Picker("Source", selection: $ytTab) {
                     Text("YouTube URL").tag(0)
                     Text("Videos").tag(1)
                     Text("Live Streams").tag(2)
                 }
                 .pickerStyle(.segmented)
+                .labelsHidden()
                 .frame(width: 280)
                 .controlSize(.small)
-                .opacity(0.7)
                 .onChange(of: ytTab) { _ in
                     youtube.videos = []
                     youtube.listError = nil
@@ -51,6 +51,7 @@ extension ContentView {
                     .buttonStyle(.borderless)
                     .disabled(ytTab == 0 || ytChannelURL.isEmpty || ytManager.binaryURL == nil || youtube.isFetchingList)
                     .help("Refresh video list")
+                    .accessibilityLabel("Refresh video list")
                     .opacity(youtube.isFetchingList ? 0 : 1)
                 }
                 .frame(width: 20, height: 20)
@@ -65,6 +66,7 @@ extension ContentView {
                         HStack(spacing: 8) {
                             TextField("Paste any YouTube URL…", text: $ytDirectURL)
                                 .textFieldStyle(.roundedBorder)
+                                .accessibilityLabel("YouTube URL")
                                 .controlSize(.small)
                                 .onSubmit { downloadDirectURL() }
                             if youtube.downloadingVideoID == "direct-url" {
@@ -76,6 +78,8 @@ extension ContentView {
                                     Image(systemName: "arrow.down.circle.fill")
                                 }
                                 .buttonStyle(.borderless)
+                                .help("Download")
+                                .accessibilityLabel("Download")
                                 .disabled(ytDirectURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                           || youtube.downloadingVideoID != nil
                                           || ytManager.binaryURL == nil)
@@ -166,6 +170,7 @@ extension ContentView {
             }
             .frame(width: 72, height: 44)
             .clipShape(RoundedRectangle(cornerRadius: 5))
+            .accessibilityHidden(true)
 
             // Text info
             VStack(alignment: .leading, spacing: 2) {
@@ -221,22 +226,39 @@ extension ContentView {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .contentShape(Rectangle())
-        .onTapGesture {
-            guard !anyDownloading else { return }
-            youtube.select(entry, manager: ytManager) { url, metadata, uploadDate in
-                model.loadFile(url: url)
-                // Pre-fill tag fields with AI-extracted metadata
-                if let metadata {
-                    if !metadata.title.isEmpty       { model.tagSermonTitle  = metadata.title }
-                    if !metadata.bibleReading.isEmpty { model.tagBibleReading = metadata.bibleReading }
-                    if !metadata.speaker.isEmpty     { model.tagPreacher     = metadata.speaker }
-                    if !metadata.series.isEmpty      { model.tagSeries       = metadata.series }
-                }
-                if let uploadDate { model.tagDate = uploadDate }
-                withAnimation(.easeInOut(duration: 0.2)) { currentStep = 1 }
-            }
-        }
+        .onTapGesture { openVideo(entry) }
+        // The row works by tap gesture, so expose it to VoiceOver as a button — except
+        // while downloading, when its Cancel button needs to be reachable.
+        .accessibilityElement(children: isDownloading ? .contain : .ignore)
+        .accessibilityLabel(isDownloading ? "Downloading \(entry.title)" : entry.title)
+        .accessibilityValue(isDownloading ? "" : videoRowDetail(entry))
+        .accessibilityHint(isDownloading || anyDownloading ? "" : "Downloads the audio and opens it")
+        .accessibilityAddTraits(isDownloading ? [] : .isButton)
+        .accessibilityAction { openVideo(entry) }
         .opacity(anyDownloading && !isDownloading ? 0.5 : 1)
+    }
+
+    private func videoRowDetail(_ entry: VideoEntry) -> String {
+        var parts: [String] = []
+        if let dur = entry.durationSeconds { parts.append(formatPlaybackTime(Double(dur))) }
+        if !entry.uploadDate.isEmpty { parts.append(formatYouTubeDate(entry.uploadDate)) }
+        return parts.joined(separator: ", ")
+    }
+
+    private func openVideo(_ entry: VideoEntry) {
+        guard youtube.downloadingVideoID == nil else { return }
+        youtube.select(entry, manager: ytManager) { url, metadata, uploadDate in
+            model.loadFile(url: url)
+            // Pre-fill tag fields with AI-extracted metadata
+            if let metadata {
+                if !metadata.title.isEmpty       { model.tagSermonTitle  = metadata.title }
+                if !metadata.bibleReading.isEmpty { model.tagBibleReading = metadata.bibleReading }
+                if !metadata.speaker.isEmpty     { model.tagPreacher     = metadata.speaker }
+                if !metadata.series.isEmpty      { model.tagSeries       = metadata.series }
+            }
+            if let uploadDate { model.tagDate = uploadDate }
+            withAnimation(.easeInOut(duration: 0.2)) { currentStep = 1 }
+        }
     }
 
     // MARK: - Direct URL download
@@ -258,6 +280,7 @@ extension ContentView {
                 Image(systemName: icon)
                     .font(.system(size: 22, weight: .light))
                     .foregroundStyle(.quaternary)
+                    .accessibilityHidden(true)
                 Text(text).font(.subheadline).foregroundStyle(.secondary)
                 Text(detail).font(.caption).foregroundStyle(.tertiary)
                     .multilineTextAlignment(.center)
@@ -277,6 +300,8 @@ extension ContentView {
                 Image(systemName: "xmark").font(.caption)
             }
             .buttonStyle(.borderless)
+            .help("Dismiss")
+            .accessibilityLabel("Dismiss")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

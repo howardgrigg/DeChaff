@@ -50,6 +50,7 @@ struct YouTubeSettingsView: View {
                         Text("Channel URL or Handle").font(.subheadline)
                         TextField("@YourChurch or https://youtube.com/@…", text: $channelURL)
                             .textFieldStyle(.roundedBorder)
+                            .accessibilityLabel("Channel URL or handle")
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
@@ -63,12 +64,13 @@ struct YouTubeSettingsView: View {
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Picker("", selection: $videoLimit) {
+                        Picker("Videos to show", selection: $videoLimit) {
                             Text("5").tag(5)
                             Text("10").tag(10)
                             Text("20").tag(20)
                         }
                         .pickerStyle(.segmented)
+                        .labelsHidden()
                         .frame(width: 130)
                     }
                     .padding(.horizontal, 16)
@@ -126,6 +128,7 @@ struct YouTubeSettingsView: View {
 
                         TextField("Format template", text: $titleFormat)
                             .textFieldStyle(.roundedBorder)
+                            .accessibilityLabel("YouTube title format")
 
                         PlaceholderChipsView(text: $titleFormat,
                                             placeholders: ["{title}", "{reading}", "{preacher}", "{series}", "{date}"])
@@ -459,6 +462,9 @@ struct AudioSettingsView: View {
                     .frame(width: 56, alignment: .trailing)
             }
             slider()
+                .accessibilityLabel(label)
+                .accessibilityValue(value)
+                .accessibilityHint(caption)
             Text(caption).font(.caption).foregroundStyle(.secondary)
         }
         .padding(.horizontal, 16)
@@ -500,7 +506,7 @@ struct AIAssistantSettingsView: View {
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Toggle("", isOn: $aiEnabled).labelsHidden()
+                        Toggle("Enable AI Assistant", isOn: $aiEnabled).labelsHidden()
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
@@ -524,6 +530,7 @@ struct AIAssistantSettingsView: View {
                             } else {
                                 SecureField("sk-ant-…", text: $apiKeyInput)
                                     .textFieldStyle(.roundedBorder)
+                                    .accessibilityLabel("Claude API key")
                                 HStack {
                                     Text("Get a key at [console.anthropic.com](https://console.anthropic.com/settings/keys)")
                                         .font(.caption).foregroundStyle(.secondary)
@@ -548,7 +555,7 @@ struct AIAssistantSettingsView: View {
                             HStack {
                                 Text("Model").font(.subheadline)
                                 Spacer()
-                                Picker("", selection: $pickerValue) {
+                                Picker("Model", selection: $pickerValue) {
                                     ForEach(ClaudeModel.knownModels, id: \.id) { m in
                                         Text(m.name).tag(m.id)
                                     }
@@ -578,6 +585,7 @@ struct AIAssistantSettingsView: View {
                                     HStack {
                                         TextField("e.g. claude-sonnet-5-5", text: $customModelInput)
                                             .textFieldStyle(.roundedBorder)
+                                            .accessibilityLabel("Model ID")
                                         Button("Save") {
                                             let trimmed = customModelInput.trimmingCharacters(in: .whitespaces)
                                             if !trimmed.isEmpty { storedModel = trimmed }
@@ -895,6 +903,10 @@ struct MCPSettingsView: View {
                 if !ok { Text(fix).font(.caption2).foregroundStyle(.secondary) }
             }
         }
+        // Met or missing is otherwise shown only by the icon.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityValue(ok ? "OK" : "Missing. \(fix)")
     }
 
     private var isAppleSilicon: Bool {
@@ -1037,6 +1049,7 @@ struct PlaceholderChipsView: View {
             Text("Insert:").font(.caption).foregroundStyle(.secondary)
             ForEach(placeholders, id: \.self) { chip in
                 Button(chip) { text += chip }
+                    .accessibilityLabel("Insert \(chip.trimmingCharacters(in: CharacterSet(charactersIn: "{}")))")
                     .buttonStyle(.bordered)
                     .controlSize(.mini)
                     .font(.system(.caption, design: .monospaced))

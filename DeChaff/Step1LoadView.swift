@@ -83,7 +83,9 @@ extension ContentView {
         .accessibilityLabel(model.inputURL != nil
             ? "Audio loaded: \(model.inputURL!.lastPathComponent)"
             : "Audio file drop zone")
-        .accessibilityHint("Drop an audio file or activate to choose a file")
+        .accessibilityHint("Activate to choose a file, or drop an audio file here")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { if youtube.downloadingVideoID == nil { openFilePicker() } }
     }
 
     func fileInfoRow(url: URL) -> some View {
@@ -97,6 +99,8 @@ extension ContentView {
         .padding(.horizontal, 14)
         .padding(.vertical, 7)
         .background(Color.secondary.opacity(0.08), in: Capsule())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Loaded \(url.pathExtension.uppercased()) file, \(formatPlaybackTime(model.inputDuration)) long")
     }
 
     // MARK: - File loading
