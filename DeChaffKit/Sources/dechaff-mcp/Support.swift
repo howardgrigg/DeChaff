@@ -155,7 +155,8 @@ enum Schema {
         "preacher": string("Preacher's name (ID3 artist)."),
         "series": string("Sermon series (ID3 album)."),
         "date": string("Sermon date, YYYY-MM-DD (also accepts e.g. \"23 Mar 2025\"). Sets the year tag and the {date} in the filename."),
-        "artwork_path": string("JPEG cover art. Defaults to the artwork last used in the DeChaff app."),
+        "artwork_path": string("Cover art image (JPEG, PNG, HEIC…). Defaults to the artwork saved in the DeChaff app, "
+                               + "which is the last series' artwork — check it with get_artwork when the series changes."),
     ])
 }
 

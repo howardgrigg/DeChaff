@@ -39,13 +39,17 @@ private func makeServer(_ outbox: Outbox) -> MCPServer {
         try await Task.sleep(nanoseconds: 10_000_000_000)
         return ToolResult(text: "done")
     }
+    let picture = MCPTool(name: "picture", description: "Returns an image.",
+                          inputSchema: ["type": "object"]) { _, _ in
+        ToolResult(text: "A picture.", images: [.init(data: Data([0xFF, 0xD8, 0xFF]), mimeType: "image/jpeg")])
+    }
     let prompt = MCPPrompt(name: "greet", description: "Greets someone.",
                            arguments: [.init(name: "who", description: "Name", required: true)]) {
         "Hello, \($0["who"] ?? "")!"
     }
     let resource = MCPResource(uri: "test://settings", name: "Settings", description: "Test settings") { "{\"a\":1}" }
     return MCPServer(name: "test", version: "1.0", instructions: "Be nice.",
-                     tools: [echo, slow], prompts: [prompt], resources: [resource],
+                     tools: [echo, slow, picture], prompts: [prompt], resources: [resource],
                      writeLine: { outbox.append($0) })
 }
 
@@ -77,7 +81,7 @@ private func request(_ id: Int, _ method: String, _ params: JSONValue = [:]) -> 
         let server = makeServer(out)
         await server.receive(request(1, "tools/list"))
         let list = try await out.response(id: 1)
-        #expect(list["result"]?["tools"]?.arrayValue?.map { $0["name"] } == ["echo", "slow"])
+        #expect(list["result"]?["tools"]?.arrayValue?.map { $0["name"] } == ["echo", "slow", "picture"])
 
         await server.receive(request(2, "tools/call", ["name": "echo", "arguments": ["text": "hi"],
                                                        "_meta": ["progressToken": "tok"]]))
@@ -89,6 +93,16 @@ private func request(_ id: Int, _ method: String, _ params: JSONValue = [:]) -> 
         let progress = out.messages.first { $0["method"] == "notifications/progress" }
         #expect(progress?["params"]?["progressToken"] == "tok")
         #expect(progress?["params"]?["progress"] == 0.5)
+    }
+
+    @Test func imagesFollowTheText() async throws {
+        let out = Outbox()
+        let server = makeServer(out)
+        await server.receive(request(1, "tools/call", ["name": "picture"]))
+        let content = try await out.response(id: 1)["result"]?["content"]?.arrayValue
+        #expect(content?.map { $0["type"] } == ["text", "image"])
+        #expect(content?.last?["data"] == .string(Data([0xFF, 0xD8, 0xFF]).base64EncodedString()))
+        #expect(content?.last?["mimeType"] == "image/jpeg")
     }
 
     @Test func toolFailuresComeBackAsErrorResults() async throws {

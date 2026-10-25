@@ -38,7 +38,10 @@ segments show the worship around the sermon), find the boundaries with search_tr
 get_transcript, then check them with refine_cuts. Usually: start after the Bible reading, end on \
 the closing prayer's "Amen".
 3. Info — the tags: title, Bible reading, preacher, series, date, artwork. Start from the parsed video \
-title and get_settings (last preacher/series, default artwork); fill gaps from the transcript.
+title and get_settings (last preacher/series); fill gaps from the transcript. The app keeps the last \
+episode's artwork and the user only changes it when a new series starts: if the series differs from \
+last_series, look at the saved artwork with get_artwork and ask the user for the new series' artwork \
+(tags.artwork_path). A processed episode's preacher, series and artwork become the new defaults.
 4. Chapters — 3–6 markers at clear turns in the sermon, the first at the trim start (e.g. \
 "Introduction"), given as word indexes and checked with refine_cuts.
 5. Output — confirm the plan with the user (trim, tags, chapters, any non-default options), then run \

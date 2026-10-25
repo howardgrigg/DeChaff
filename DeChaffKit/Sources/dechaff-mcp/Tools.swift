@@ -10,7 +10,7 @@ struct DeChaffTools: Sendable {
     let transcripts = TranscriptStore()
 
     var all: [MCPTool] {
-        [getSettings, listChannelVideos, downloadAudio, analyzeAudio, transcribe, getTranscript,
+        [getSettings, getArtwork, listChannelVideos, downloadAudio, analyzeAudio, transcribe, getTranscript,
          searchTranscript, refineCuts, processSermon, readTags, writeTags, getJob, cancelJob]
     }
 
@@ -24,6 +24,53 @@ struct DeChaffTools: Sendable {
                     + "compressor settings, last preacher/series) and where LAME, yt-dlp and ffmpeg were found.",
                 inputSchema: Schema.object([:]), annotations: Self.readOnly) { _, _ in
             .json(AppSettings().json)
+        }
+    }
+
+    var getArtwork: MCPTool {
+        MCPTool(name: "get_artwork", title: "Show cover art",
+                description: "Shows cover art as an image you can look at. With no path: the artwork saved in the "
+                    + "DeChaff app, which it keeps using until it's changed for a new series — so check it matches "
+                    + "the sermon's series (get_settings has last_series) and ask the user for new artwork if not. "
+                    + "With path: an image file, or the artwork embedded in an MP3.",
+                inputSchema: Schema.object([
+                    "path": Schema.string("An image file or MP3. Omit for the app's saved artwork."),
+                ]),
+                annotations: Self.readOnly) { raw, _ in
+            let settings = AppSettings()
+            var info: [String: JSONValue] = [:]
+            let data: Data
+            if let path = Args(raw).string("path") {
+                let url = expandPath(path)
+                guard let fileData = try? Data(contentsOf: url) else { throw ToolError("No file at \(url.path).") }
+                if url.pathExtension.lowercased() == "mp3" {
+                    guard let art = ID3Tag.read(fileData)?.artwork, !art.isEmpty else {
+                        return ToolResult(text: "\(url.lastPathComponent) has no embedded artwork.")
+                    }
+                    data = art
+                    info["source"] = .string("Artwork embedded in \(url.lastPathComponent)")
+                } else {
+                    data = fileData
+                    info["source"] = .string(url.path)
+                }
+            } else {
+                guard let saved = settings.artwork else {
+                    return ToolResult(text: "No artwork is saved in DeChaff. Pass tags.artwork_path to process_sermon.")
+                }
+                data = saved
+                info["source"] = "Saved in DeChaff (used for every episode until changed)"
+                info["last_series"] = .string(settings.lastSeries)
+            }
+            guard let size = imageSize(data), let preview = jpegImage(data, maxPixel: 512, quality: 0.8) else {
+                throw ToolError("That isn't an image DeChaff can read.")
+            }
+            info["width"] = .number(Double(size.width))
+            info["height"] = .number(Double(size.height))
+            if size.width < 1400 || size.width != size.height {
+                info["warning"] = "Podcast directories want square artwork of at least 1400×1400 pixels."
+            }
+            return ToolResult(text: JSONValue.object(info).prettyPrinted(), structured: .object(info),
+                              images: [.init(data: preview, mimeType: "image/jpeg")])
         }
     }
 
@@ -439,8 +486,7 @@ struct DeChaffTools: Sendable {
                 tags.date = date
             }
             if let art = tagArgs.string("artwork_path") {
-                guard let data = try? Data(contentsOf: expandPath(art)) else { throw ToolError("Couldn't read artwork at \(art).") }
-                tags.artwork = data
+                tags.artwork = try loadArtwork(art)
             }
 
             // Options
@@ -514,6 +560,9 @@ struct DeChaffTools: Sendable {
                     let failure = job.log.last { $0.hasPrefix("❌") } ?? job.log.last ?? "unknown error"
                     throw ToolError("Processing failed: \(failure)")
                 case .finished(let result):
+                    // Like the app: the next episode starts from this one's preacher, series and artwork.
+                    AppSettings().rememberLastUsed(preacher: finalTags.preacher, series: finalTags.series,
+                                                   artwork: finalTags.artwork)
                     let size = (try? FileManager.default.attributesOfItem(atPath: result.outputURL.path)[.size] as? NSNumber)?
                         .doubleValue ?? 0
                     let removed = result.silenceSegments.reduce(0.0) {
@@ -534,6 +583,7 @@ struct DeChaffTools: Sendable {
                             "artwork": .bool(finalTags.artwork != nil),
                         ],
                         "warnings": .array(finalWarnings),
+                        "remembered": "Preacher, series and artwork are saved as DeChaff's defaults for the next episode.",
                         "log": .array(job.log.suffix(15).map { .string($0) }),
                     ]
                 }
@@ -603,8 +653,7 @@ struct DeChaffTools: Sendable {
                 metadata.year = String(Calendar.current.component(.year, from: date))
             }
             if let art = t.string("artwork_path") {
-                guard let data = try? Data(contentsOf: expandPath(art)) else { throw ToolError("Couldn't read artwork at \(art).") }
-                metadata.artwork = data
+                metadata.artwork = try loadArtwork(art)
             }
 
             var chapters = (existing?.chapters ?? []).map { Chapter(timeSeconds: $0.startSeconds, title: $0.title) }
@@ -661,6 +710,14 @@ struct DeChaffTools: Sendable {
     static let ytDlpMissing = ToolError(
         "yt-dlp isn't installed yet. Open DeChaff once (it installs and updates yt-dlp automatically), "
         + "or check Settings → General.")
+
+    /// Reads an image and re-encodes it as JPEG, as the app does when artwork is chosen.
+    private func loadArtwork(_ path: String) throws -> Data {
+        let url = expandPath(path)
+        guard let data = try? Data(contentsOf: url) else { throw ToolError("Couldn't read artwork at \(url.path).") }
+        guard let jpeg = jpegImage(data) else { throw ToolError("\(url.lastPathComponent) isn't an image DeChaff can read.") }
+        return jpeg
+    }
 
     private func requireTranscript(_ url: URL) async throws -> [TranscriptWord] {
         guard let words = await transcripts.words(for: url) else {

@@ -42,7 +42,7 @@ claude mcp add dechaff --scope user -- /Applications/DeChaff.app/Contents/MacOS/
 }
 ```
 
-The server uses the DeChaff app's settings: YouTube channel, title and filename templates, compressor settings and default artwork. It also reuses the yt-dlp copy the app installs and the app's bundled LAME encoder, so open DeChaff once before using the server.
+The server uses the DeChaff app's settings: YouTube channel, title and filename templates, compressor settings and default artwork. Like the app, it keeps the last episode's preacher, series and artwork as the defaults for the next one, and it checks the saved artwork against the series before reusing it. It also reuses the yt-dlp copy the app installs and the app's bundled LAME encoder, so open DeChaff once before using the server.
 
 ### Building from source
 
@@ -61,6 +61,7 @@ Point Claude at it with **Settings → MCP → Advanced → Choose…**. A serve
 | Tool | Purpose |
 |---|---|
 | `get_settings` | The app's saved settings and where LAME, yt-dlp and ffmpeg were found |
+| `get_artwork` | Shows cover art as an image the assistant can see: the app's saved artwork (the current series'), an image file, or an MP3's embedded art |
 | `list_channel_videos` | Recent videos on the channel, with titles parsed into sermon fields |
 | `download_audio` | Downloads a video's audio and returns the file path |
 | `analyze_audio` | Duration, loudness (LUFS), music segments and long silences |

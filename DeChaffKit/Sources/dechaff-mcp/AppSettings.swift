@@ -19,7 +19,16 @@ struct AppSettings {
     var filenameTemplate: String { defaults.string(forKey: "dechaff.filenameTemplate") ?? defaultFilenameTemplate }
     var lastPreacher: String { defaults.string(forKey: "dechaff.preacher") ?? "" }
     var lastSeries: String { defaults.string(forKey: "dechaff.series") ?? "" }
+    /// Cover art the app keeps between episodes — it's changed when the series changes.
     var artwork: Data? { defaults.data(forKey: "dechaff.artwork") }
+
+    /// Remembers what an episode used, as the app does when these fields are edited,
+    /// so the next episode — in the app or here — starts from them.
+    func rememberLastUsed(preacher: String, series: String, artwork: Data?) {
+        if !preacher.isEmpty { defaults.set(preacher, forKey: "dechaff.preacher") }
+        if !series.isEmpty { defaults.set(series, forKey: "dechaff.series") }
+        if let artwork { defaults.set(artwork, forKey: "dechaff.artwork") }
+    }
 
     private func double(_ key: String, _ fallback: Double) -> Double {
         (defaults.object(forKey: key) as? Double) ?? fallback
@@ -58,7 +67,16 @@ struct AppSettings {
             "filename_template": .string(filenameTemplate),
             "last_preacher": .string(lastPreacher),
             "last_series": .string(lastSeries),
-            "has_default_artwork": .bool(artwork != nil),
+            "artwork": artwork.map { art -> JSONValue in
+                var o: [String: JSONValue] = [
+                    "saved": true, "bytes": .number(Double(art.count)),
+                    "note": "The app reuses this until it's changed for a new series. Call get_artwork to see it.",
+                ]
+                if let size = imageSize(art) {
+                    o["width"] = .number(Double(size.width)); o["height"] = .number(Double(size.height))
+                }
+                return .object(o)
+            } ?? ["saved": false],
             "compressor": [
                 "threshold_db": .number(compressorThreshold), "headroom_db": .number(compressorHeadRoom),
                 "attack_seconds": .number(compressorAttack), "release_seconds": .number(compressorRelease),

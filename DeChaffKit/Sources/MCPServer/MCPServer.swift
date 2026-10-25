@@ -7,11 +7,23 @@ import Foundation
 public struct ToolResult: Sendable {
     public var text: String
     public var structured: JSONValue?
+    /// Images the model can look at, sent after the text.
+    public var images: [Image]
     public var isError: Bool
 
-    public init(text: String, structured: JSONValue? = nil, isError: Bool = false) {
+    public struct Image: Sendable {
+        public let data: Data
+        public let mimeType: String
+        public init(data: Data, mimeType: String) {
+            self.data = data
+            self.mimeType = mimeType
+        }
+    }
+
+    public init(text: String, structured: JSONValue? = nil, images: [Image] = [], isError: Bool = false) {
         self.text = text
         self.structured = structured
+        self.images = images
         self.isError = isError
     }
 
@@ -279,8 +291,11 @@ public actor MCPServer {
                 // Tool failures go back to the model as results it can read and act on.
                 result = .error(error.localizedDescription)
             }
+            let images: [JSONValue] = result.images.map {
+                ["type": "image", "data": .string($0.data.base64EncodedString()), "mimeType": .string($0.mimeType)]
+            }
             var o: [String: JSONValue] = [
-                "content": [["type": "text", "text": .string(result.text)]],
+                "content": .array([["type": "text", "text": .string(result.text)]] + images),
                 "isError": .bool(result.isError),
             ]
             if let structured = result.structured { o["structuredContent"] = structured }

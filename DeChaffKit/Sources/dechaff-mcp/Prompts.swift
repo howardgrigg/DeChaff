@@ -25,7 +25,8 @@ let prepareSermonPrompt = MCPPrompt(
     segments show the worship either side. Check both with refine_cuts — if a cut is "forced", look at the words \
     nearby with get_transcript format "words" and pick a sentence boundary instead.
     3. Info: settle title, Bible reading, preacher, series and date from the parsed title, get_settings and the \
-    transcript. Artwork defaults to the app's.
+    transcript. Artwork: the app's saved artwork belongs to the last series — if this sermon's series is different \
+    from last_series, show me the saved artwork (get_artwork) and ask for the new series artwork.
     4. Chapters: choose 3–6 chapters at clear structural turns, the first at the trim start (e.g. "Introduction"), \
     and check them with refine_cuts.
     5. Output: show me the plan — trim start and end (times and the words there), the tags, and chapter titles \
