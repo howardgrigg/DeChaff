@@ -48,15 +48,16 @@ extension VoiceIsolationProcessor {
 
             // ── Pass 1: RMS per window ────────────────────────────────────────
             guard let buf = AVAudioPCMBuffer(pcmFormat: fmt,
-                                             frameCapacity: AVAudioFrameCount(windowFrames)) else { return false }
+                                             frameCapacity: AVAudioFrameCount(windowFrames)),
+                  let scratch = AVAudioPCMBuffer(pcmFormat: fmt,
+                                                 frameCapacity: AVAudioFrameCount(windowFrames)) else { return false }
             var windowRMS = [Float](repeating: 0, count: nWindows)
 
             file.framePosition = 0
             for w in 0..<nWindows {
                 if isCancelled { logHandler("⏹ Cancelled"); return false }
                 let toRead = AVAudioFrameCount(min(windowFrames, totalFrames - w * windowFrames))
-                buf.frameLength = toRead
-                try file.read(into: buf, frameCount: toRead)
+                try readWindow(file, into: buf, frames: toRead, scratch: scratch)
                 guard buf.frameLength > 0 else { break }
                 var sumMS: Float = 0
                 for ch in 0..<nch {
@@ -130,8 +131,7 @@ extension VoiceIsolationProcessor {
             for w in 0..<nWindows {
                 if isCancelled { logHandler("⏹ Cancelled"); return false }
                 let toRead = AVAudioFrameCount(min(windowFrames, totalFrames - w * windowFrames))
-                buf.frameLength = toRead
-                try file.read(into: buf, frameCount: toRead)
+                try readWindow(file, into: buf, frames: toRead, scratch: scratch)
                 guard buf.frameLength > 0 else { break }
                 writeBuf.frameLength = buf.frameLength
                 let n = vDSP_Length(buf.frameLength)
@@ -154,6 +154,28 @@ extension VoiceIsolationProcessor {
             return true
         } catch {
             logHandler("❌ Slow leveler failed: \(error.localizedDescription)"); return false
+        }
+    }
+
+    /// Fills `buf` with the next `frames` frames of `file`, or as many as remain.
+    /// A single `read` may return fewer frames than asked — 44,032 of a 44,100-frame
+    /// request on some WAVs — and treating that as a full window silently dropped
+    /// ~0.15% of the audio, all of it from the end of the episode.
+    private func readWindow(_ file: AVAudioFile, into buf: AVAudioPCMBuffer,
+                            frames: AVAudioFrameCount, scratch: AVAudioPCMBuffer) throws {
+        buf.frameLength = 0
+        let nch = Int(buf.format.channelCount)
+        while buf.frameLength < frames && file.framePosition < file.length {
+            scratch.frameLength = 0
+            try file.read(into: scratch, frameCount: frames - buf.frameLength)
+            let got = Int(scratch.frameLength)
+            guard got > 0 else { break }
+            for ch in 0..<nch {
+                guard let src = scratch.floatChannelData?[ch],
+                      let dst = buf.floatChannelData?[ch] else { continue }
+                memcpy(dst + Int(buf.frameLength), src, got * MemoryLayout<Float>.size)
+            }
+            buf.frameLength += AVAudioFrameCount(got)
         }
     }
 
