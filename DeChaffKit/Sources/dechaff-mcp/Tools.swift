@@ -588,7 +588,7 @@ struct DeChaffTools: Sendable {
                                 outputDuration, expected)))
                         }
                     }
-                    return [
+                    var o: [String: JSONValue] = [
                         "output_path": .string(result.outputURL.path),
                         "size_mb": rounded(size / 1_048_576, 1),
                         "duration": JSONValue(outputDuration.map(formatTime)),
@@ -608,6 +608,12 @@ struct DeChaffTools: Sendable {
                             : "Test render (WAV or no title) — DeChaff's saved defaults were left unchanged.",
                         "log": .array(job.log.suffix(15).map { .string($0) }),
                     ]
+                    if let template = settings.aiAssistantPrompt {
+                        o["website_copy"] = websiteCopyJSON(template: template, tags: finalTags,
+                                                            trimIn: options.trimInSeconds, trimOut: options.trimOutSeconds,
+                                                            outputSeconds: outputDuration)
+                    }
+                    return .object(o)
                 }
             }
             return .json(try await jobs.wait(for: job, upTo: try args.double("wait_seconds") ?? 40, context: context))
@@ -753,6 +759,32 @@ struct DeChaffTools: Sendable {
 
 private func isoDate(_ date: Date) -> String {
     let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f.string(from: date)
+}
+
+/// The user's AI Assistant prompt with its placeholders filled exactly as the app fills
+/// them, for the assistant to follow with the sermon transcript as its input.
+private func websiteCopyJSON(template: String, tags: SermonTags, trimIn: Double, trimOut: Double,
+                             outputSeconds: Double?) -> JSONValue {
+    let dateFormatter = DateFormatter()
+    dateFormatter.dateFormat = "dd/MM/yyyy"
+    let duration = outputSeconds ?? (trimOut - trimIn)
+    let h = Int(duration) / 3600, m = (Int(duration) % 3600) / 60, sec = Int(duration) % 60
+    let prompt = template
+        .replacingOccurrences(of: "{title}", with: tags.title)
+        .replacingOccurrences(of: "{preacher}", with: tags.preacher)
+        .replacingOccurrences(of: "{series}", with: tags.series)
+        .replacingOccurrences(of: "{reading}", with: tags.reading)
+        .replacingOccurrences(of: "{date}", with: dateFormatter.string(from: tags.date))
+        .replacingOccurrences(of: "{year}", with: tags.year)
+        .replacingOccurrences(of: "{duration}", with: h > 0 ? String(format: "%d:%02d:%02d", h, m, sec)
+                                                            : String(format: "%d:%02d", m, sec))
+    return [
+        "instructions": .string("Finish by following this prompt from DeChaff's AI Assistant settings exactly. Its input is "
+            + "the transcript of the episode — read all of it with get_transcript from \(formatTime(trimIn)) to "
+            + "\(formatTime(trimOut)), continuing where it says it was truncated. Give the user the result "
+            + "verbatim, in the format the prompt asks for, with nothing added before or after it."),
+        "prompt": .string(prompt),
+    ]
 }
 
 /// Quick template parse — cheap enough for every title in a listing, but literal

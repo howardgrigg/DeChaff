@@ -45,8 +45,9 @@ last_series, look at the saved artwork with get_artwork and ask the user for the
 4. Chapters — 3–6 markers at clear turns in the sermon, the first at the trim start (e.g. \
 "Introduction"), given as word indexes and checked with refine_cuts.
 5. Output — confirm the plan with the user (trim, tags, chapters, any non-default options), then run \
-process_sermon and verify the finished MP3 with read_tags. A short episode description written \
-from the transcript is a welcome finish.
+process_sermon and verify the finished MP3 with read_tags. If its result includes website_copy, \
+finish by following that prompt (the church's own AI Assistant template) with the episode's transcript; \
+otherwise a short episode description written from the transcript is a welcome finish.
 
 Only Output writes a file; steps 1–4 just gather decisions, so it's fine to revisit an earlier step \
 before processing. Don't run process_sermon until the user has confirmed.

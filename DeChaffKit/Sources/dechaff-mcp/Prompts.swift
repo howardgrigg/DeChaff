@@ -31,8 +31,9 @@ let prepareSermonPrompt = MCPPrompt(
     and check them with refine_cuts.
     5. Output: show me the plan — trim start and end (times and the words there), the tags, and chapter titles \
     and times — and wait for my go-ahead or corrections. Then run process_sermon, check the result with \
-    read_tags, and finish with the output path, a 2–3 sentence episode description and the key themes, written \
-    from the transcript.
+    read_tags, and finish with the output path. If process_sermon returns website_copy, follow its prompt with \
+    the episode's transcript and give me the result verbatim; otherwise write a 2–3 sentence episode description \
+    and the key themes from the transcript.
     \(notes.map { "\nNotes from me: \($0)" } ?? "")
     """ + churchInstructions(AppSettings().assistantInstructions)
 }

@@ -21,6 +21,15 @@ struct AppSettings {
     var assistantInstructions: String {
         (defaults.string(forKey: "dechaff.mcp.instructions") ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
+    /// The AI Assistant prompt from Settings → AI Assistant, when the assistant is on
+    /// and the user has saved a prompt. The MCP client is itself an AI, so it follows
+    /// this directly instead of the app calling the Claude API.
+    var aiAssistantPrompt: String? {
+        guard defaults.bool(forKey: "dechaff.ai.enabled"),
+              let prompt = defaults.string(forKey: "dechaff.ai.prompt"),
+              !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return prompt
+    }
     var lastPreacher: String { defaults.string(forKey: "dechaff.preacher") ?? "" }
     var lastSeries: String { defaults.string(forKey: "dechaff.series") ?? "" }
     /// Cover art the app keeps between episodes — it's changed when the series changes.
