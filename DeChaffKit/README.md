@@ -18,22 +18,16 @@ dechaff-mcp ───────────┘        ▲
 
 With the server connected, you can ask an assistant to *"prepare this week's sermon"*. It finds the newest video on the channel and downloads it. It then transcribes the audio and works out where the sermon starts and ends, and where the chapters go. Once you confirm the plan, it produces the finished MP3.
 
-### Build and connect
+### Connect
 
-Building needs Xcode 26 on macOS 26 (Apple Silicon is required for on-device transcription).
+The server ships inside the app, at `DeChaff.app/Contents/MacOS/dechaff-mcp`. Open **DeChaff → Settings → MCP** and click **Add to Claude Desktop**, or copy the Claude Code command shown there. The tab also checks that the server starts and that yt-dlp is installed.
 
-```bash
-cd DeChaffKit
-swift build -c release
-# binary: DeChaffKit/.build/release/dechaff-mcp
-```
-
-The easiest way to connect it is **DeChaff → Settings → MCP**. Choose the built file there and click **Add to Claude Desktop**, or copy the Claude Code command. The tab also checks that the server runs and that yt-dlp is installed. To set it up by hand instead:
+To set it up by hand:
 
 **Claude Code**
 
 ```bash
-claude mcp add dechaff -- "$PWD/.build/release/dechaff-mcp"
+claude mcp add dechaff --scope user -- /Applications/DeChaff.app/Contents/MacOS/dechaff-mcp
 ```
 
 **Claude Desktop**: add this to `~/Library/Application Support/Claude/claude_desktop_config.json`, then restart the app:
@@ -42,13 +36,25 @@ claude mcp add dechaff -- "$PWD/.build/release/dechaff-mcp"
 {
   "mcpServers": {
     "dechaff": {
-      "command": "/path/to/DeChaff/DeChaffKit/.build/release/dechaff-mcp"
+      "command": "/Applications/DeChaff.app/Contents/MacOS/dechaff-mcp"
     }
   }
 }
 ```
 
-The server uses the DeChaff app's settings: YouTube channel, title and filename templates, compressor settings and default artwork. It also reuses the yt-dlp copy the app installs, so open DeChaff once before using the server. MP3 encoding uses the LAME binary bundled in `/Applications/DeChaff.app`. To use a different copy, set `DECHAFF_LAME` or install LAME with Homebrew (`brew install lame`).
+The server uses the DeChaff app's settings: YouTube channel, title and filename templates, compressor settings and default artwork. It also reuses the yt-dlp copy the app installs and the app's bundled LAME encoder, so open DeChaff once before using the server.
+
+### Building from source
+
+The Xcode project's `dechaff-mcp` target compiles `Sources/dechaff-mcp` against this package and embeds the result in the app, signed with it. To build the server on its own while developing (needs Xcode 26 on macOS 26):
+
+```bash
+cd DeChaffKit
+swift build -c release
+# binary: DeChaffKit/.build/release/dechaff-mcp
+```
+
+Point Claude at it with **Settings → MCP → Advanced → Choose…**. A server running outside the app looks for LAME in `$DECHAFF_LAME`, then `/Applications/DeChaff.app`, then Homebrew (`brew install lame`). The Settings tab sets `DECHAFF_LAME` for you.
 
 ### Tools
 

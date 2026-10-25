@@ -697,6 +697,7 @@ struct MCPSettingsView: View {
     @State private var serverError: String? = nil
     @State private var desktopMessage: String? = nil
     @State private var copiedID: String? = nil
+    @State private var showAdvanced = false
 
     private let buildCommand = "cd DeChaff/DeChaffKit\nswift build -c release"
 
@@ -704,12 +705,17 @@ struct MCPSettingsView: View {
         .urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         .appendingPathComponent("Claude/claude_desktop_config.json")
 
-    /// The chosen server binary, or a copy bundled inside the app.
+    /// The server embedded in DeChaff.app/Contents/MacOS by the dechaff-mcp target.
+    private var bundledServerPath: String? {
+        Bundle.main.url(forAuxiliaryExecutable: "dechaff-mcp")?.path
+    }
+
+    /// A server built from source if one was chosen, otherwise the built-in one.
     private var resolvedServerPath: String? {
         if !serverPath.isEmpty {
             return FileManager.default.isExecutableFile(atPath: serverPath) ? serverPath : nil
         }
-        return Bundle.main.url(forAuxiliaryExecutable: "dechaff-mcp")?.path
+        return bundledServerPath
     }
 
     /// Pointing the server at this app's bundled LAME means it can encode MP3s
@@ -723,42 +729,21 @@ struct MCPSettingsView: View {
             VStack(alignment: .leading, spacing: 20) {
                 settingsGroup("Use DeChaff from an AI assistant") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("The DeChaff MCP server lets Claude Desktop, Claude Code and other MCP apps run DeChaff for you. It can find this week's video, transcribe it, work out where the sermon starts and ends and where chapters go, then produce the tagged MP3 once you confirm.")
+                        Text("DeChaff includes an MCP server that lets Claude Desktop, Claude Code and other MCP apps run DeChaff for you. It can find this week's video, transcribe it, work out where the sermon starts and ends and where chapters go, then produce the tagged MP3 once you confirm.")
                             .font(.caption).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         Text("It uses the YouTube, Audio and Templates settings from this window. Once connected, try asking: “Prepare this week's sermon.”")
                             .font(.caption).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+                        serverStatus
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 16).padding(.vertical, 10)
                 }
 
-                settingsGroup("1. Build the server") {
+                settingsGroup("Connect Claude Desktop") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("The server is a command-line tool built from the DeChaff source code. Run this in Terminal from the folder containing the DeChaff repository (needs Xcode 26):")
-                            .font(.caption).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        codeBlock(buildCommand, id: "build")
-                        Text("Then choose the built file, DeChaffKit/.build/release/dechaff-mcp:")
-                            .font(.caption).foregroundStyle(.secondary)
-                        HStack(spacing: 8) {
-                            Text(serverPath.isEmpty ? (resolvedServerPath ?? "Not chosen") : serverPath)
-                                .font(.system(.caption, design: .monospaced))
-                                .lineLimit(1).truncationMode(.middle)
-                                .foregroundStyle(serverPath.isEmpty && resolvedServerPath == nil ? .tertiary : .primary)
-                            Spacer()
-                            Button("Choose…") { chooseServer() }
-                                .buttonStyle(.bordered).controlSize(.small)
-                        }
-                        serverStatus
-                    }
-                    .padding(.horizontal, 16).padding(.vertical, 10)
-                }
-
-                settingsGroup("2. Connect Claude Desktop") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Adds DeChaff to Claude Desktop's configuration file (your other servers are kept, and a .bak copy is saved). Quit and reopen Claude Desktop afterwards.")
+                        Text("Adds DeChaff to Claude Desktop's configuration file (your other servers are kept, and a .bak copy is saved). Quit and reopen Claude Desktop afterwards. If you move DeChaff to another folder, click Add again.")
                             .font(.caption).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         HStack(spacing: 8) {
@@ -803,10 +788,41 @@ struct MCPSettingsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 16).padding(.vertical, 10)
                 }
+
+                settingsGroup("Advanced") {
+                    DisclosureGroup("Use a server built from source", isExpanded: $showAdvanced) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("For development: build the server from the DeChaff repository in Terminal, then choose DeChaffKit/.build/release/dechaff-mcp. Click Add to Claude Desktop again afterwards.")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            codeBlock(buildCommand, id: "build")
+                            HStack(spacing: 8) {
+                                Text(serverPath.isEmpty ? "Using the server built into DeChaff" : serverPath)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .lineLimit(1).truncationMode(.middle)
+                                Spacer()
+                                if !serverPath.isEmpty {
+                                    Button("Use Built-in") { serverPath = "" }
+                                        .buttonStyle(.bordered).controlSize(.small)
+                                        .disabled(bundledServerPath == nil)
+                                }
+                                Button("Choose…") { chooseServer() }
+                                    .buttonStyle(.bordered).controlSize(.small)
+                            }
+                        }
+                        .padding(.top, 8)
+                    }
+                    .font(.caption)
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                }
             }
             .padding(24)
         }
-        .onAppear { testServer() }
+        .onAppear {
+            // Show the advanced section when it's in use or the app has no built-in server.
+            showAdvanced = !serverPath.isEmpty || bundledServerPath == nil
+            testServer()
+        }
         .onChange(of: serverPath) { _, _ in testServer() }
     }
 
@@ -815,7 +831,8 @@ struct MCPSettingsView: View {
     @ViewBuilder
     private var serverStatus: some View {
         if let serverVersion {
-            Label("Found \(serverVersion)", systemImage: "checkmark.circle.fill")
+            Label(serverPath.isEmpty ? "Server ready (\(serverVersion))" : "Using your build (\(serverVersion))",
+                  systemImage: "checkmark.circle.fill")
                 .font(.caption).foregroundStyle(.green)
         } else if let serverError {
             Label(serverError, systemImage: "exclamationmark.triangle.fill")
@@ -863,10 +880,11 @@ struct MCPSettingsView: View {
 
     // MARK: Configuration text
 
-    /// The server entry for an MCP client's mcpServers map.
+    /// The server entry for an MCP client's mcpServers map. The built-in server finds
+    /// the app's LAME itself; a server built elsewhere is pointed at it.
     private func serverEntry(_ server: String) -> [String: Any] {
         var entry: [String: Any] = ["command": server]
-        if let lamePath { entry["env"] = ["DECHAFF_LAME": lamePath] }
+        if server != bundledServerPath, let lamePath { entry["env"] = ["DECHAFF_LAME": lamePath] }
         return entry
     }
 
@@ -881,7 +899,9 @@ struct MCPSettingsView: View {
     private var claudeCodeCommand: String {
         // The server name goes before -e: -e takes several values and would swallow it.
         var command = "claude mcp add dechaff --scope user"
-        if let lamePath { command += " -e DECHAFF_LAME=\(shellQuoted(lamePath))" }
+        if resolvedServerPath != bundledServerPath, let lamePath {
+            command += " -e DECHAFF_LAME=\(shellQuoted(lamePath))"
+        }
         return command + " -- \(shellQuoted(displayedServerPath))"
     }
 
@@ -908,7 +928,9 @@ struct MCPSettingsView: View {
         serverVersion = nil
         serverError = nil
         guard let server = resolvedServerPath else {
-            if !serverPath.isEmpty { serverError = "No executable file at that path — build the server first." }
+            serverError = serverPath.isEmpty
+                ? "This copy of DeChaff doesn't include the MCP server. Choose a build under Advanced."
+                : "No executable file at that path — build the server first."
             return
         }
         DispatchQueue.global(qos: .userInitiated).async {
@@ -931,7 +953,11 @@ struct MCPSettingsView: View {
             }
             DispatchQueue.main.async {
                 if ok { serverVersion = output }
-                else { serverError = "That file didn't respond like dechaff-mcp. Choose DeChaffKit/.build/release/dechaff-mcp." }
+                else {
+                    serverError = serverPath.isEmpty
+                        ? "The built-in server didn't start: \(output)"
+                        : "That file didn't respond like dechaff-mcp. Choose DeChaffKit/.build/release/dechaff-mcp."
+                }
             }
         }
     }

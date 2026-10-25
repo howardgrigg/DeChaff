@@ -33,6 +33,9 @@
 		DC0000000000000000000118 /* WaveformView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000117 /* WaveformView.swift */; };
 		DC0000000000000000000201 /* DeChaffCore in Frameworks */ = {isa = PBXBuildFile; productRef = DC0000000000000000000202 /* DeChaffCore */; };
 		DC000000000000000000011A /* PlaybackState.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000119 /* PlaybackState.swift */; };
+		DC0000000000000000000306 /* DeChaffCore in Frameworks */ = {isa = PBXBuildFile; productRef = DC0000000000000000000308 /* DeChaffCore */; };
+		DC0000000000000000000307 /* MCPServer in Frameworks */ = {isa = PBXBuildFile; productRef = DC0000000000000000000309 /* MCPServer */; };
+		DC0000000000000000000310 /* dechaff-mcp in Embed MCP Server */ = {isa = PBXBuildFile; fileRef = DC0000000000000000000301 /* dechaff-mcp */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -42,6 +45,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = 50AE961A2F875395006663EF;
 			remoteInfo = DeChaffShareExtension;
+		};
+		DC000000000000000000030D /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AA00000000000000000000A1 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = DC0000000000000000000300;
+			remoteInfo = "dechaff-mcp";
 		};
 /* End PBXContainerItemProxy section */
 
@@ -55,6 +65,17 @@
 				50AE96272F875396006663EF /* DeChaffShareExtension.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DC000000000000000000030F /* Embed MCP Server */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 6;
+			files = (
+				DC0000000000000000000310 /* dechaff-mcp in Embed MCP Server */,
+			);
+			name = "Embed MCP Server";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXCopyFilesBuildPhase section */
@@ -85,6 +106,7 @@
 		DC0000000000000000000113 /* ProcessingModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessingModel.swift; sourceTree = "<group>"; };
 		DC0000000000000000000117 /* WaveformView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaveformView.swift; sourceTree = "<group>"; };
 		DC0000000000000000000119 /* PlaybackState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackState.swift; sourceTree = "<group>"; };
+		DC0000000000000000000301 /* dechaff-mcp */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "dechaff-mcp"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -95,10 +117,18 @@
 			);
 			target = 50AE961A2F875395006663EF /* DeChaffShareExtension */;
 		};
+		DC0000000000000000000303 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = DC0000000000000000000300 /* dechaff-mcp */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		50AE961C2F875396006663EF /* DeChaffShareExtension */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (50AE96362F875681006663EF /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = DeChaffShareExtension; sourceTree = "<group>"; };
+		DC0000000000000000000302 /* dechaff-mcp */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (DC0000000000000000000303 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); name = "dechaff-mcp"; path = "DeChaffKit/Sources/dechaff-mcp"; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -118,6 +148,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		DC0000000000000000000305 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DC0000000000000000000306 /* DeChaffCore in Frameworks */,
+				DC0000000000000000000307 /* MCPServer in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -126,6 +165,7 @@
 			children = (
 				AA00000000000000000000B5 /* DeChaff */,
 				50AE961C2F875396006663EF /* DeChaffShareExtension */,
+				DC0000000000000000000302 /* dechaff-mcp */,
 				AA00000000000000000000A3 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -135,6 +175,7 @@
 			children = (
 				AA00000000000000000000AE /* DeChaff.app */,
 				50AE961B2F875395006663EF /* DeChaffShareExtension.appex */,
+				DC0000000000000000000301 /* dechaff-mcp */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -203,11 +244,13 @@
 				AA00000000000000000000AD /* Resources */,
 				AA00000000000000000000D0 /* Re-sign bundled lame with Hardened Runtime */,
 				50AE962C2F875396006663EF /* Embed Foundation Extensions */,
+				DC000000000000000000030F /* Embed MCP Server */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				50AE96262F875396006663EF /* PBXTargetDependency */,
+				DC000000000000000000030E /* PBXTargetDependency */,
 			);
 			name = DeChaff;
 			packageProductDependencies = (
@@ -217,6 +260,29 @@
 			productName = DeChaff;
 			productReference = AA00000000000000000000AE /* DeChaff.app */;
 			productType = "com.apple.product-type.application";
+		};
+		DC0000000000000000000300 /* dechaff-mcp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = DC000000000000000000030A /* Build configuration list for PBXNativeTarget "dechaff-mcp" */;
+			buildPhases = (
+				DC0000000000000000000304 /* Sources */,
+				DC0000000000000000000305 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				DC0000000000000000000302 /* dechaff-mcp */,
+			);
+			name = "dechaff-mcp";
+			packageProductDependencies = (
+				DC0000000000000000000308 /* DeChaffCore */,
+				DC0000000000000000000309 /* MCPServer */,
+			);
+			productName = "dechaff-mcp";
+			productReference = DC0000000000000000000301 /* dechaff-mcp */;
+			productType = "com.apple.product-type.tool";
 		};
 /* End PBXNativeTarget section */
 
@@ -233,6 +299,9 @@
 					};
 					AA00000000000000000000A4 = {
 						CreatedOnToolsVersion = 15.0;
+					};
+					DC0000000000000000000300 = {
+						CreatedOnToolsVersion = 26.4;
 					};
 				};
 			};
@@ -257,6 +326,7 @@
 			targets = (
 				AA00000000000000000000A4 /* DeChaff */,
 				50AE961A2F875395006663EF /* DeChaffShareExtension */,
+				DC0000000000000000000300 /* dechaff-mcp */,
 			);
 		};
 /* End PBXProject section */
@@ -338,6 +408,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		DC0000000000000000000304 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -345,6 +422,11 @@
 			isa = PBXTargetDependency;
 			target = 50AE961A2F875395006663EF /* DeChaffShareExtension */;
 			targetProxy = 50AE96252F875396006663EF /* PBXContainerItemProxy */;
+		};
+		DC000000000000000000030E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = DC0000000000000000000300 /* dechaff-mcp */;
+			targetProxy = DC000000000000000000030D /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -599,6 +681,43 @@
 			};
 			name = Release;
 		};
+		DC000000000000000000030B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				DEVELOPMENT_TEAM = 2R53HYKRFR;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "DeChaffKit/Sources/dechaff-mcp/Info.plist";
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.dechaff.mcp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		DC000000000000000000030C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				DEVELOPMENT_TEAM = 2R53HYKRFR;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "DeChaffKit/Sources/dechaff-mcp/Info.plist";
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				PRODUCT_BUNDLE_IDENTIFIER = com.dechaff.mcp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -625,6 +744,15 @@
 			buildConfigurations = (
 				AA00000000000000000000A9 /* Debug */,
 				AA00000000000000000000AA /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		DC000000000000000000030A /* Build configuration list for PBXNativeTarget "dechaff-mcp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DC000000000000000000030B /* Debug */,
+				DC000000000000000000030C /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -658,6 +786,14 @@
 		DC0000000000000000000202 /* DeChaffCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = DeChaffCore;
+		};
+		DC0000000000000000000308 /* DeChaffCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = DeChaffCore;
+		};
+		DC0000000000000000000309 /* MCPServer */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = MCPServer;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

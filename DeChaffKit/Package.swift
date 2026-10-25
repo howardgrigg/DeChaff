@@ -13,6 +13,9 @@ let package = Package(
     products: [
         // Audio processing, transcription, cut-point refinement and episode tagging — no UI.
         .library(name: "DeChaffCore", targets: ["DeChaffCore"]),
+        // Model Context Protocol over stdio (Foundation only). The app's dechaff-mcp
+        // target links this to build the copy embedded in DeChaff.app.
+        .library(name: "MCPServer", targets: ["MCPServer"]),
         // Model Context Protocol server exposing DeChaff to AI assistants.
         .executable(name: "dechaff-mcp", targets: ["dechaff-mcp"]),
     ],

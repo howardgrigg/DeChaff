@@ -7,7 +7,11 @@ import DeChaffCore
 /// uses the same channel, templates, compressor settings and artwork as the app.
 struct AppSettings {
     static let appDomain = "com.dechaff.app"
-    private let defaults = UserDefaults(suiteName: AppSettings.appDomain) ?? .standard
+    /// Embedded in DeChaff.app the main bundle *is* the app, and its own domain is
+    /// `.standard` (UserDefaults won't open your own bundle ID as a suite).
+    private let defaults = Bundle.main.bundleIdentifier == AppSettings.appDomain
+        ? .standard
+        : (UserDefaults(suiteName: AppSettings.appDomain) ?? .standard)
 
     var channelURL: String { defaults.string(forKey: "dechaff.youtube.channelURL") ?? "https://www.youtube.com/@cityonahillnz" }
     var videoLimit: Int { (defaults.object(forKey: "dechaff.youtube.videoLimit") as? Int) ?? 10 }
@@ -31,8 +35,12 @@ struct AppSettings {
     var lamePath: String? {
         var candidates: [String] = []
         if let env = ProcessInfo.processInfo.environment["DECHAFF_LAME"] { candidates.append(env) }
-        // Running from inside DeChaff.app/Contents/MacOS: the main bundle is the app.
+        // Running from inside DeChaff.app/Contents/MacOS: the app's Resources sit beside us.
         if let bundled = Bundle.main.path(forResource: "lame", ofType: nil) { candidates.append(bundled) }
+        if let exe = Bundle.main.executableURL?.resolvingSymlinksInPath() {
+            candidates.append(exe.deletingLastPathComponent()
+                .appendingPathComponent("../Resources/lame").standardizedFileURL.path)
+        }
         candidates += [
             "/Applications/DeChaff.app/Contents/Resources/lame",
             NSHomeDirectory() + "/Applications/DeChaff.app/Contents/Resources/lame",
