@@ -576,7 +576,7 @@ struct AIAssistantSettingsView: View {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text("Model ID").font(.subheadline)
                                     HStack {
-                                        TextField("e.g. claude-sonnet-4-6", text: $customModelInput)
+                                        TextField("e.g. claude-sonnet-5-5", text: $customModelInput)
                                             .textFieldStyle(.roundedBorder)
                                         Button("Save") {
                                             let trimmed = customModelInput.trimmingCharacters(in: .whitespaces)

@@ -413,7 +413,7 @@
           <p class="prose" style="margin-top:12px;">
             This tier requires an API key to be configured in <strong>Settings → AI Assistant</strong> and an
             active internet connection. It is skipped silently if no key is present. The model used is whatever
-            is selected in Settings (defaulting to Claude Sonnet 4.6).
+            is selected in Settings (defaulting to Claude Opus 5.5).
           </p>
           <pre><code><span class="comment">// Same system prompt as tier 1, with a JSON output instruction appended</span>
 <span class="kw">let</span> response = <span class="kw">try await</span> <span class="fn">ClaudeAPIClient</span>.sendMessage(
@@ -515,7 +515,7 @@ present. Never invent information.
         DeChaff looks up the Anthropic API key from the macOS Keychain. If no key is stored, this tier is
         skipped immediately. Otherwise, it sends the same system prompt as Tier 1 with one addition: an
         instruction to respond with a plain JSON object containing the five metadata fields. The model used
-        is whatever is selected in <strong>Settings → AI Assistant</strong> (defaulting to Claude Sonnet 4.6).
+        is whatever is selected in <strong>Settings → AI Assistant</strong> (defaulting to Claude Opus 5.5).
       </p>
       <p class="prose" style="margin-top:12px;">
         The response is trimmed and parsed with <code>JSONSerialization</code> into a
@@ -1285,7 +1285,7 @@ process.arguments = [
       <p class="prose" style="margin-top:12px;">
         Requires a Claude API key stored in <strong>Settings → AI Assistant → Claude API Key</strong>
         (saved securely in the macOS Keychain). The Claude model used is configurable — any model ID
-        can be entered; the default is Claude Sonnet 4.6.
+        can be entered; the default is Claude Opus 5.5.
       </p>
     </div>
 
