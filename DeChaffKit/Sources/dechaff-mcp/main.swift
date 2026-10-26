@@ -2,7 +2,18 @@ import Foundation
 import MCPServer
 import DeChaffCore
 
-let version = "1.0.0"
+/// The enclosing DeChaff.app's version, e.g. "1.3 (14)", so it's clear which build Claude
+/// is talking to. Read from the app's Info.plist on disk: this tool's own embedded plist
+/// (needed for the speech permission) would otherwise answer for it. "dev" outside an app.
+let appBundlePath = Bundle.main.executableURL?.resolvingSymlinksInPath()
+    .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().path ?? ""
+let version: String = {
+    let plist = URL(fileURLWithPath: appBundlePath).appendingPathComponent("Contents/Info.plist")
+    guard appBundlePath.hasSuffix(".app"),
+          let info = NSDictionary(contentsOf: plist),
+          let short = info["CFBundleShortVersionString"] as? String else { return "dev" }
+    return (info["CFBundleVersion"] as? String).map { "\(short) (\($0))" } ?? short
+}()
 
 let arguments = CommandLine.arguments.dropFirst()
 if arguments.contains("--version") {

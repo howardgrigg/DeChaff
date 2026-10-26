@@ -73,6 +73,8 @@ struct AppSettings {
 
     var json: JSONValue {
         [
+            "dechaff_version": .string(version),
+            "dechaff_app": .string(appBundlePath),
             "youtube_channel_url": .string(channelURL),
             "youtube_video_limit": .number(Double(videoLimit)),
             "title_format": .string(titleFormat),
