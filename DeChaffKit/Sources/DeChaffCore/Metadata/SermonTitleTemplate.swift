@@ -107,9 +107,38 @@ private func separatorPattern(_ literal: String) -> String {
 
 // MARK: - Dates
 
+/// Which way round numeric dates are written in a church's video titles — "01/11/2026" is
+/// 1 November day-first, but 11 January month-first. Settings → YouTube → Title Format.
+public enum TitleDateOrder: String, CaseIterable, Sendable {
+    case dayFirst = "day_first"
+    case monthFirst = "month_first"
+
+    public static let key = "dechaff.titleDateOrder"
+
+    public var label: String {
+        switch self {
+        case .dayFirst:   return "Day first — 25/10/2026"
+        case .monthFirst: return "Month first — 10/25/2026"
+        }
+    }
+
+    /// The order dates are written in this Mac's region, used until the setting is chosen.
+    public static var regionDefault: TitleDateOrder {
+        let pattern = DateFormatter.dateFormat(fromTemplate: "dMy", options: 0, locale: .current) ?? "d/M/y"
+        let d = pattern.firstIndex(of: "d"), m = pattern.firstIndex(of: "M")
+        if let d, let m, m < d { return .monthFirst }
+        return .dayFirst
+    }
+
+    public static func current(_ defaults: UserDefaults) -> TitleDateOrder {
+        defaults.string(forKey: key).flatMap(TitleDateOrder.init) ?? regionDefault
+    }
+}
+
 /// Parses a date string from metadata extraction into a Date.
-/// Handles formats like "23 Mar 2025", "15 March 2025", "23 Mar 25".
-public func parseExtractedDate(_ raw: String) -> Date? {
+/// Handles formats like "23 Mar 2025", "15 March 2025", "23 Mar 25", and numeric dates
+/// ("01/11/2026", "1.11.2026") read in the given order.
+public func parseExtractedDate(_ raw: String, order: TitleDateOrder = .dayFirst) -> Date? {
     let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
 
@@ -117,9 +146,11 @@ public func parseExtractedDate(_ raw: String) -> Date? {
     formatter.locale = Locale(identifier: "en_US_POSIX")
 
     // Try common formats
-    for format in ["d MMM yyyy", "dd MMM yyyy", "d MMMM yyyy", "dd MMMM yyyy",
-                    "d MMM yy", "dd MMM yy", "d/M/yy", "d/M/yyyy",
-                    "MMM d, yyyy", "MMMM d, yyyy", "yyyy-MM-dd"] {
+    let numeric = order == .dayFirst
+        ? ["d/M/yy", "d/M/yyyy", "d.M.yyyy", "d-M-yyyy"]
+        : ["M/d/yy", "M/d/yyyy", "M.d.yyyy", "M-d-yyyy"]
+    for format in ["yyyy-MM-dd", "d MMM yyyy", "dd MMM yyyy", "d MMMM yyyy", "dd MMMM yyyy",
+                   "d MMM yy", "dd MMM yy"] + numeric + ["MMM d, yyyy", "MMMM d, yyyy"] {
         formatter.dateFormat = format
         if let date = formatter.date(from: trimmed) {
             // Set to noon local to avoid timezone date-shift issues in DatePicker

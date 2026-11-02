@@ -1,12 +1,18 @@
 import SwiftUI
 import AppKit
 import Sparkle
+import DeChaffCore
 
 @main
 struct DeChaffApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject var ytManager = YtDlpManager()
     private let updater = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+
+    init() {
+        // Before any view reads its settings: keep the old built-in defaults for installs that used them.
+        SettingsMigration.run(.standard)
+    }
 
     var body: some Scene {
         WindowGroup {

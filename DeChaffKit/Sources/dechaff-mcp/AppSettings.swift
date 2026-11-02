@@ -12,7 +12,11 @@ struct AppSettings {
         ? .standard
         : (UserDefaults(suiteName: AppSettings.appDomain) ?? .standard)
 
-    var channelURL: String { defaults.string(forKey: "dechaff.youtube.channelURL") ?? "https://www.youtube.com/@cityonahillnz" }
+    var channelURL: String { defaults.string(forKey: SettingsMigration.channelKey) ?? "" }
+    /// Livestreams or uploads — where the church's services are on its channel.
+    var channelListing: ChannelListing { ChannelListing.current(defaults) }
+    /// Whether numeric dates in titles are day or month first.
+    var titleDateOrder: TitleDateOrder { TitleDateOrder.current(defaults) }
     var videoLimit: Int { (defaults.object(forKey: "dechaff.youtube.videoLimit") as? Int) ?? 10 }
     var titleFormat: String { defaults.string(forKey: "dechaff.titleFormat") ?? defaultTitleFormat }
     var filenameTemplate: String { defaults.string(forKey: "dechaff.filenameTemplate") ?? defaultFilenameTemplate }
@@ -80,6 +84,8 @@ struct AppSettings {
             "youtube_channel_url": .string(channelURL),
             "youtube_video_limit": .number(Double(videoLimit)),
             "title_format": .string(titleFormat),
+            "title_date_order": .string(titleDateOrder.rawValue),
+            "video_listing": .string(channelListing.rawValue),
             "filename_template": .string(filenameTemplate),
             "church_instructions": .string(assistantInstructions),
             "house_style": houseStyleJSON(houseStyle),

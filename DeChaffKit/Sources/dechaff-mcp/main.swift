@@ -34,6 +34,8 @@ if arguments.contains("--help") || arguments.contains("-h") {
     exit(0)
 }
 
+// Keep the old built-in defaults for installs that relied on them (normally done by the app).
+SettingsMigration.run(AppSettings().defaults)
 let settingsAtLaunch = AppSettings()
 let instructions = """
 DeChaff turns a church service recording into a podcast episode: trimmed to the sermon, cleaned up \
@@ -52,11 +54,8 @@ around each. Confirm anything below high confidence with a get_transcript window
 then check the cuts with refine_cuts. If the user wants to hear an edge, preview_cut plays it as it will sound.
 3. Info — the tags: title, Bible reading, preacher, series, date, artwork. Start from the parsed video \
 title and get_settings (last preacher/series); fill gaps from the transcript. list_episodes shows recent \
-episodes — match their spelling of the series. The app keeps the last \
-episode's artwork and the user only changes it when a new series starts: if the series differs from \
-last_series, look at the saved artwork with get_artwork and ask the user for the new series' artwork \
-(tags.artwork_path; update_settings saves it as the default). A processed episode's preacher, series and \
-artwork become the new defaults.
+episodes — match their spelling of the series. For artwork, follow the house style below. A processed \
+episode's preacher, series and artwork become the new defaults.
 4. Chapters — as the house style below says, given as word indexes and checked with refine_cuts. \
 suggest_trim places the reading and sermon chapters.
 5. Output — confirm the plan with the user (trim, tags, chapters, any non-default options), then run \
@@ -78,7 +77,7 @@ over times: the server refines every cut into the surrounding silence so no word
 Long-running tools return a job_id if they run past wait_seconds (90 s at most); call get_job to keep \
 waiting. If a YouTube listing or download fails with a YouTube error, run update_yt_dlp and try again.
 
-This church's house style (Settings → MCP; change it with update_settings):
+This church's house style (DeChaff's Settings → Service; change it with update_settings):
 \(settingsAtLaunch.houseStyle.guidance)
 """ + churchInstructions(settingsAtLaunch.assistantInstructions)
 

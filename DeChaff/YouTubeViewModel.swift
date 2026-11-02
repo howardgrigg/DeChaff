@@ -49,7 +49,7 @@ class YouTubeViewModel: ObservableObject {
                 let url     = try await audioURL
                 let details = await metadata
                 // Prefer date extracted from title, fall back to yt-dlp upload_date
-                let date = details.flatMap { parseExtractedDate($0.date) }
+                let date = details.flatMap { parseExtractedDate($0.date, order: TitleDateOrder.current(.standard)) }
                     ?? parseYouTubeUploadDate(entry.uploadDate)
 
                 downloadingVideoID = nil

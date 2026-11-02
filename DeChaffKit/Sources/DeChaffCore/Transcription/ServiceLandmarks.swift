@@ -52,23 +52,6 @@ public struct TrimSuggestion: Sendable {
 
 // MARK: - Finding landmarks
 
-private let cuePhrases: [(ServiceLandmark.Kind, [String])] = [
-    (.readingHandover, ["come up and read", "come and read", "going to read", "gonna read", "read for us",
-                        "read to us", "reading for us", "do the reading", "do our reading", "bring us the reading",
-                        "bring us our reading", "come up and do"]),
-    (.readingAnnounced, ["our reading today", "reading today is", "today's reading", "reading is from",
-                         "reading comes from", "reading this morning", "reading this evening", "we're reading from",
-                         "reading tonight"]),
-    (.readingEnd, ["this is the word of the lord", "the word of the lord", "thanks be to god", "this is god's word",
-                   "here ends the reading"]),
-    (.sermonOpening, ["thanks so much", "thank you so much", "thanks for reading", "thank you for reading",
-                      "thanks for that reading", "thank you for that reading", "thanks for that", "thank you for that"]),
-    (.prayer, ["let's pray", "let us pray", "pray with me", "i'll pray", "i will pray", "let me pray"]),
-    (.amen, ["amen"]),
-    (.songIntro, ["invite you to stand", "stand and sing", "sing in response", "respond in song", "let's stand",
-                  "let's sing", "we're going to sing", "going to sing", "band to come", "band's going to",
-                  "band is going to", "closing song", "as we sing", "come and lead us", "lead us in singing"]),
-]
 
 /// Lowercased with punctuation stripped, so "Pray." matches "pray" and ’ matches '.
 public func normalizedTranscriptToken(_ s: String) -> String {
@@ -76,11 +59,15 @@ public func normalizedTranscriptToken(_ s: String) -> String {
         .filter { CharacterSet.alphanumerics.contains($0) || $0 == "'" })
 }
 
-public func findServiceLandmarks(words: [TranscriptWord], music: [MusicSegment] = []) -> [ServiceLandmark] {
+/// - Parameter cues: phrases to listen for, by kind — a church's own from `HouseStyle`,
+///   or the defaults.
+public func findServiceLandmarks(words: [TranscriptWord], music: [MusicSegment] = [],
+                                 cues: [ServiceLandmark.Kind: [String]] = HouseStyle().cuePhrases) -> [ServiceLandmark] {
     let tokens = words.map { normalizedTranscriptToken($0.text) }
     var found: [ServiceLandmark] = []
-    for (kind, phrases) in cuePhrases {
-        for phrase in phrases {
+    for kind in ServiceLandmark.Kind.spoken {
+        // Longer phrases first, so "this is the word of the lord" wins over "the word of the lord".
+        for phrase in (cues[kind] ?? []).sorted(by: { $0.count > $1.count }) {
             let p = phrase.split(separator: " ").map(String.init)
             var i = 0
             while i + p.count <= tokens.count {
@@ -118,7 +105,7 @@ public func suggestTrim(words: [TranscriptWord], music: [MusicSegment] = [],
                         style: HouseStyle = HouseStyle()) -> TrimSuggestion {
     var s = TrimSuggestion()
     guard !words.isEmpty else { s.notes.append("The transcript is empty."); return s }
-    let all = findServiceLandmarks(words: words, music: music)
+    let all = findServiceLandmarks(words: words, music: music, cues: style.cuePhrases)
     s.landmarks = all
     func marks(_ kinds: ServiceLandmark.Kind..., after t: Double = -1, before end: Double = .infinity) -> [ServiceLandmark] {
         all.filter { kinds.contains($0.kind) && $0.time > t && $0.time < end }
@@ -154,7 +141,17 @@ public func suggestTrim(words: [TranscriptWord], music: [MusicSegment] = [],
     // The sermon: the preacher picking up after the reading ends, else a prayer after it.
     let readingTime = s.readingStart?.time ?? -1
     if let start = s.readingStart {
-        let end = marks(.readingEnd, after: start.time, before: start.time + 720).first
+        // Several readings (Old Testament, Psalm, Gospel…) follow one another: keep moving to the next
+        // reading's end while another reading begins within four minutes of the last one ending.
+        var end = marks(.readingEnd, after: start.time, before: start.time + 720).first
+        while let current = end,
+              let next = marks(.readingHandover, .readingAnnounced, .readingEnd, after: current.time + 5,
+                               before: current.time + 240).first,
+              let nextEnd = marks(.readingEnd, after: next.kind == .readingEnd ? next.time - 1 : next.time,
+                                  before: next.time + 720).first,
+              nextEnd.time > current.time {
+            end = nextEnd
+        }
         let searchFrom = end?.time ?? start.time + 20
         if let opening = marks(.sermonOpening, .prayer, after: searchFrom, before: searchFrom + 180).first {
             s.sermonStart = point(sentenceStart(words, opening.wordIndex),
@@ -186,7 +183,7 @@ public func suggestTrim(words: [TranscriptWord], music: [MusicSegment] = [],
     }
 
     // The end: the first song introduction or music well after the sermon starts.
-    let sermonFrom = (s.sermonStart?.time ?? s.trimStart?.time ?? readingTime) + 480
+    let sermonFrom = (s.sermonStart?.time ?? s.trimStart?.time ?? readingTime) + Double(style.minimumSermonMinutes * 60)
     let songCue = marks(.songIntro, after: sermonFrom).first
     let musicCue = marks(.musicStarts, after: sermonFrom).first
     let boundary = [songCue?.time, musicCue?.time].compactMap { $0 }.min() ?? .infinity

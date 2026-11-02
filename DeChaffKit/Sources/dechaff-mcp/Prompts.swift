@@ -25,8 +25,7 @@ let prepareSermonPrompt = MCPPrompt(
     refine_cuts — if one is "forced", look at the words nearby with get_transcript format "words" and pick a \
     sentence boundary instead.
     3. Info: settle title, Bible reading, preacher, series and date from the parsed title, get_settings and the \
-    transcript. Artwork: the app's saved artwork belongs to the last series — if this sermon's series is different \
-    from last_series, show me the saved artwork (get_artwork) and ask for the new series artwork.
+    transcript. For artwork, follow the house style below.
     4. Chapters: follow the house style below (suggest_trim places the reading and sermon chapters), and check \
     them with refine_cuts.
     If I want to adjust anything myself, open it in DeChaff with open_in_dechaff, and when I'm done read my \

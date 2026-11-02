@@ -19,9 +19,10 @@ struct ContentView: View {
     @State private var firstResponderObservation: NSKeyValueObservation?
     @State private var keyWindowObserver: NSObjectProtocol?
     @State private var showLog = false
-    @AppStorage("dechaff.youtube.channelURL") var ytChannelURL = "https://www.youtube.com/@cityonahillnz"
+    @AppStorage("dechaff.youtube.channelURL") var ytChannelURL = ""
     @AppStorage("dechaff.youtube.videoLimit") var ytVideoLimit = 10
-    @State var ytTab: Int = 2   // 0 = YouTube URL, 1 = Videos, 2 = Live Streams
+    // 0 = YouTube URL, 1 = Videos, 2 = Live Streams — opening on the kind the church posts (Settings → YouTube).
+    @State var ytTab: Int = ChannelListing.current(.standard) == .uploads ? 1 : 2
     @State var trimTab: Int = 0  // 0 = Waveform, 1 = Transcript
     /// The last unfinished episode, offered on the Load step at launch.
     @State var resumablePlan: EpisodePlan? = nil

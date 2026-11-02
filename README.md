@@ -62,10 +62,12 @@ Saved to the same folder as the original file, or to `~/Downloads` when the sour
 
 | Tab | What you can configure |
 |-----|----------------------|
-| **General** | YouTube channel URL/handle, number of videos to show, yt-dlp status and updates, Apple Intelligence availability |
+| **YouTube** | Your channel URL or handle; whether services are livestreams or uploads; videos to show; how metadata is read from titles (Apple Intelligence, Claude, or the title format); the YouTube title format and whether its dates are day or month first; yt-dlp and ffmpeg status and updates |
+| **Audio** | Compressor threshold, headroom, attack, release and makeup gain |
 | **AI Assistant** | Enable/disable Claude API assistant, API key, Claude model selection, customisable prompt template |
-| **Templates** | YouTube title format (teach DeChaff your church's naming convention), output filename format |
-| **MCP** | Connect the built-in MCP server to Claude Desktop in one click, or copy the Claude Code command; optionally use a server built from source |
+| **Templates** | Output filename format |
+| **Service** | How your services run, so the AI assistant cuts episodes your way: where episodes start (sermon or reading) and end (Amen or before the closing song), the shortest sermon, chapter titles, whether artwork changes per series, and the spoken cues it listens for |
+| **MCP** | Connect the built-in MCP server to Claude Desktop in one click, or copy the Claude Code command; your church's own instructions for the assistant; optionally use a server built from source |
 
 ## Requirements
 

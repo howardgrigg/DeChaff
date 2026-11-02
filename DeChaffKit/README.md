@@ -86,7 +86,14 @@ Downloading, analysis, transcription and processing take minutes, not seconds. T
 
 Tools that work on a recording take `path` or `video_id`, or neither: they then use the current episode (the last one downloaded or named).
 
-**House style** (Settings → MCP): where episodes start (at the sermon, or at the Bible reading) and end (on the closing prayer's "Amen", or just before the closing song is introduced), and a chapter title template such as `Bible Reading: {reading}` / `Sermon: {title}`. The assistant's guidance and `suggest_trim` follow it.
+**House style** (Settings → Service): nothing about one church's format is built in. The settings cover:
+- where episodes start (at the sermon, or at the Bible reading) and end (on the closing prayer's "Amen", or just before the closing song is introduced);
+- the shortest sermon;
+- a chapter title template such as `Bible Reading: {reading}` / `Sermon: {title}`;
+- whether artwork changes with each series;
+- the spoken cues `suggest_trim` listens for ("…come up and read", "This is the word of the Lord", "invite you to stand and sing", …), editable per church.
+
+The assistant's guidance and `suggest_trim` follow these settings. The YouTube tab sets whether services are livestreams or uploads, and whether title dates are day or month first. A fresh install has no channel; installs that relied on the old built-in channel keep it.
 
 All trim and chapter points are on the source recording's timeline. `process_sermon` shifts chapter times to account for the trim and for shortened silences.
 

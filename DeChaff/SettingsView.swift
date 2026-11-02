@@ -21,9 +21,12 @@ struct SettingsView: View {
             TemplatesSettingsView()
                 .tabItem { Label("Templates", systemImage: "doc.text") }
                 .tag(3)
+            ServiceSettingsView()
+                .tabItem { Label("Service", systemImage: "list.bullet.rectangle") }
+                .tag(4)
             MCPSettingsView()
                 .tabItem { Label("MCP", systemImage: "point.3.connected.trianglepath.dotted") }
-                .tag(4)
+                .tag(5)
         }
         .frame(width: 480, height: 560)
     }
@@ -33,9 +36,11 @@ struct SettingsView: View {
 
 struct YouTubeSettingsView: View {
     @EnvironmentObject var manager: YtDlpManager
-    @AppStorage("dechaff.youtube.channelURL") private var channelURL = "https://www.youtube.com/@cityonahillnz"
+    @AppStorage("dechaff.youtube.channelURL") private var channelURL = ""
     @AppStorage("dechaff.youtube.videoLimit") private var videoLimit = 10
     @AppStorage("dechaff.titleFormat")        private var titleFormat = defaultTitleFormat
+    @AppStorage(ChannelListing.key)           private var channelListing: ChannelListing = .livestreamsFirst
+    @AppStorage(TitleDateOrder.key)           private var titleDateOrder: TitleDateOrder = TitleDateOrder.regionDefault
 
     @State private var aiAvailability: SystemLanguageModel.Availability?
     @State private var hasClaudeKey = false
@@ -72,6 +77,19 @@ struct YouTubeSettingsView: View {
                         .pickerStyle(.segmented)
                         .labelsHidden()
                         .frame(width: 130)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+
+                    Divider().padding(.leading, 16)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Picker("Your services are", selection: $channelListing) {
+                            ForEach(ChannelListing.allCases, id: \.self) { Text($0.label).tag($0) }
+                        }
+                        Text("Where on your channel the services are: livestreams, or videos uploaded afterwards. Sets which tab the YouTube browser opens on, and what the AI assistant lists.")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
@@ -123,8 +141,9 @@ struct YouTubeSettingsView: View {
                 // YouTube Title Format section
                 settingsGroup("YouTube Title Format") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Tell DeChaff the format your church uses for YouTube titles. The AI will use this to extract sermon metadata.")
+                        Text("How your church lays out its YouTube titles, e.g. “Living Hope, 1 Peter 1:3–9 | Jane Doe | Exiles | 23/03/2025”. When you pick a video, DeChaff uses this to fill in the title, reading, preacher, series and date on the Info step; the AI assistant uses it too.")
                             .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
 
                         TextField("Format template", text: $titleFormat)
                             .textFieldStyle(.roundedBorder)
@@ -139,6 +158,15 @@ struct YouTubeSettingsView: View {
                                 .buttonStyle(.bordered).controlSize(.small)
                                 .disabled(titleFormat == defaultTitleFormat)
                         }
+
+                        Divider()
+
+                        Picker("Dates in titles", selection: $titleDateOrder) {
+                            ForEach(TitleDateOrder.allCases, id: \.self) { Text($0.label).tag($0) }
+                        }
+                        Text("How a date like 01/11/2026 in a title is read: 1 November (day first) or 11 January (month first).")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
@@ -696,15 +724,150 @@ struct TemplatesSettingsView: View {
     }
 }
 
+// MARK: - Service tab
+
+/// How the church's services run — the format-specific choices the AI assistant follows,
+/// gathered in one place so DeChaff isn't tuned to any one church.
+struct ServiceSettingsView: View {
+    @AppStorage(HouseStyle.trimStartKey) private var trimStart: HouseStyle.TrimStart = .sermon
+    @AppStorage(HouseStyle.trimEndKey) private var trimEnd: HouseStyle.TrimEnd = .amen
+    @AppStorage(HouseStyle.minimumSermonMinutesKey) private var minimumSermonMinutes = HouseStyle.defaultMinimumSermonMinutes
+    @AppStorage(HouseStyle.chapterTitlesKey) private var chapterTitles = ""
+    @AppStorage(HouseStyle.artworkPerSeriesKey) private var artworkPerSeries = true
+    @State private var showCues = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Text("Every church runs its service a little differently. These settings describe yours, so the AI assistant (see the MCP tab) finds the sermon and names chapters the way you would. They don't change anything you do by hand in DeChaff. Restart Claude after changing them.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                settingsGroup("Where episodes start and end") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Picker("Episode starts", selection: $trimStart) {
+                            ForEach(HouseStyle.TrimStart.allCases, id: \.self) { Text($0.label).tag($0) }
+                        }
+                        Picker("Episode ends", selection: $trimEnd) {
+                            ForEach(HouseStyle.TrimEnd.allCases, id: \.self) { Text($0.label).tag($0) }
+                        }
+                        Text("Where the assistant places the trim. With several readings, a reading-first episode starts at the first.")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Divider()
+
+                        Stepper(value: $minimumSermonMinutes, in: 2...60) {
+                            Text("Shortest sermon: \(minimumSermonMinutes) min")
+                        }
+                        Text("The end of the episode is only looked for this long after the sermon starts, so a prayer early in the sermon isn't mistaken for the closing one. Lower it if your sermons can be short.")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                }
+
+                settingsGroup("Chapter titles") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("The chapters the assistant adds, one per line, in order, using {title} {reading} {series} {preacher}. A line with just {points} adds a chapter for each main point of the sermon. Leave empty to let the assistant choose 3–6 chapters itself.")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        TextEditor(text: $chapterTitles)
+                            .font(.system(.subheadline, design: .monospaced))
+                            .frame(minHeight: 60, maxHeight: 110)
+                            .scrollContentBackground(.hidden)
+                            .padding(8)
+                            .background(Color(NSColor.textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(alignment: .topLeading) {
+                                if chapterTitles.isEmpty {
+                                    Text("Bible Reading: {reading}\nSermon: {title}")
+                                        .font(.system(.subheadline, design: .monospaced)).foregroundStyle(.tertiary)
+                                        .padding(.horizontal, 13).padding(.vertical, 8)
+                                        .allowsHitTesting(false)
+                                }
+                            }
+                            .overlay(RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(Color.secondary.opacity(0.15), lineWidth: 1))
+                            .accessibilityLabel("Chapter titles")
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                }
+
+                settingsGroup("Cover art") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Toggle("New artwork for each series", isOn: $artworkPerSeries)
+                        Text("DeChaff reuses the last episode's artwork. When this is on and the series changes, the assistant shows you the saved artwork and asks for the new series' image. Turn it off if every episode uses the same artwork.")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                }
+
+                settingsGroup("Spoken cues") {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("Phrases the assistant listens for in the transcript to find the reading, the sermon and the end of the episode. The defaults suit many services; add the words your leaders actually say. Separate phrases with commas — case and punctuation don't matter. Leave a box empty to ignore that cue.")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 16).padding(.vertical, 10)
+                        DisclosureGroup("Edit phrases", isExpanded: $showCues) {
+                            VStack(alignment: .leading, spacing: 0) {
+                                ForEach(ServiceLandmark.Kind.spoken, id: \.self) { kind in
+                                    Divider()
+                                    CuePhrasesRow(kind: kind)
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 16).padding(.bottom, 10)
+                    }
+                }
+            }
+            .padding(24)
+        }
+    }
+}
+
+/// One kind of spoken cue: what it's for, and an editable list of phrases.
+private struct CuePhrasesRow: View {
+    let kind: ServiceLandmark.Kind
+    @AppStorage private var phrases: String
+
+    init(kind: ServiceLandmark.Kind) {
+        self.kind = kind
+        _phrases = AppStorage(wrappedValue: kind.defaultPhrases.joined(separator: ", "), kind.storageKey)
+    }
+
+    private var defaultText: String { kind.defaultPhrases.joined(separator: ", ") }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(kind.label).font(.subheadline)
+                Spacer()
+                Button("Reset") { phrases = defaultText }
+                    .buttonStyle(.borderless).controlSize(.small)
+                    .disabled(phrases == defaultText)
+            }
+            Text(kind.usage)
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            TextField(kind.label, text: $phrases, axis: .vertical)
+                .lineLimit(1...4)
+                .textFieldStyle(.roundedBorder)
+                .font(.caption)
+        }
+        .padding(.vertical, 8)
+    }
+}
+
 // MARK: - MCP tab
 
 /// Explains and automates connecting the dechaff-mcp server to Claude Desktop / Claude Code.
 struct MCPSettingsView: View {
     @AppStorage("dechaff.mcp.serverPath") private var serverPath = ""
     @AppStorage("dechaff.mcp.instructions") private var assistantInstructions = ""
-    @AppStorage(HouseStyle.trimStartKey) private var styleTrimStart: HouseStyle.TrimStart = .sermon
-    @AppStorage(HouseStyle.trimEndKey) private var styleTrimEnd: HouseStyle.TrimEnd = .amen
-    @AppStorage(HouseStyle.chapterTitlesKey) private var styleChapterTitles = ""
     @State private var serverVersion: String? = nil
     @State private var serverError: String? = nil
     @State private var desktopMessage: String? = nil
@@ -755,7 +918,7 @@ struct MCPSettingsView: View {
 
                 settingsGroup("Your church's instructions") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("How your church likes its episodes, in plain English. The assistant follows these over its usual approach. They take effect next time it connects — restart Claude after changing them.")
+                        Text("Anything else about how your church likes its episodes, in plain English. The assistant follows these over its usual approach. Where episodes start and end, chapter titles and cover art have their own settings in the Service tab. Changes take effect next time the assistant connects — restart Claude after changing them.")
                             .font(.caption).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         TextEditor(text: $assistantInstructions)
@@ -768,41 +931,6 @@ struct MCPSettingsView: View {
                                 if assistantInstructions.isEmpty {
                                     Text("e.g. Start the episode at the Bible reader's greeting, including the reading, with a first chapter called “Reading: <passage>”.")
                                         .font(.subheadline).foregroundStyle(.tertiary)
-                                        .padding(.horizontal, 13).padding(.vertical, 8)
-                                        .allowsHitTesting(false)
-                                }
-                            }
-                            .overlay(RoundedRectangle(cornerRadius: 8)
-                                .strokeBorder(Color.secondary.opacity(0.15), lineWidth: 1))
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16).padding(.vertical, 10)
-                }
-
-                settingsGroup("House style") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Where your episodes start and end, and how chapters are named. The assistant suggests cuts and chapters to match. Restart Claude after changing these.")
-                            .font(.caption).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Picker("Episode starts", selection: $styleTrimStart) {
-                            ForEach(HouseStyle.TrimStart.allCases, id: \.self) { Text($0.label).tag($0) }
-                        }
-                        Picker("Episode ends", selection: $styleTrimEnd) {
-                            ForEach(HouseStyle.TrimEnd.allCases, id: \.self) { Text($0.label).tag($0) }
-                        }
-                        Text("Chapter titles, one per line, using {title} {reading} {series} {preacher}. A line with just {points} adds a chapter for each main point of the sermon. Leave empty to let the assistant choose.")
-                            .font(.caption).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        TextEditor(text: $styleChapterTitles)
-                            .font(.system(.subheadline, design: .monospaced))
-                            .frame(minHeight: 60, maxHeight: 110)
-                            .scrollContentBackground(.hidden)
-                            .padding(8)
-                            .background(Color(NSColor.textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-                            .overlay(alignment: .topLeading) {
-                                if styleChapterTitles.isEmpty {
-                                    Text("Bible Reading: {reading}\nSermon: {title}")
-                                        .font(.system(.subheadline, design: .monospaced)).foregroundStyle(.tertiary)
                                         .padding(.horizontal, 13).padding(.vertical, 8)
                                         .allowsHitTesting(false)
                                 }

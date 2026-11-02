@@ -104,7 +104,8 @@ class YtDlpManager: ObservableObject {
     func fetchVideoList(channelURL: String, limit: Int) async throws -> [VideoEntry] {
         guard let bin = binaryURL else { throw YtDlpError.notInstalled }
         return try await YtDlpClient(binary: bin, ffmpeg: ffmpegURL)
-            .fetchVideoList(channelURL: channelURL, limit: limit)
+            .fetchVideoList(channelURL: channelURL, limit: limit,
+                            listing: ChannelListing.current(.standard))
     }
 
     // MARK: - Download audio

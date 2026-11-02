@@ -30,6 +30,30 @@ public enum YtDlpError: LocalizedError {
     }
 }
 
+/// Which videos to list from a church's channel — Settings → YouTube → Channel.
+public enum ChannelListing: String, CaseIterable, Sendable {
+    /// The Live tab when the channel has livestreams, else everything.
+    case livestreamsFirst = "livestreams_first"
+    /// Only livestreams.
+    case livestreams
+    /// Only ordinary uploads (the Videos tab) — for churches that upload edited services.
+    case uploads
+
+    public static let key = "dechaff.youtube.listing"
+
+    public var label: String {
+        switch self {
+        case .livestreamsFirst: return "Livestreams, if the channel has any"
+        case .livestreams:      return "Livestreams only"
+        case .uploads:          return "Uploaded videos only"
+        }
+    }
+
+    public static func current(_ defaults: UserDefaults) -> ChannelListing {
+        defaults.string(forKey: key).flatMap(ChannelListing.init) ?? .livestreamsFirst
+    }
+}
+
 // MARK: - Install locations
 
 /// Where the app keeps the yt-dlp and ffmpeg binaries it downloads and updates.
@@ -78,21 +102,32 @@ public struct YtDlpClient: Sendable {
 
     // MARK: Video list
 
-    /// Lists a channel's latest videos. A bare channel URL makes yt-dlp walk the
-    /// Videos tab, then Live, then Shorts — so with a small limit the livestreamed
-    /// services never appear. Prefer the Live tab, falling back to the URL as given
-    /// for channels that have never streamed.
-    public func fetchVideoList(channelURL: String, limit: Int) async throws -> [VideoEntry] {
-        if let streams = Self.liveTabURL(for: channelURL),
-           let entries = try? await listPlaylist(streams, limit: limit), !entries.isEmpty {
-            return entries
+    /// Lists a channel's latest videos from the part of the channel `listing` asks for.
+    /// A bare channel URL makes yt-dlp walk the Videos tab, then Live, then Shorts — so
+    /// with a small limit livestreamed services never appear; `.livestreamsFirst` prefers
+    /// the Live tab, falling back to the URL as given for channels that have never streamed.
+    public func fetchVideoList(channelURL: String, limit: Int,
+                               listing: ChannelListing = .livestreamsFirst) async throws -> [VideoEntry] {
+        switch listing {
+        case .livestreamsFirst:
+            if let streams = Self.tabURL("streams", for: channelURL),
+               let entries = try? await listPlaylist(streams, limit: limit), !entries.isEmpty {
+                return entries
+            }
+            return try await listPlaylist(channelURL, limit: limit)
+        case .livestreams:
+            return try await listPlaylist(Self.tabURL("streams", for: channelURL) ?? channelURL, limit: limit)
+        case .uploads:
+            return try await listPlaylist(Self.tabURL("videos", for: channelURL) ?? channelURL, limit: limit)
         }
-        return try await listPlaylist(channelURL, limit: limit)
     }
 
     /// The Live tab of a bare YouTube channel URL (@handle, /channel/, /c/ or /user/),
     /// or nil when the URL already names a tab or playlist, or isn't a channel.
-    static func liveTabURL(for channelURL: String) -> String? {
+    static func liveTabURL(for channelURL: String) -> String? { tabURL("streams", for: channelURL) }
+
+    /// A tab ("streams", "videos") of a bare YouTube channel URL, or nil as for `liveTabURL`.
+    static func tabURL(_ tab: String, for channelURL: String) -> String? {
         guard var components = URLComponents(string: channelURL.trimmingCharacters(in: .whitespaces)),
               let host = components.host?.lowercased(),
               host == "youtube.com" || host.hasSuffix(".youtube.com") else { return nil }
@@ -100,7 +135,7 @@ public struct YtDlpClient: Sendable {
         let isBareChannel = (parts.count == 1 && parts[0].hasPrefix("@"))
             || (parts.count == 2 && ["channel", "c", "user"].contains(parts[0]))
         guard isBareChannel else { return nil }
-        components.path = "/" + (parts + ["streams"]).joined(separator: "/")
+        components.path = "/" + (parts + [tab]).joined(separator: "/")
         components.query = nil
         components.fragment = nil
         return components.string

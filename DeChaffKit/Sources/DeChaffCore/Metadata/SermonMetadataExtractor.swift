@@ -32,7 +32,7 @@ public struct SermonMetadata: Sendable {
 // MARK: - Instructions
 
 /// Builds the system instructions string for metadata extraction, injecting the user's title format.
-public func sermonMetadataInstructions(titleFormat: String) -> String {
+public func sermonMetadataInstructions(titleFormat: String, dateOrder: TitleDateOrder = .dayFirst) -> String {
     """
     You extract structured metadata from church sermon YouTube video titles.
 
@@ -46,6 +46,8 @@ public func sermonMetadataInstructions(titleFormat: String) -> String {
     by hand and may vary or be incomplete.
 
     The date may appear in various formats (e.g. "23 Mar 2025", "15/3/26", "March 15, 2025"). \
+    This church writes numeric dates \(dateOrder == .dayFirst ? "day first (01/11/2026 is 1 November 2026)"
+                                                             : "month first (11/01/2026 is 1 November 2026)"). \
     Always normalise it to "dd MMM yyyy" format (e.g. "23 Mar 2025").
 
     Only populate fields you are confident about. Use empty string for anything not clearly present. \
@@ -57,12 +59,13 @@ public func sermonMetadataInstructions(titleFormat: String) -> String {
 
 /// On-device Apple Intelligence (FoundationModels). Nil when the model is unavailable
 /// (not enabled, unsupported Mac, still downloading) or the request fails.
-public func extractSermonMetadataOnDevice(from title: String, titleFormat: String) async -> SermonMetadata? {
+public func extractSermonMetadataOnDevice(from title: String, titleFormat: String,
+                                          dateOrder: TitleDateOrder = .dayFirst) async -> SermonMetadata? {
     guard case .available = SystemLanguageModel.default.availability else { return nil }
 
     let session = LanguageModelSession(
         model: SystemLanguageModel.default,
-        instructions: sermonMetadataInstructions(titleFormat: titleFormat)
+        instructions: sermonMetadataInstructions(titleFormat: titleFormat, dateOrder: dateOrder)
     )
 
     do {

@@ -10,7 +10,8 @@ import DeChaffCore
 /// Tiers 1 and 3 live in DeChaffCore so the MCP server shares them.
 func extractSermonMetadata(from youtubeTitle: String, titleFormat: String = defaultTitleFormat) async -> SermonMetadata? {
     // Tier 1: Apple Intelligence
-    if let result = await extractSermonMetadataOnDevice(from: youtubeTitle, titleFormat: titleFormat) {
+    if let result = await extractSermonMetadataOnDevice(from: youtubeTitle, titleFormat: titleFormat,
+                                                        dateOrder: TitleDateOrder.current(.standard)) {
         return result
     }
 
@@ -36,7 +37,8 @@ private func extractViaClaudeAPI(from title: String, titleFormat: String) async 
         let response = try await ClaudeAPIClient.sendMessage(
             apiKey: apiKey,
             model: model,
-            systemPrompt: sermonMetadataInstructions(titleFormat: titleFormat) + """
+            systemPrompt: sermonMetadataInstructions(titleFormat: titleFormat,
+                                                     dateOrder: TitleDateOrder.current(.standard)) + """
 
                 Respond with ONLY a JSON object, no markdown fencing, no explanation:
                 {"title": "...", "bibleReading": "...", "speaker": "...", "series": "...", "date": "..."}

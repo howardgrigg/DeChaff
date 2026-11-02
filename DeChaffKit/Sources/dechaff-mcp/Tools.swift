@@ -82,29 +82,35 @@ struct DeChaffTools: Sendable {
     var listChannelVideos: MCPTool {
         MCPTool(name: "list_channel_videos", title: "List recent channel videos",
                 description: "Lists the latest videos on the church's YouTube channel (from DeChaff's settings, or the "
-                    + "channel given), newest first, preferring the channel's livestreams. Each title gets a quick "
+                    + "channel given), newest first, from livestreams or uploads as DeChaff's settings say. Each title gets a quick "
                     + "parse into sermon fields (each with a confidence — check anything not \"high\" against the raw "
                     + "title). download_audio extracts the fields more carefully. Pass a video_id to download_audio.",
                 inputSchema: Schema.object([
                     "channel": Schema.string("Channel URL or @handle. Defaults to the channel in DeChaff's settings."),
                     "limit": Schema.integer("How many videos (default: DeChaff's setting, usually 10)."),
                     "tab": Schema.string("Which part of the channel: live (livestreams), videos (ordinary uploads) or "
-                        + "auto — livestreams if the channel has any (default).", enum: ["auto", "live", "videos"]),
+                        + "auto — livestreams if the channel has any. Default: DeChaff's setting (get_settings video_listing).",
+                        enum: ["auto", "live", "videos"]),
                 ]),
                 annotations: ["readOnlyHint": true, "openWorldHint": true]) { raw, _ in
             let args = Args(raw)
             let settings = AppSettings()
             guard let client = YtDlpClient.installed else { throw Self.ytDlpMissing }
             var channel = args.string("channel") ?? settings.channelURL
+            guard !channel.isEmpty else {
+                throw ToolError("No YouTube channel is set in DeChaff. Ask the user for their church's channel and save it "
+                    + "with update_settings youtube_channel_url — or download a video by URL.")
+            }
             if channel.hasPrefix("@") { channel = "https://www.youtube.com/\(channel)" }
-            if let tab = args.string("tab"), tab != "auto" {
-                // An explicit tab URL skips the client's livestreams-first default.
-                let base = channel.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                    .replacingOccurrences(of: "/videos", with: "").replacingOccurrences(of: "/streams", with: "")
-                channel = base + (tab == "live" ? "/streams" : "/videos")
+            let listing: ChannelListing
+            switch args.string("tab") {
+            case "auto": listing = .livestreamsFirst
+            case "live": listing = .livestreams
+            case "videos": listing = .uploads
+            default: listing = settings.channelListing
             }
             let limit = min(max(try args.int("limit") ?? settings.videoLimit, 1), 50)
-            let videos = try await client.fetchVideoList(channelURL: channel, limit: limit)
+            let videos = try await client.fetchVideoList(channelURL: channel, limit: limit, listing: listing)
             return .json([
                 "channel": .string(channel),
                 "videos": .array(videos.map { v in
@@ -184,7 +190,8 @@ struct DeChaffTools: Sendable {
                     var o = downloadJSON(file, videoID: id, info: entry.map { DownloadInfo(title: $0.title, uploadDate: $0.uploadDate) })
                     if let entry {
                         o["parsed"] = titleFieldsJSON(entry.title, format: titleFormat,
-                            onDevice: await extractSermonMetadataOnDevice(from: entry.title, titleFormat: titleFormat))
+                            onDevice: await extractSermonMetadataOnDevice(from: entry.title, titleFormat: titleFormat,
+                                                                    dateOrder: AppSettings().titleDateOrder))
                     }
                     o["next_step"] = "Run transcribe and analyze_audio (no path needed — this is now the current episode), then suggest_trim."
                     return .object(o)
@@ -856,8 +863,11 @@ struct DeChaffTools: Sendable {
     var updateSettings: MCPTool {
         MCPTool(name: "update_settings", title: "Change DeChaff settings",
                 description: "Changes DeChaff's saved settings — the same ones as the app's Settings window. Only the "
-                    + "fields given are changed. Use artwork_path to save a new series' artwork as the default, and "
-                    + "church_instructions to record how the user likes episodes made. Confirm with the user first.",
+                    + "fields given are changed. The house style fields (trim_start, trim_end, minimum_sermon_minutes, "
+                    + "chapter_titles, artwork_per_series, spoken_cues) are the app's Settings → Service tab: use them "
+                    + "when the user describes how their services run. Use artwork_path to save a new series' artwork as "
+                    + "the default, and church_instructions for anything else about how they like episodes made. "
+                    + "Confirm with the user first.",
                 inputSchema: Schema.object([
                     "church_instructions": Schema.string("Replaces the church's instructions for the assistant."),
                     "trim_start": Schema.string("House style — where episodes start: sermon (after the Bible reading) "
@@ -865,6 +875,17 @@ struct DeChaffTools: Sendable {
                     "trim_end": Schema.string("House style — where episodes end: amen (the closing prayer's Amen) or "
                         + "song_intro (just before the closing song is introduced).",
                         enum: HouseStyle.TrimEnd.allCases.map(\.rawValue)),
+                    "minimum_sermon_minutes": Schema.integer("House style — the shortest sermon, in minutes; the end "
+                        + "isn't looked for earlier than this after the sermon starts."),
+                    "artwork_per_series": Schema.boolean("House style — true if the church uses new artwork for each "
+                        + "series, false if every episode uses the same artwork."),
+                    "spoken_cues": Schema.object(Dictionary(uniqueKeysWithValues: ServiceLandmark.Kind.spoken.map {
+                        ($0.rawValue, Schema.string("\($0.label): \($0.usage) Comma-separated phrases; \"\" ignores this cue."))
+                    })),
+                    "title_date_order": Schema.string("How numeric dates in video titles are written.",
+                        enum: TitleDateOrder.allCases.map(\.rawValue)),
+                    "video_listing": Schema.string("Where the services are on the channel.",
+                        enum: ChannelListing.allCases.map(\.rawValue)),
                     "chapter_titles": Schema.string("House style — chapter titles, one per line, in order, using "
                         + "{title} {reading} {series} {preacher}; a line {points} means one chapter per sermon point. "
                         + "e.g. \"Bible Reading: {reading}\\nSermon: {title}\". Empty string: the assistant chooses."),
@@ -916,6 +937,31 @@ struct DeChaffTools: Sendable {
             }
             if let v = args["chapter_titles"]?.stringValue {  // "" clears it
                 style.chapterTitles = v; changed.append("chapter_titles")
+            }
+            if let v = try args.int("minimum_sermon_minutes") {
+                guard (2...60).contains(v) else { throw ToolError("minimum_sermon_minutes must be 2–60.") }
+                style.minimumSermonMinutes = v; changed.append("minimum_sermon_minutes")
+            }
+            if let v = try args.bool("artwork_per_series") {
+                style.artworkPerSeries = v; changed.append("artwork_per_series")
+            }
+            for (key, value) in args.object("spoken_cues")?.raw.objectValue ?? [:] {
+                guard let kind = ServiceLandmark.Kind(rawValue: key), ServiceLandmark.Kind.spoken.contains(kind),
+                      let text = value.stringValue else {
+                    throw ToolError("spoken_cues.\(key) isn't a cue — use one of "
+                        + ServiceLandmark.Kind.spoken.map(\.rawValue).joined(separator: ", ") + ".")
+                }
+                style.cues[kind] = ServiceLandmark.Kind.phrases(from: text); changed.append(.string("spoken_cues.\(key)"))
+            }
+            if let v = args.string("title_date_order") {
+                guard let order = TitleDateOrder(rawValue: v) else { throw ToolError("title_date_order must be day_first or month_first.") }
+                d.set(order.rawValue, forKey: TitleDateOrder.key); changed.append("title_date_order")
+            }
+            if let v = args.string("video_listing") {
+                guard let listing = ChannelListing(rawValue: v) else {
+                    throw ToolError("video_listing must be " + ChannelListing.allCases.map(\.rawValue).joined(separator: ", ") + ".")
+                }
+                d.set(listing.rawValue, forKey: ChannelListing.key); changed.append("video_listing")
             }
             if style != settings.houseStyle { style.save(to: d) }
             if let v = args.string("default_preacher") { d.set(v, forKey: "dechaff.preacher"); changed.append("default_preacher") }
@@ -1126,7 +1172,7 @@ struct DeChaffTools: Sendable {
                               preacher: tagArgs.string("preacher") ?? "", series: tagArgs.string("series") ?? "",
                               artwork: settings.artwork)
         if let d = tagArgs.string("date") {
-            guard let date = parseExtractedDate(d) else { throw ToolError("Couldn't read date “\(d)” — use YYYY-MM-DD.") }
+            guard let date = parseExtractedDate(d, order: AppSettings().titleDateOrder) else { throw ToolError("Couldn't read date “\(d)” — use YYYY-MM-DD.") }
             tags.date = date
         }
         if let art = tagArgs.string("artwork_path") {
@@ -1200,7 +1246,7 @@ struct DeChaffTools: Sendable {
             if let p = t.string("preacher") { metadata.artist = p }
             if let s = t.string("series") { metadata.album = s }
             if let d = t.string("date") {
-                guard let date = parseExtractedDate(d) else { throw ToolError("Couldn't read date “\(d)” — use YYYY-MM-DD.") }
+                guard let date = parseExtractedDate(d, order: AppSettings().titleDateOrder) else { throw ToolError("Couldn't read date “\(d)” — use YYYY-MM-DD.") }
                 metadata.year = String(Calendar.current.component(.year, from: date))
             }
             if let art = t.string("artwork_path") {
@@ -1421,7 +1467,7 @@ private func titleFieldsJSON(_ title: String, format: String, onDevice: SermonMe
             // A recognised Bible reference or date beats a free-text guess.
             (value, conf, note) = (guessed.value, .high, "the title has \"\(guessed.value)\"; the parse said \"\(b)\"")
         }
-        if name == "date", let d = parseExtractedDate(value) { value = isoDate(d) }
+        if name == "date", let d = parseExtractedDate(value, order: AppSettings().titleDateOrder) { value = isoDate(d) }
         values[name] = .string(value)
         confidence[name] = .string(value.isEmpty ? "none" : conf.rawValue)
         if let note { notes[name] = .string(note) }
@@ -1539,7 +1585,12 @@ func houseStyleJSON(_ style: HouseStyle) -> JSONValue {
     [
         "trim_start": .string(style.trimStart.rawValue),
         "trim_end": .string(style.trimEnd.rawValue),
+        "minimum_sermon_minutes": .number(Double(style.minimumSermonMinutes)),
         "chapter_titles": .array(style.chapterLines.map { .string($0) }),
+        "artwork_per_series": .bool(style.artworkPerSeries),
+        "spoken_cues": .object(Dictionary(uniqueKeysWithValues: style.cuePhrases.map { kind, phrases in
+            (kind.rawValue, JSONValue.array(phrases.map { .string($0) }))
+        })),
         "guidance": .string(style.guidance),
     ]
 }

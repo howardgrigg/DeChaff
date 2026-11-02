@@ -218,3 +218,102 @@ private func service() -> (words: [TranscriptWord], music: [MusicSegment]) {
         #expect(abs(r.time - 9.85) < 0.02)
     }
 }
+
+// MARK: - Format settings
+
+@Suite struct FormatSettingsTests {
+    private func freshDefaults() throws -> UserDefaults {
+        try #require(UserDefaults(suiteName: "dechaff-tests-\(UUID().uuidString)"))
+    }
+
+    @Test func customCuesReplaceTheDefaults() throws {
+        let defaults = try freshDefaults()
+        defaults.set("Over to Sam for our passage, Sam will now read", forKey: ServiceLandmark.Kind.readingHandover.storageKey)
+        defaults.set("", forKey: ServiceLandmark.Kind.songIntro.storageKey)
+        let style = HouseStyle(defaults: defaults)
+        #expect(style.cuePhrases[.readingHandover] == ["over to sam for our passage", "sam will now read"])
+        #expect(style.cuePhrases[.songIntro] == [])                                     // emptied: ignored
+        #expect(style.cuePhrases[.readingEnd] == ServiceLandmark.Kind.readingEnd.defaultPhrases)  // untouched: defaults
+    }
+
+    @Test func savesEveryHouseStyleSetting() throws {
+        let defaults = try freshDefaults()
+        let style = HouseStyle(trimStart: .reading, trimEnd: .songIntro, chapterTitles: "Sermon: {title}",
+                               minimumSermonMinutes: 4, artworkPerSeries: false, cues: [.amen: ["amen", "ae"]])
+        style.save(to: defaults)
+        #expect(HouseStyle(defaults: defaults) == style)
+        #expect(style.guidance.contains("same cover art for every episode"))
+        #expect(style.guidance.contains("at least 4 minutes"))
+    }
+
+    @Test func aChurchsOwnCuesAreHeard() throws {
+        var words: [TranscriptWord] = []
+        var t = 0.0
+        for w in "Over to Sam for our passage. In the beginning was the Word.".split(separator: " ") {
+            words.append(TranscriptWord(text: String(w), startTime: t, endTime: t + 0.3)); t += 0.4
+        }
+        let style = HouseStyle(cues: [.readingHandover: ["over to sam for our passage"]])
+        #expect(findServiceLandmarks(words: words, cues: style.cuePhrases).contains { $0.kind == .readingHandover })
+        #expect(!findServiceLandmarks(words: words).contains { $0.kind == .readingHandover })
+    }
+
+    @Test func shortSermonsCanEndEarly() throws {
+        var words: [TranscriptWord] = []
+        var t = 0.0
+        func say(_ s: String) {
+            for w in s.split(separator: " ") { words.append(TranscriptWord(text: String(w), startTime: t, endTime: t + 0.3)); t += 0.4 }
+            t += 0.6
+        }
+        say("Our reading today is from Mark one."); say("This is the word of the Lord.")
+        say("Thanks so much.")
+        for _ in 0..<40 { say("A short homily about the good news of the kingdom of God today.") }  // ~4 minutes
+        say("Let's pray."); say("Lord, hear us. Amen."); say("I invite you to stand and sing.")
+        let long = suggestTrim(words: words, style: HouseStyle())
+        #expect(long.trimEnd.map { words[$0.wordIndex].text } != "Amen.")
+        let short = suggestTrim(words: words, style: HouseStyle(minimumSermonMinutes: 2))
+        #expect(short.trimEnd.map { words[$0.wordIndex].text } == "Amen.")
+    }
+
+    @Test func severalReadingsPutTheSermonAfterTheLast() throws {
+        var words: [TranscriptWord] = []
+        var t = 0.0
+        func say(_ s: String, pause: Double = 0.6) {
+            for w in s.split(separator: " ") { words.append(TranscriptWord(text: String(w), startTime: t, endTime: t + 0.3)); t += 0.4 }
+            t += pause
+        }
+        say("Our reading today is from Isaiah forty."); say("Comfort my people."); say("This is the word of the Lord.")
+        say("Thanks so much, Mia.")  // the leader thanking the first reader — not the sermon yet
+        say("Our second reading is from John one.", pause: 3)
+        say("In the beginning was the Word."); say("This is the word of the Lord.")
+        say("Thank you so much, Jo."); say("Today we think about light.")
+        let s = suggestTrim(words: words, style: HouseStyle(trimStart: .reading))
+        #expect(words[try #require(s.readingStart).wordIndex].text == "Our")
+        #expect(try #require(s.readingStart).wordIndex == 0)
+        #expect(words[try #require(s.sermonStart).wordIndex].text == "Thank")
+    }
+
+    @Test func dateOrderDecidesNumericDates() throws {
+        let cal = Calendar.current
+        let dayFirst = try #require(parseExtractedDate("01/11/2026", order: .dayFirst))
+        #expect(cal.component(.month, from: dayFirst) == 11 && cal.component(.day, from: dayFirst) == 1)
+        let monthFirst = try #require(parseExtractedDate("01/11/2026", order: .monthFirst))
+        #expect(cal.component(.month, from: monthFirst) == 1 && cal.component(.day, from: monthFirst) == 11)
+        #expect(parseExtractedDate("2026-11-01", order: .monthFirst).map { cal.component(.month, from: $0) } == 11)
+        #expect(parseExtractedDate("1.11.2026").map { cal.component(.month, from: $0) } == 11)
+    }
+
+    @Test func migrationKeepsOldDefaultsOnlyForExistingInstalls() throws {
+        let existing = try freshDefaults()
+        existing.set("Jane Doe", forKey: "dechaff.preacher")
+        SettingsMigration.run(existing)
+        #expect(existing.string(forKey: SettingsMigration.channelKey) == SettingsMigration.legacyChannelURL)
+        #expect(TitleDateOrder.current(existing) == .dayFirst)
+
+        let fresh = try freshDefaults()
+        SettingsMigration.run(fresh)
+        #expect(fresh.object(forKey: SettingsMigration.channelKey) == nil)
+        fresh.set("Jane Doe", forKey: "dechaff.preacher")  // used since — but the migration already ran
+        SettingsMigration.run(fresh)
+        #expect(fresh.object(forKey: SettingsMigration.channelKey) == nil)
+    }
+}
