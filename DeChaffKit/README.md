@@ -62,26 +62,31 @@ Point Claude at it with **Settings → MCP → Advanced → Choose…**. A serve
 |---|---|
 | `get_settings` | The app's saved settings and where LAME, yt-dlp and ffmpeg were found |
 | `get_artwork` | Shows cover art as an image the assistant can see: the app's saved artwork (the current series'), an image file, or an MP3's embedded art |
-| `list_channel_videos` | Recent livestreams (or ordinary videos) on the channel, with a quick parse of each title |
-| `download_audio` | Downloads a video's audio and returns the file path, with sermon fields read by Apple Intelligence |
+| `list_channel_videos` | Recent livestreams (or ordinary videos) on the channel, with each title's sermon fields and how confident each is |
+| `download_audio` | Downloads a video's audio, keeps it by video ID and makes it the current episode, with the title's sermon fields and a confidence for each |
 | `analyze_audio` | Duration, loudness (LUFS), music segments and long silences |
 | `transcribe` | On-device transcription with word timings (cached) |
-| `get_transcript` | The transcript as `[time] #word_index sentence` lines, or word by word for a time window |
+| `get_transcript` | The transcript as `[time] #word_index sentence` lines, word by word for a time window, or plain paragraphs (`text`) for writing copy |
 | `search_transcript` | Finds a phrase such as "let's pray" and returns its time and word index |
+| `suggest_trim` | Proposes the episode's start and end, and where the reading and sermon begin, from spoken cues and music, following the house style |
 | `refine_cuts` | Previews where trim and chapter points will land after they are moved into silence |
 | `preview_cut` | Renders a few seconds around a cut, processed as it will sound, and plays it for the user |
 | `open_in_dechaff` / `get_dechaff_plan` | Hands the episode to the app for adjusting by hand, and reads the user's changes back |
 | `process_sermon` | Trims, cuts, cleans, encodes, tags and adds chapters, producing the episode (or exactly the app's plan, with `from_plan`) |
 | `read_tags` / `write_tags` | Checks or fixes a finished MP3's tags and chapters without re-encoding |
-| `list_episodes` | Recent finished episodes with their tags and chapters, to match last week's style |
+| `list_episodes` | Recent finished episodes from DeChaff's history (found even after they're moved) with tags, chapters and trim |
 | `reveal_in_finder` | Shows a file in Finder |
-| `update_settings` | Changes DeChaff's saved settings, including the church's instructions and default artwork |
+| `update_settings` | Changes DeChaff's saved settings, including the house style, the church's instructions and default artwork |
 | `update_yt_dlp` | Installs the latest yt-dlp when YouTube downloads break |
 | `get_job` / `cancel_job` | Waits for or stops a long-running job |
 
 The server also provides a `prepare_sermon` prompt that walks the assistant through the whole workflow, and a `dechaff://settings` resource.
 
-Downloading, analysis, transcription and processing take minutes, not seconds. These tools wait up to `wait_seconds` (40 by default). If the work isn't done by then, they return a `job_id`, and the assistant calls `get_job` to keep waiting. This keeps calls inside MCP clients' request timeouts.
+Downloading, analysis, transcription and processing take minutes, not seconds. These tools wait up to `wait_seconds` (40 by default, 90 at most — clients give up on a call after about two minutes). If the work isn't done by then, they return a `job_id`, and the assistant calls `get_job` to keep waiting. This keeps calls inside MCP clients' request timeouts.
+
+Tools that work on a recording take `path` or `video_id`, or neither: they then use the current episode (the last one downloaded or named).
+
+**House style** (Settings → MCP): where episodes start (at the sermon, or at the Bible reading) and end (on the closing prayer's "Amen", or just before the closing song is introduced), and a chapter title template such as `Bible Reading: {reading}` / `Sermon: {title}`. The assistant's guidance and `suggest_trim` follow it.
 
 All trim and chapter points are on the source recording's timeline. `process_sermon` shifts chapter times to account for the trim and for shortened silences.
 

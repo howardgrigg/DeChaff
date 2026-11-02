@@ -145,10 +145,17 @@ enum Schema {
         ]
     }
 
-    static let path = string("Absolute path to an audio file on this Mac (~ is expanded).")
+    static let path = string("The recording: an audio file path (~ is expanded). Omit to use the current episode — "
+        + "the recording last downloaded or worked on — or give video_id instead.")
+
+    static let videoID = string("A YouTube video ID (or URL) downloaded with download_audio, instead of path.")
+
+    /// Longest a tool waits before handing back a job_id. Clients stop waiting on a call after
+    /// about two minutes, so anything longer just strands the result.
+    static let maxWaitSeconds = 90.0
 
     static let waitSeconds = number(
-        "How long to wait for the work to finish before returning a job_id to poll with get_job (default 40, max 600).")
+        "How long to wait for the work to finish before returning a job_id to poll with get_job (default 40, max 90).")
 
     static let tags = object([
         "title": string("Sermon title, e.g. \"The Good Shepherd\"."),
@@ -359,7 +366,7 @@ final class JobStore: @unchecked Sendable {
     /// Waits up to `seconds` for `job`. Returns its result when done (throwing its error if it
     /// failed), or a "still running" status the model can poll with get_job.
     func wait(for job: Job, upTo seconds: Double, context: ToolContext) async throws -> JSONValue {
-        let deadline = Date().addingTimeInterval(min(max(seconds, 0), 600))
+        let deadline = Date().addingTimeInterval(min(max(seconds, 0), Schema.maxWaitSeconds))
         var lastReported = -1.0
         while job.state == .running && Date() < deadline {
             let p = job.progress
@@ -392,5 +399,63 @@ func runBlocking<T: Sendable>(_ work: @escaping @Sendable () -> T, onCancel: @es
         }
     } onCancel: {
         onCancel()
+    }
+}
+
+// MARK: - The current episode
+
+/// The recording the assistant is working on, so tools can be called without repeating
+/// its path: the last one downloaded or named explicitly.
+final class CurrentEpisode: @unchecked Sendable {
+    private let lock = NSLock()
+    private var url: URL?
+
+    var recording: URL? {
+        lock.lock(); defer { lock.unlock() }
+        return url
+    }
+
+    func set(_ recording: URL) {
+        lock.lock(); url = recording; lock.unlock()
+    }
+
+    /// The recording a tool call refers to: `path`, else `video_id` (a cached download),
+    /// else the current episode, else the episode open in the DeChaff app.
+    func resolve(_ args: Args) throws -> URL {
+        if args.string("path") != nil {
+            let url = try args.existingFile("path")
+            set(url)
+            return url
+        }
+        if let raw = args.string("video_id") {
+            guard let id = youTubeVideoID(from: raw) else { throw ToolError("“\(raw)” isn't a YouTube video ID.") }
+            guard let file = DownloadCache.file(forVideoID: id) else {
+                throw ToolError("Video \(id) hasn't been downloaded yet — call download_audio first.")
+            }
+            set(file)
+            return file
+        }
+        if let url = recording, FileManager.default.fileExists(atPath: url.path) { return url }
+        if let plan = EpisodePlanFile.load(), FileManager.default.fileExists(atPath: plan.sourcePath) {
+            let url = URL(fileURLWithPath: plan.sourcePath)
+            set(url)
+            return url
+        }
+        throw ToolError("Which recording? Pass path or video_id (download_audio returns both).")
+    }
+}
+
+/// Analyses kept for the session, so suggest_trim can reuse analyze_audio's music segments.
+final class AnalysisStore: @unchecked Sendable {
+    private let lock = NSLock()
+    private var results: [String: AudioAnalysis] = [:]
+
+    func get(_ url: URL) -> AudioAnalysis? {
+        lock.lock(); defer { lock.unlock() }
+        return results[url.path]
+    }
+
+    func set(_ analysis: AudioAnalysis, for url: URL) {
+        lock.lock(); results[url.path] = analysis; lock.unlock()
     }
 }

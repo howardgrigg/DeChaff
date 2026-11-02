@@ -34,6 +34,7 @@ if arguments.contains("--help") || arguments.contains("-h") {
     exit(0)
 }
 
+let settingsAtLaunch = AppSettings()
 let instructions = """
 DeChaff turns a church service recording into a podcast episode: trimmed to the sermon, cleaned up \
 (voice isolation, compression, levelling, −16 LUFS), encoded to MP3 and tagged with chapters.
@@ -42,21 +43,22 @@ In the app this is a five-step wizard the user works through from start to end �
 Info → Chapters → Output — and each step builds on the one before. Follow the same steps, in order, \
 and report progress in those terms ("Trim is done — next, Info") so it matches what the user knows:
 
-1. Load — get the recording. list_channel_videos finds this week's video; download_audio fetches it \
-(or use a local audio file). Note the title fields it parses; they seed the Info step.
-2. Trim — choose where the sermon starts and ends. Run transcribe (and analyze_audio — its music \
-segments show the worship around the sermon), find the boundaries with search_transcript and \
-get_transcript, then check them with refine_cuts. Usually: start after the Bible reading, end on \
-the closing prayer's "Amen". If the user wants to hear an edge, preview_cut plays it as it will sound.
+1. Load — get the recording. list_channel_videos finds this week's video; download_audio fetches it by \
+video_id (or use a local audio file). The downloaded recording becomes the current episode, so later tools \
+need no path. Note the title fields it parses, and double-check any listed under "check".
+2. Trim — choose where the episode starts and ends, following the house style below. Run transcribe and \
+analyze_audio, then suggest_trim: it proposes the start, end, reading and sermon points with the words \
+around each. Confirm anything below high confidence with a get_transcript window (or search_transcript), \
+then check the cuts with refine_cuts. If the user wants to hear an edge, preview_cut plays it as it will sound.
 3. Info — the tags: title, Bible reading, preacher, series, date, artwork. Start from the parsed video \
 title and get_settings (last preacher/series); fill gaps from the transcript. list_episodes shows recent \
-episodes — match their spelling of the series and their chapter style. The app keeps the last \
+episodes — match their spelling of the series. The app keeps the last \
 episode's artwork and the user only changes it when a new series starts: if the series differs from \
 last_series, look at the saved artwork with get_artwork and ask the user for the new series' artwork \
 (tags.artwork_path; update_settings saves it as the default). A processed episode's preacher, series and \
 artwork become the new defaults.
-4. Chapters — 3–6 markers at clear turns in the sermon, the first at the trim start (e.g. \
-"Introduction"), given as word indexes and checked with refine_cuts.
+4. Chapters — as the house style below says, given as word indexes and checked with refine_cuts. \
+suggest_trim places the reading and sermon chapters.
 5. Output — confirm the plan with the user (trim, tags, chapters, any non-default options), then run \
 process_sermon and verify the finished MP3 with read_tags. If its result includes website_copy, \
 finish by following that prompt (the church's own AI Assistant template) with the episode's transcript; \
@@ -73,9 +75,12 @@ call get_dechaff_plan, tell them briefly what changed, and process with process_
 
 All trim and chapter points are on the source recording's timeline. Prefer transcript word indexes \
 over times: the server refines every cut into the surrounding silence so no word is clipped. \
-Long-running tools return a job_id if they run past wait_seconds; call get_job to keep waiting. If a \
-YouTube listing or download fails with a YouTube error, run update_yt_dlp and try again.
-""" + churchInstructions(AppSettings().assistantInstructions)
+Long-running tools return a job_id if they run past wait_seconds (90 s at most); call get_job to keep \
+waiting. If a YouTube listing or download fails with a YouTube error, run update_yt_dlp and try again.
+
+This church's house style (Settings → MCP; change it with update_settings):
+\(settingsAtLaunch.houseStyle.guidance)
+""" + churchInstructions(settingsAtLaunch.assistantInstructions)
 
 /// The church's own preferences from Settings → MCP, which override the defaults above.
 func churchInstructions(_ text: String) -> String {

@@ -54,8 +54,12 @@ public struct EnergyEnvelope: Sendable {
     }
 
     func percentile(_ p: Double) -> Float {
-        guard !levelsDB.isEmpty else { return EnergyEnvelope.silenceDB }
-        let sorted = levelsDB.sorted()
+        Self.percentile(levelsDB, p)
+    }
+
+    static func percentile(_ levels: [Float], _ p: Double) -> Float {
+        guard !levels.isEmpty else { return EnergyEnvelope.silenceDB }
+        let sorted = levels.sorted()
         return sorted[min(sorted.count - 1, max(0, Int(Double(sorted.count - 1) * p)))]
     }
 }
@@ -124,6 +128,10 @@ public struct CutRefinementOptions: Sendable {
     /// Silence threshold = noise floor + 35% of the floor-to-speech range, clamped to these.
     public var minThresholdAboveFloorDB: Float = 6
     public var maxThresholdAboveFloorDB: Float = 15
+    /// Audio this quiet counts as silence whatever the noise floor — so a recording with
+    /// near-digital-silence stretches doesn't make ordinary room tone look like speech.
+    /// Applied only when speech is at least 20 dB louder, so quiet recordings still work.
+    public var absoluteSilenceDB: Float = -60
 
     public init() {}
 }
@@ -384,11 +392,15 @@ public struct CutPointRefiner: Sendable {
     }
 
     private func levels(_ env: EnergyEnvelope) -> (floor: Float, threshold: Float) {
-        let floor = env.percentile(0.10)
-        let speech = env.percentile(0.90)
+        // Digital silence (exact zeros from a muted feed or between clips) isn't the room's
+        // noise floor; measuring from it put the threshold so low that room tone read as sound.
+        let live = env.levelsDB.filter { $0 > EnergyEnvelope.silenceDB + 1 }
+        let floor = EnergyEnvelope.percentile(live, 0.10)
+        let speech = EnergyEnvelope.percentile(live, 0.90)
         let above = min(max((speech - floor) * 0.35, options.minThresholdAboveFloorDB),
                         options.maxThresholdAboveFloorDB)
-        return (floor, floor + above)
+        let threshold = max(floor + above, min(options.absoluteSilenceDB, speech - 20))
+        return (floor, threshold)
     }
 
     private func frames(_ seconds: Double, _ env: EnergyEnvelope) -> Int {

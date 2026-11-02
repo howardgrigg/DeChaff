@@ -29,6 +29,8 @@ struct AppSettings {
               !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         return prompt
     }
+    /// How the church likes episodes cut and chaptered (Settings → MCP → House style).
+    var houseStyle: HouseStyle { HouseStyle(defaults: defaults) }
     var lastPreacher: String { defaults.string(forKey: "dechaff.preacher") ?? "" }
     var lastSeries: String { defaults.string(forKey: "dechaff.series") ?? "" }
     /// Cover art the app keeps between episodes — it's changed when the series changes.
@@ -80,6 +82,7 @@ struct AppSettings {
             "title_format": .string(titleFormat),
             "filename_template": .string(filenameTemplate),
             "church_instructions": .string(assistantInstructions),
+            "house_style": houseStyleJSON(houseStyle),
             "last_preacher": .string(lastPreacher),
             "last_series": .string(lastSeries),
             "artwork": artwork.map { art -> JSONValue in

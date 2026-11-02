@@ -279,8 +279,10 @@ class ProcessingModel: ObservableObject {
     ///   (an episode plan's), instead of keeping the whole recording.
     /// - Parameter onLoaded: runs once the duration is known and the trim is set.
     func loadFile(url: URL, initialTrim: (in: Double, out: Double)? = nil, onLoaded: (() -> Void)? = nil) {
-        // Clean up any previous yt-dlp temp download
-        if let old = inputURL, old.lastPathComponent.hasPrefix("dechaff-yt-") {
+        // Clean up any previous yt-dlp temp download — but not one the MCP server keeps by
+        // video ID in Caches, which the assistant may still be working on.
+        if let old = inputURL, old.lastPathComponent.hasPrefix("dechaff-yt-"),
+           !old.standardizedFileURL.path.hasPrefix(DownloadCache.directory.standardizedFileURL.path) {
             try? FileManager.default.removeItem(at: old)
         }
         inputURL = url
@@ -402,6 +404,7 @@ class ProcessingModel: ObservableObject {
         let processor = EpisodeProcessor()
         activeProcessor = processor
         Self.isAnyProcessing = true
+        let episodeTags = tags
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             // Throttle before the main-thread hop: the passes report per 4096-frame
@@ -424,9 +427,19 @@ class ProcessingModel: ObservableObject {
             DispatchQueue.main.async {
                 self?.isProcessing = false
                 switch outcome {
-                case .finished:
+                case .finished(let result):
                     self?.isDone = true
                     self?.markEpisodePlanProcessed(output: URL(fileURLWithPath: outputPath))
+                    // Keep a record (shared with the MCP server) that survives the MP3 being moved.
+                    if options.outputFormat == .mp3 {
+                        EpisodeHistory.record(EpisodeRecord(
+                            outputPath: outputPath, sourcePath: url.path,
+                            videoID: EpisodeHistory.videoID(fromSourcePath: url.path),
+                            title: episodeTags.title, reading: episodeTags.reading, preacher: episodeTags.preacher,
+                            series: episodeTags.series, date: episodeTags.date, trimIn: trimIn, trimOut: trimOut,
+                            chapters: result.chapters.map { .init(title: $0.title, time: $0.timeSeconds) },
+                            processedBy: "app"))
+                    }
                 case .failed:
                     self?.isDone = false
                     self?.outputURL = nil

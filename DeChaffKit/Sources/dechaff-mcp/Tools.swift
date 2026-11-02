@@ -8,10 +8,12 @@ import DeChaffCore
 struct DeChaffTools: Sendable {
     let jobs = JobStore()
     let transcripts = TranscriptStore()
+    let current = CurrentEpisode()
+    let analyses = AnalysisStore()
 
     var all: [MCPTool] {
         [getSettings, getArtwork, listChannelVideos, downloadAudio, analyzeAudio, transcribe, getTranscript,
-         searchTranscript, refineCuts, previewCut, openInDeChaff, getDeChaffPlan, processSermon, readTags,
+         searchTranscript, suggestTrim, refineCuts, previewCut, openInDeChaff, getDeChaffPlan, processSermon, readTags,
          writeTags, listEpisodes, revealInFinder, updateSettings, updateYtDlp, getJob, cancelJob]
     }
 
@@ -81,8 +83,8 @@ struct DeChaffTools: Sendable {
         MCPTool(name: "list_channel_videos", title: "List recent channel videos",
                 description: "Lists the latest videos on the church's YouTube channel (from DeChaff's settings, or the "
                     + "channel given), newest first, preferring the channel's livestreams. Each title gets a quick "
-                    + "parse into sermon fields using the church's title format; titles are typed by hand, so treat "
-                    + "it as a guess and read the raw title. download_audio extracts the fields more carefully.",
+                    + "parse into sermon fields (each with a confidence — check anything not \"high\" against the raw "
+                    + "title). download_audio extracts the fields more carefully. Pass a video_id to download_audio.",
                 inputSchema: Schema.object([
                     "channel": Schema.string("Channel URL or @handle. Defaults to the channel in DeChaff's settings."),
                     "limit": Schema.integer("How many videos (default: DeChaff's setting, usually 10)."),
@@ -107,9 +109,10 @@ struct DeChaffTools: Sendable {
                 "channel": .string(channel),
                 "videos": .array(videos.map { v in
                     var o: [String: JSONValue] = [
-                        "id": .string(v.id), "url": .string("https://youtu.be/\(v.id)"), "title": .string(v.title),
+                        "video_id": .string(v.id), "url": .string("https://youtu.be/\(v.id)"), "title": .string(v.title),
                         "upload_date": JSONValue(parseYouTubeUploadDate(v.uploadDate).map(isoDate)),
-                        "parsed": parsedJSON(v.title, format: settings.titleFormat),
+                        "parsed": titleFieldsJSON(v.title, format: settings.titleFormat, onDevice: nil),
+                        "downloaded": .bool(DownloadCache.file(forVideoID: v.id) != nil),
                     ]
                     if let d = v.durationSeconds { o["duration"] = .string(formatTime(Double(d))) }
                     return .object(o)
@@ -120,40 +123,70 @@ struct DeChaffTools: Sendable {
 
     var downloadAudio: MCPTool {
         MCPTool(name: "download_audio", title: "Download audio",
-                description: "Downloads the audio of a YouTube video (or any yt-dlp-supported URL) to a temporary file "
-                    + "and returns its path, plus the video title's sermon fields (extracted with on-device Apple "
-                    + "Intelligence when available, as the app does; \"method\" says which). Takes a minute or two "
-                    + "for a long livestream; returns a job_id to poll with get_job if it runs past wait_seconds.",
+                description: "Downloads the audio of a YouTube video (or any yt-dlp-supported URL) and makes it the "
+                    + "current episode, so later tools need no path. YouTube downloads are kept by video ID: asking "
+                    + "again returns the saved copy at once. Also returns the title's sermon fields, each with a "
+                    + "confidence (on-device Apple Intelligence checked against the title's layout and the church's "
+                    + "past series and preachers). Takes a minute or two for a long livestream; returns a job_id to "
+                    + "poll with get_job if it runs past wait_seconds.",
                 inputSchema: Schema.object([
                     "url": Schema.string("Video URL, e.g. https://youtu.be/abc123."),
+                    "video_id": Schema.string("A YouTube video ID from list_channel_videos, instead of url."),
+                    "force": Schema.boolean("Download again even if this video is already saved."),
                     "wait_seconds": Schema.waitSeconds,
-                ], required: ["url"]),
+                ]),
                 annotations: ["openWorldHint": true]) { raw, context in
             let args = Args(raw)
-            let url = try args.requiredString("url")
-            guard let client = YtDlpClient.installed else { throw Self.ytDlpMissing }
+            guard let given = args.string("url") ?? args.string("video_id") else {
+                throw ToolError("Give url or video_id.")
+            }
+            let videoID = youTubeVideoID(from: given)
+            let url = given.contains("/") ? given : "https://youtu.be/\(videoID ?? given)"
             let titleFormat = AppSettings().titleFormat
-            let job = jobs.running(kind: "download", summary: "Download \(url)")
-                ?? jobs.start(kind: "download", summary: "Download \(url)") { job in
+            let current = self.current
+
+            if let id = videoID, try args.bool("force") != true, let saved = DownloadCache.file(forVideoID: id) {
+                current.set(saved)
+                var o = downloadJSON(saved, videoID: id, info: DownloadInfo.load(id))
+                o["cached"] = true
+                if let info = DownloadInfo.load(id) {
+                    o["parsed"] = titleFieldsJSON(info.title, format: titleFormat, onDevice: nil)
+                }
+                return .json(.object(o))
+            }
+
+            guard let client = YtDlpClient.installed else { throw Self.ytDlpMissing }
+            let summary = "Download \(videoID ?? url)"
+            let job = jobs.running(kind: "download", summary: summary)
+                ?? jobs.start(kind: "download", summary: summary) { job in
                     async let info = try? client.fetchInfo(url: url)
-                    let file = try await client.downloadAudio(
+                    let downloaded = try await client.downloadAudio(
                         url: url,
                         onStart: { process in job.onCancel { process.terminate() } },
                         onLine: { line in
-                            if let p = YtDlpClient.parseProgress(line) { job.update(progress: p * 0.99) }
+                            if let p = YtDlpClient.parseProgress(line) {
+                                job.update(progress: p * 0.95, message: "Downloading")
+                            } else if ["[ExtractAudio]", "[Merger]", "[FixupM3u8]", "[ffmpeg]", "[VideoConvertor]"]
+                                        .contains(where: line.hasPrefix) {
+                                // After 100%, yt-dlp converts the download — minutes for a long livestream.
+                                job.update(progress: 0.96, message: "Converting the download to audio (yt-dlp "
+                                           + "post-processing; a long livestream takes a minute or two)")
+                            }
                         })
                     let entry = await info
-                    var o: [String: JSONValue] = [
-                        "path": .string(file.path),
-                        "duration": JSONValue(audioDuration(file).map(formatTime)),
-                        "duration_seconds": JSONValue(audioDuration(file)),
-                    ]
-                    if let entry {
-                        o["title"] = .string(entry.title)
-                        o["upload_date"] = JSONValue(parseYouTubeUploadDate(entry.uploadDate).map(isoDate))
-                        o["parsed"] = await extractedJSON(entry.title, format: titleFormat)
+                    let id = entry?.id ?? videoID
+                    var file = downloaded
+                    if let id, isYouTubeVideoID(id) {
+                        file = try DownloadCache.store(downloaded, videoID: id)
+                        if let entry { DownloadInfo(title: entry.title, uploadDate: entry.uploadDate).save(id) }
                     }
-                    o["next_step"] = "Run analyze_audio and transcribe on this path to plan the trim."
+                    current.set(file)
+                    var o = downloadJSON(file, videoID: id, info: entry.map { DownloadInfo(title: $0.title, uploadDate: $0.uploadDate) })
+                    if let entry {
+                        o["parsed"] = titleFieldsJSON(entry.title, format: titleFormat,
+                            onDevice: await extractSermonMetadataOnDevice(from: entry.title, titleFormat: titleFormat))
+                    }
+                    o["next_step"] = "Run transcribe and analyze_audio (no path needed — this is now the current episode), then suggest_trim."
                     return .object(o)
                 }
             return .json(try await jobs.wait(for: job, upTo: try args.double("wait_seconds") ?? 40, context: context))
@@ -165,16 +198,18 @@ struct DeChaffTools: Sendable {
     var analyzeAudio: MCPTool {
         MCPTool(name: "analyze_audio", title: "Analyse audio",
                 description: "Surveys a recording: duration, integrated loudness (LUFS), music segments (worship, "
-                    + "intros — usually what gets trimmed) and long silences. Times are on the source timeline.",
+                    + "intros — usually what gets trimmed; merged, and only those of 10 s or more) and long silences. "
+                    + "Times are on the source timeline. suggest_trim reuses the result.",
                 inputSchema: Schema.object([
                     "path": Schema.path,
+                    "video_id": Schema.videoID,
                     "detect_music": Schema.boolean("Classify music segments (default true; adds ~10–20 s)."),
                     "min_silence_seconds": Schema.number("Only report silences at least this long (default 2)."),
                     "wait_seconds": Schema.waitSeconds,
-                ], required: ["path"]),
+                ]),
                 annotations: Self.readOnly) { raw, context in
             let args = Args(raw)
-            let url = try args.existingFile("path")
+            let url = try current.resolve(args)
             let detectMusic = try args.bool("detect_music") ?? true
             let minSilence = try args.double("min_silence_seconds") ?? 2
             let job = jobs.start(kind: "analyze", summary: "Analyse \(url.lastPathComponent)") { job in
@@ -187,6 +222,7 @@ struct DeChaffTools: Sendable {
                 guard let a = analysis else {
                     throw ToolError(job.log.last ?? "Could not read \(url.lastPathComponent).")
                 }
+                analyses.set(a, for: url)
                 let span = { (s: Double, e: Double) -> JSONValue in
                     ["start": .string(formatTime(s)), "end": .string(formatTime(e)),
                      "start_seconds": rounded(s), "end_seconds": rounded(e), "duration_seconds": rounded(e - s, 1)]
@@ -215,12 +251,13 @@ struct DeChaffTools: Sendable {
                     + "audio takes a few minutes — returns a job_id to poll with get_job if it runs past wait_seconds.",
                 inputSchema: Schema.object([
                     "path": Schema.path,
+                    "video_id": Schema.videoID,
                     "force": Schema.boolean("Transcribe again even if a cached transcript exists."),
                     "wait_seconds": Schema.waitSeconds,
-                ], required: ["path"]),
+                ]),
                 annotations: Self.readOnly) { raw, context in
             let args = Args(raw)
-            let url = try args.existingFile("path")
+            let url = try current.resolve(args)
             if try args.bool("force") != true, let words = await transcripts.words(for: url) {
                 return .json(transcriptSummary(words, cached: true))
             }
@@ -242,17 +279,21 @@ struct DeChaffTools: Sendable {
                 description: "Returns the transcript (run transcribe first) as lines of \"[time] #word_index text\", "
                     + "one sentence per line, on the source timeline. Use start/end to read a window; long ranges are "
                     + "truncated with a note saying where to continue. format \"words\" lists every word with its "
-                    + "start–end time — use it on a short window to inspect a boundary.",
+                    + "start–end time — use it on a short window to inspect a boundary. format \"text\" is plain "
+                    + "paragraphs with no times or indexes — about half the size; use it to read the sermon for "
+                    + "website copy or a description.",
                 inputSchema: Schema.object([
                     "path": Schema.path,
+                    "video_id": Schema.videoID,
                     "start": ["type": ["number", "string"], "description": "Window start (seconds or \"mm:ss\")."],
                     "end": ["type": ["number", "string"], "description": "Window end (seconds or \"mm:ss\")."],
-                    "format": Schema.string("\"sentences\" (default) or \"words\".", enum: ["sentences", "words"]),
+                    "format": Schema.string("\"sentences\" (default), \"words\" or \"text\".",
+                                            enum: ["sentences", "words", "text"]),
                     "max_chars": Schema.integer("Truncate output after this many characters (default 40000)."),
-                ], required: ["path"]),
+                ]),
                 annotations: Self.readOnly) { raw, _ in
             let args = Args(raw)
-            let url = try args.existingFile("path")
+            let url = try current.resolve(args)
             let words = try await requireTranscript(url)
             let start = try args.double("start") ?? 0
             let end = try args.double("end") ?? .infinity
@@ -265,7 +306,19 @@ struct DeChaffTools: Sendable {
             var lines: [String] = []
             var chars = 0
             var truncatedAt: Double?
-            if args.string("format") == "words" {
+            if args.string("format") == "text" {
+                // Paragraphs break at pauses of 2 s or more; no times or indexes.
+                var paragraphStart = first
+                for i in first...(last + 1) {
+                    let ends = i > last || (i > first && words[i].startTime - words[i - 1].endTime >= 2)
+                    guard ends, i > paragraphStart else { continue }
+                    let line = words[paragraphStart..<i].map(\.text).joined(separator: " ")
+                    if chars + line.count > maxChars { truncatedAt = words[paragraphStart].startTime; break }
+                    lines.append(line); chars += line.count + 2
+                    paragraphStart = i
+                }
+                lines = [lines.joined(separator: "\n\n")]
+            } else if args.string("format") == "words" {
                 for i in first...last {
                     let w = words[i]
                     let line = "#\(i) \(formatTime(w.startTime))–\(formatTime(w.endTime)) \(w.text)"
@@ -294,12 +347,13 @@ struct DeChaffTools: Sendable {
                     + "\"our reading today\". Returns each match's time and word_index with surrounding context.",
                 inputSchema: Schema.object([
                     "path": Schema.path,
+                    "video_id": Schema.videoID,
                     "query": Schema.string("Words to find."),
                     "max_results": Schema.integer("Default 20."),
-                ], required: ["path", "query"]),
+                ], required: ["query"]),
                 annotations: Self.readOnly) { raw, _ in
             let args = Args(raw)
-            let url = try args.existingFile("path")
+            let url = try current.resolve(args)
             let words = try await requireTranscript(url)
             let query = try args.requiredString("query").split(whereSeparator: \.isWhitespace).map { normalizeWord(String($0)) }
                 .filter { !$0.isEmpty }
@@ -327,6 +381,50 @@ struct DeChaffTools: Sendable {
         }
     }
 
+    // MARK: - Planning the trim
+
+    var suggestTrim: MCPTool {
+        MCPTool(name: "suggest_trim", title: "Suggest trim and chapters",
+                description: "Proposes where the episode starts and ends, and where the Bible reading and sermon begin, "
+                    + "following the church's house style (get_settings → house_style). It looks for spoken cues — "
+                    + "the reader being handed over to (\"…come up and read\"), the reading's end (\"This is the word "
+                    + "of the Lord\"), the preacher picking up (\"Thanks so much\"), prayers and their \"Amen\", the "
+                    + "closing song being introduced (\"invite you to stand and sing\") — and at music from "
+                    + "analyze_audio. Each point comes with a confidence and the words around it; read a get_transcript "
+                    + "window around any that isn't high, then check the cuts with refine_cuts. Needs a transcript; runs "
+                    + "music detection if analyze_audio hasn't.",
+                inputSchema: Schema.object([
+                    "path": Schema.path,
+                    "video_id": Schema.videoID,
+                    "detect_music": Schema.boolean("Use music segments too (default true; analyses the audio if needed)."),
+                    "wait_seconds": Schema.waitSeconds,
+                ]),
+                annotations: Self.readOnly) { raw, context in
+            let args = Args(raw)
+            let url = try current.resolve(args)
+            let words = try await requireTranscript(url)
+            let style = AppSettings().houseStyle
+            if try args.bool("detect_music") == false {
+                return .json(trimSuggestionJSON(words, analysis: nil, style: style))
+            }
+            if let analysis = analyses.get(url) {
+                return .json(trimSuggestionJSON(words, analysis: analysis, style: style))
+            }
+            let analyses = self.analyses
+            let job = jobs.start(kind: "suggest", summary: "Suggest a trim for \(url.lastPathComponent)") { job in
+                let analyzer = AudioAnalyzer()
+                job.onCancel { analyzer.cancel() }
+                job.update(progress: 0, message: "Finding music to place the trim")
+                let analysis = await runBlocking({
+                    analyzer.analyze(url: url, progress: { job.update(progress: $0) }, log: { job.appendLog($0) })
+                }, onCancel: { analyzer.cancel() })
+                if let analysis { analyses.set(analysis, for: url) }
+                return trimSuggestionJSON(words, analysis: analysis, style: style)
+            }
+            return .json(try await jobs.wait(for: job, upTo: try args.double("wait_seconds") ?? 40, context: context))
+        }
+    }
+
     // MARK: - Cut points
 
     var refineCuts: MCPTool {
@@ -341,16 +439,17 @@ struct DeChaffTools: Sendable {
                     + "same refinement automatically; use this tool to preview and check the cuts first.",
                 inputSchema: Schema.object([
                     "path": Schema.path,
+                    "video_id": Schema.videoID,
                     "trim_start": Schema.cutPoint("First word to keep."),
                     "trim_end": Schema.cutPoint("Last word to keep."),
                     "chapters": Schema.array(Schema.object([
                         "at": Schema.cutPoint("First word of the chapter."),
                         "title": Schema.string("Chapter title."),
                     ], required: ["at", "title"]), "Chapter starts to snap to the speech that begins them."),
-                ], required: ["path"]),
+                ]),
                 annotations: Self.readOnly) { raw, _ in
             let args = Args(raw)
-            let url = try args.existingFile("path")
+            let url = try current.resolve(args)
             let words = await transcripts.words(for: url) ?? []
             let refiner = CutPointRefiner()
             var o: [String: JSONValue] = ["transcript_available": .bool(!words.isEmpty)]
@@ -512,6 +611,14 @@ struct DeChaffTools: Sendable {
                     if remember {
                         AppSettings().rememberLastUsed(preacher: finalTags.preacher, series: finalTags.series,
                                                        artwork: finalTags.artwork)
+                        EpisodeHistory.record(EpisodeRecord(
+                            outputPath: result.outputURL.path, sourcePath: request.inputURL.path,
+                            videoID: EpisodeHistory.videoID(fromSourcePath: request.inputURL.path),
+                            title: finalTags.title, reading: finalTags.reading, preacher: finalTags.preacher,
+                            series: finalTags.series, date: finalTags.date,
+                            trimIn: options.trimInSeconds, trimOut: options.trimOutSeconds,
+                            chapters: result.chapters.map { .init(title: $0.title, time: $0.timeSeconds) },
+                            processedBy: "assistant"))
                     }
                     let size = (try? FileManager.default.attributesOfItem(atPath: result.outputURL.path)[.size] as? NSNumber)?
                         .doubleValue ?? 0
@@ -571,11 +678,13 @@ struct DeChaffTools: Sendable {
 
     var listEpisodes: MCPTool {
         MCPTool(name: "list_episodes", title: "List past episodes",
-                description: "Lists recent finished episodes (tagged MP3s, newest first) with their title, preacher, "
-                    + "series, chapters and whether they use the saved artwork. Use it to match last week: the same "
-                    + "spelling of the series, the same chapter style, and to notice when the series has changed.",
+                description: "Lists recent finished episodes, newest first, with title, reading, preacher, series, "
+                    + "chapters and trim. Episodes processed since DeChaff started keeping a history (in the app or here) "
+                    + "are found even after the MP3 is moved (moved files are tracked down by name); older ones are found by "
+                    + "scanning a folder and its subfolders. Use it to match last week: the series' spelling, the "
+                    + "chapter style, and whether the series (and so the artwork) has changed.",
                 inputSchema: Schema.object([
-                    "folder": Schema.string("Folder to look in (default ~/Downloads, where YouTube episodes are saved)."),
+                    "folder": Schema.string("Folder to scan for older episodes, subfolders included (default ~/Downloads)."),
                     "limit": Schema.integer("How many episodes (default 8)."),
                 ]),
                 annotations: Self.readOnly) { raw, _ in
@@ -583,31 +692,59 @@ struct DeChaffTools: Sendable {
             let folder = expandPath(args.string("folder") ?? "~/Downloads")
             let limit = min(max(try args.int("limit") ?? 8, 1), 50)
             let saved = AppSettings().artwork
-            let files = ((try? FileManager.default.contentsOfDirectory(
-                at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [])
-                .filter { $0.pathExtension.lowercased() == "mp3" }
-                .map { ($0, (try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast) }
-                .sorted { $0.1 > $1.1 }
-            var episodes: [JSONValue] = []
-            for (url, modified) in files where episodes.count < limit {
-                guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateFormat = "yyyy-MM-dd"
+
+            func artworkNote(_ path: String?) -> JSONValue {
+                guard let path, let data = try? Data(contentsOf: URL(fileURLWithPath: path), options: .mappedIfSafe),
+                      let tag = ID3Tag.read(data) else { return .null }
+                return tag.artwork == nil ? "none"
+                    : .string(tag.artwork == saved ? "same as DeChaff's saved artwork" : "different from the saved artwork")
+            }
+
+            var episodes: [(date: Date, json: JSONValue)] = []
+            var listed = Set<String>()
+            for record in EpisodeHistory.load().prefix(limit) {
+                let found = locateEpisode(record.outputPath, near: folder)
+                var o: [String: JSONValue] = [
+                    "path": JSONValue(found),
+                    "processed": .string(ISO8601DateFormatter().string(from: record.processedAt)),
+                    "processed_by": .string(record.processedBy),
+                    "title": .string(record.title), "reading": .string(record.reading),
+                    "preacher": .string(record.preacher), "series": .string(record.series),
+                    "date": .string(dateFormatter.string(from: record.date)),
+                    "trim": ["start": .string(formatTime(record.trimIn)), "end": .string(formatTime(record.trimOut))],
+                    "chapters": .array(record.chapters.map { ["title": .string($0.title), "start": .string(formatTime($0.time))] }),
+                    "artwork": artworkNote(found),
+                ]
+                if let id = record.videoID { o["video_id"] = .string(id) }
+                if found == nil { o["missing"] = .string("Not found — it was at \(record.outputPath)") }
+                else if found != record.outputPath { o["moved_from"] = .string(record.outputPath) }
+                listed.insert(record.outputPath); if let found { listed.insert(found) }
+                episodes.append((record.processedAt, .object(o)))
+            }
+
+            // Older episodes from before the history: tagged MP3s in the folder and its subfolders.
+            for (url, modified) in mp3Files(under: folder, maxDepth: 3) where !listed.contains(url.path) {
+                guard episodes.count < limit * 2,
+                      let data = try? Data(contentsOf: url, options: .mappedIfSafe),
                       let tag = ID3Tag.read(data), let title = tag.text["TIT2"], !title.isEmpty else { continue }
-                episodes.append([
+                episodes.append((modified, [
                     "path": .string(url.path),
                     "modified": .string(ISO8601DateFormatter().string(from: modified)),
                     "title": .string(title),
                     "preacher": JSONValue(tag.text["TPE1"]),
                     "series": JSONValue(tag.text["TALB"]),
                     "year": JSONValue(tag.text["TYER"] ?? tag.text["TDRC"]),
-                    "duration": JSONValue(audioDuration(url).map(formatTime)),
                     "chapters": .array(tag.chapters.map {
                         ["title": .string($0.title), "start": .string(formatTime($0.startSeconds))]
                     }),
                     "artwork": tag.artwork == nil ? "none"
                         : .string(tag.artwork == saved ? "same as DeChaff's saved artwork" : "different from the saved artwork"),
-                ])
+                ]))
             }
-            return .json(["folder": .string(folder.path), "episodes": .array(episodes)])
+            let newest = episodes.sorted { $0.date > $1.date }.prefix(limit).map(\.json)
+            return .json(["scanned_folder": .string(folder.path), "episodes": .array(Array(newest))])
         }
     }
 
@@ -621,16 +758,17 @@ struct DeChaffTools: Sendable {
                     + "into silence first, as process_sermon would, unless refine is false.",
                 inputSchema: Schema.object([
                     "path": Schema.path,
+                    "video_id": Schema.videoID,
                     "at": Schema.cutPoint("The trim or chapter point to hear."),
                     "edge": Schema.string("start: hear the episode begin; end: hear it finish; chapter: hear "
                         + "either side of a chapter point (default chapter).", enum: ["start", "end", "chapter"]),
                     "seconds": Schema.number("Length of the preview (default 10)."),
                     "refine": Schema.boolean("Snap the point into silence first (default true)."),
                     "play": Schema.boolean("Open the preview in the default audio app (default true)."),
-                ], required: ["path", "at"]),
+                ], required: ["at"]),
                 annotations: ["destructiveHint": false, "openWorldHint": false]) { raw, _ in
             let args = Args(raw)
-            let url = try args.existingFile("path")
+            let url = try current.resolve(args)
             let settings = AppSettings()
             let edge = args.string("edge") ?? "chapter"
             let seconds = min(max(try args.double("seconds") ?? 10, 2), 60)
@@ -722,6 +860,14 @@ struct DeChaffTools: Sendable {
                     + "church_instructions to record how the user likes episodes made. Confirm with the user first.",
                 inputSchema: Schema.object([
                     "church_instructions": Schema.string("Replaces the church's instructions for the assistant."),
+                    "trim_start": Schema.string("House style — where episodes start: sermon (after the Bible reading) "
+                        + "or reading (include it).", enum: HouseStyle.TrimStart.allCases.map(\.rawValue)),
+                    "trim_end": Schema.string("House style — where episodes end: amen (the closing prayer's Amen) or "
+                        + "song_intro (just before the closing song is introduced).",
+                        enum: HouseStyle.TrimEnd.allCases.map(\.rawValue)),
+                    "chapter_titles": Schema.string("House style — chapter titles, one per line, in order, using "
+                        + "{title} {reading} {series} {preacher}; a line {points} means one chapter per sermon point. "
+                        + "e.g. \"Bible Reading: {reading}\\nSermon: {title}\". Empty string: the assistant chooses."),
                     "title_format": Schema.string("How the church's YouTube titles are laid out, e.g. "
                         + "\"{title}, {reading} | {preacher} | {series} | {date}\"."),
                     "filename_template": Schema.string("How finished episodes are named, using {date} {title} {reading} "
@@ -759,6 +905,19 @@ struct DeChaffTools: Sendable {
             if let v = args.string("church_instructions") {
                 d.set(v, forKey: "dechaff.mcp.instructions"); changed.append("church_instructions")
             }
+            var style = settings.houseStyle
+            if let v = args.string("trim_start") {
+                guard let value = HouseStyle.TrimStart(rawValue: v) else { throw ToolError("trim_start must be sermon or reading.") }
+                style.trimStart = value; changed.append("trim_start")
+            }
+            if let v = args.string("trim_end") {
+                guard let value = HouseStyle.TrimEnd(rawValue: v) else { throw ToolError("trim_end must be amen or song_intro.") }
+                style.trimEnd = value; changed.append("trim_end")
+            }
+            if let v = args["chapter_titles"]?.stringValue {  // "" clears it
+                style.chapterTitles = v; changed.append("chapter_titles")
+            }
+            if style != settings.houseStyle { style.save(to: d) }
             if let v = args.string("default_preacher") { d.set(v, forKey: "dechaff.preacher"); changed.append("default_preacher") }
             if let v = args.string("default_series") { d.set(v, forKey: "dechaff.series"); changed.append("default_series") }
             if let path = args.string("artwork_path") {
@@ -803,7 +962,7 @@ struct DeChaffTools: Sendable {
                 inputSchema: Schema.object(Self.episodeSchema.merging([
                     "step": Schema.string("Which step to open on (default chapters).",
                                           enum: ["trim", "info", "chapters", "output"]),
-                ]) { a, _ in a }, required: ["path"]),
+                ]) { a, _ in a }),
                 annotations: ["destructiveHint": false, "openWorldHint": false]) { raw, _ in
             let args = Args(raw)
             let episode = try await parseEpisode(args, settings: AppSettings())
@@ -860,6 +1019,7 @@ struct DeChaffTools: Sendable {
     /// process_sermon processes.
     static let episodeSchema: [String: JSONValue] = [
         "path": Schema.path,
+        "video_id": Schema.videoID,
         "trim_start": Schema.cutPoint("First word to keep. Omit to start at the beginning."),
         "trim_end": Schema.cutPoint("Last word to keep. Omit to keep to the end."),
         "refine": Schema.boolean("Snap trim and chapter points into silence (default true)."),
@@ -905,7 +1065,7 @@ struct DeChaffTools: Sendable {
                 tags: tags, warnings: [], cutReports: [:])
         }
 
-        let url = try args.existingFile("path")
+        let url = try current.resolve(args)
         let words = await transcripts.words(for: url) ?? []
         let refine = try args.bool("refine") ?? true
         let refiner = CutPointRefiner()
@@ -989,7 +1149,7 @@ struct DeChaffTools: Sendable {
         MCPTool(name: "read_tags", title: "Read ID3 tags",
                 description: "Reads an MP3's ID3 tags: title, artist, album, year, artwork and chapter markers. "
                     + "Use it to check a finished episode.",
-                inputSchema: Schema.object(["path": Schema.path], required: ["path"]),
+                inputSchema: Schema.object(["path": Schema.string("Absolute path to the MP3.")], required: ["path"]),
                 annotations: Self.readOnly) { raw, _ in
             let url = try Args(raw).existingFile("path")
             let data = try Data(contentsOf: url, options: .mappedIfSafe)
@@ -1164,36 +1324,114 @@ private func websiteCopyJSON(template: String, tags: SermonTags, trimIn: Double,
                                                             : String(format: "%d:%02d", m, sec))
     return [
         "instructions": .string("Finish by following this prompt from DeChaff's AI Assistant settings exactly. Its input is "
-            + "the transcript of the episode — read all of it with get_transcript from \(formatTime(trimIn)) to "
-            + "\(formatTime(trimOut)), continuing where it says it was truncated. Give the user the result "
-            + "verbatim, in the format the prompt asks for, with nothing added before or after it."),
+            + "the transcript of the episode — read it with get_transcript format \"text\" (plain paragraphs, no "
+            + "times) from \(formatTime(trimIn)) to \(formatTime(trimOut)), continuing if it says it was truncated. "
+            + "Report the finished file first, then give the prompt's result as its own block, exactly in the "
+            + "format the prompt asks for, with nothing of yours mixed into that block."),
+        "transcript_range": ["start": timeJSON(trimIn), "end": timeJSON(trimOut)],
         "prompt": .string(prompt),
     ]
 }
 
-/// Quick template parse — cheap enough for every title in a listing, but literal
-/// about separators, so a hand-typed title that strays from the format misparses.
-private func parsedJSON(_ title: String, format: String) -> JSONValue {
-    guard let m = extractSermonMetadataViaTemplate(from: title, format: format) else { return .null }
-    return metadataJSON(m, method: "template")
-}
-
-/// Sermon fields as the app extracts them: on-device Apple Intelligence (guided by the
-/// title format) when available, else the template parse.
-private func extractedJSON(_ title: String, format: String) async -> JSONValue {
-    if let m = await extractSermonMetadataOnDevice(from: title, titleFormat: format) {
-        return metadataJSON(m, method: "apple_intelligence")
-    }
-    return parsedJSON(title, format: format)
-}
-
-private func metadataJSON(_ m: SermonMetadata, method: String) -> JSONValue {
-    [
-        "title": .string(m.title), "reading": .string(m.bibleReading),
-        "preacher": .string(m.speaker), "series": .string(m.series),
-        "date": .string(parseExtractedDate(m.date).map(isoDate) ?? m.date),
-        "method": .string(method),
+/// A finished download as the assistant sees it.
+private func downloadJSON(_ file: URL, videoID: String?, info: DownloadInfo?) -> [String: JSONValue] {
+    var o: [String: JSONValue] = [
+        "path": .string(file.path),
+        "video_id": JSONValue(videoID),
+        "duration": JSONValue(audioDuration(file).map(formatTime)),
+        "duration_seconds": JSONValue(audioDuration(file)),
     ]
+    if let info {
+        o["title"] = .string(info.title)
+        o["upload_date"] = JSONValue(parseYouTubeUploadDate(info.uploadDate).map(isoDate))
+    }
+    return o
+}
+
+/// A video's title and date, saved beside its cached download so a later session can
+/// show them without asking YouTube again.
+struct DownloadInfo: Codable {
+    var title: String
+    var uploadDate: String
+
+    private static func url(_ id: String) -> URL { DownloadCache.directory.appendingPathComponent("info-\(id).json") }
+
+    static func load(_ id: String) -> DownloadInfo? {
+        (try? Data(contentsOf: url(id))).flatMap { try? JSONDecoder().decode(DownloadInfo.self, from: $0) }
+    }
+
+    func save(_ id: String) {
+        try? JSONEncoder().encode(self).write(to: Self.url(id), options: .atomic)
+    }
+}
+
+/// Series and preachers the church has used, most recent first — from the app's last-used
+/// values and the episode history — for recognising them in hand-typed titles.
+private func knownNames() -> (series: [String], preachers: [String]) {
+    let settings = AppSettings()
+    let history = EpisodeHistory.load()
+    func dedupe(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        return values.filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
+    }
+    return (dedupe([settings.lastSeries] + EpisodeHistory.recentValues(history, \.series)),
+            dedupe([settings.lastPreacher] + EpisodeHistory.recentValues(history, \.preacher)))
+}
+
+/// Sermon fields from a video title, each with a confidence. The strict template parse is
+/// trusted when it matches cleanly; otherwise on-device AI (when given); either way each
+/// field is checked against a parse by shape (`guessSermonFields`), which also fills gaps
+/// such as a series missing from the title. Fields below "high" are listed under "check".
+private func titleFieldsJSON(_ title: String, format: String, onDevice: SermonMetadata?) -> JSONValue {
+    let known = knownNames()
+    let guess = guessSermonFields(title, knownSeries: known.series, knownPreachers: known.preachers)
+    let template = extractSermonMetadataViaTemplate(from: title, format: format)
+    let templateClean = template.map { m in
+        ![m.title, m.bibleReading, m.speaker, m.series, m.date].contains { $0.contains("|") }
+    } ?? false
+
+    var base: SermonMetadata? = nil
+    var baseConfidence = FieldConfidence.low
+    var method = "title_layout"
+    if templateClean, let template {
+        base = template; baseConfidence = .high; method = "template"
+    } else if let onDevice {
+        base = onDevice; baseConfidence = .medium; method = "apple_intelligence"
+    }
+
+    var values: [String: JSONValue] = ["method": .string(method)]
+    var confidence: [String: JSONValue] = [:]
+    var notes: [String: JSONValue] = [:]
+    var check: [JSONValue] = []
+    let fields: [(String, String?, GuessedSermonFields.Field)] = [
+        ("title", base?.title, guess.title), ("reading", base?.bibleReading, guess.reading),
+        ("preacher", base?.speaker, guess.preacher), ("series", base?.series, guess.series),
+        ("date", base?.date, guess.date),
+    ]
+    for (name, baseValue, guessed) in fields {
+        let b = (baseValue ?? "").trimmingCharacters(in: .whitespaces)
+        var value = b, conf = baseConfidence, note: String? = nil
+        let agrees = !b.isEmpty && b.compare(guessed.value, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+        if b.isEmpty || b.contains("|") {
+            // The model missed it or ran fields together: take the reading by shape.
+            (value, conf, note) = (guessed.value, guessed.confidence, guessed.note)
+        } else if agrees {
+            conf = .high
+        } else if guessed.confidence == .high && (name == "reading" || name == "date") {
+            // A recognised Bible reference or date beats a free-text guess.
+            (value, conf, note) = (guessed.value, .high, "the title has \"\(guessed.value)\"; the parse said \"\(b)\"")
+        }
+        if name == "date", let d = parseExtractedDate(value) { value = isoDate(d) }
+        values[name] = .string(value)
+        confidence[name] = .string(value.isEmpty ? "none" : conf.rawValue)
+        if let note { notes[name] = .string(note) }
+        if value.isEmpty || conf < .high { check.append(.string(name)) }
+    }
+    values["confidence"] = .object(confidence)
+    if !notes.isEmpty { values["notes"] = .object(notes) }
+    if !guess.unused.isEmpty { values["unused_parts"] = .array(guess.unused.map { .string($0) }) }
+    values["check"] = .array(check)
+    return .object(values)
 }
 
 private func audioDuration(_ url: URL) -> Double? {
@@ -1233,4 +1471,112 @@ private func sentences(_ words: [TranscriptWord], _ range: ClosedRange<Int>) -> 
         }
     }
     return result
+}
+
+// MARK: - Trim suggestions
+
+private func trimSuggestionJSON(_ words: [TranscriptWord], analysis: AudioAnalysis?, style: HouseStyle) -> JSONValue {
+    let s = suggestTrim(words: words, music: analysis?.musicSegments ?? [], style: style)
+
+    /// A point with the words either side, the point's own word in [[ ]].
+    func pointJSON(_ p: TrimSuggestion.Point?) -> JSONValue {
+        guard let p else { return .null }
+        let i = p.wordIndex
+        let before = words[max(0, i - 10)..<i].map(\.text).joined(separator: " ")
+        let after = words[min(words.count, i + 1)..<min(words.count, i + 11)].map(\.text).joined(separator: " ")
+        return [
+            "word_index": .number(Double(i)), "time": .string(formatTime(p.time)),
+            "confidence": .string(p.confidence.rawValue), "reason": .string(p.reason),
+            "context": .string("… \(before) [[\(words[i].text)]] \(after) …"),
+        ]
+    }
+
+    var chapters: [JSONValue] = []
+    for (n, line) in style.chapterLines.enumerated() {
+        let lower = line.lowercased()
+        var at: TrimSuggestion.Point? = nil
+        if line == "{points}" {
+            chapters.append(["title": "One chapter per main point", "at": .string("choose from the sermon's structure")])
+            continue
+        } else if lower.contains("reading") {
+            at = s.readingStart
+        } else if lower.contains("sermon") || lower.contains("{title}") {
+            at = s.sermonStart
+        } else if n == 0 {
+            at = s.trimStart
+        }
+        chapters.append(["title_template": .string(line),
+                         "at": at.map { JSONValue.number(Double($0.wordIndex)) } ?? "choose from the transcript"])
+    }
+
+    // Everything found, minus the many incidental "Amen"s — only those near the end matter.
+    let endTime = s.trimEnd?.time ?? .infinity
+    let landmarks = s.landmarks.filter { $0.kind != .amen || abs($0.time - endTime) < 300 }.prefix(80)
+
+    var notes = s.notes.map { JSONValue.string($0) }
+    if analysis == nil { notes.append("No music detection — the end was placed from spoken cues alone.") }
+    return [
+        "house_style": houseStyleJSON(style),
+        "trim_start": pointJSON(s.trimStart),
+        "trim_end": pointJSON(s.trimEnd),
+        "reading_start": pointJSON(s.readingStart),
+        "sermon_start": pointJSON(s.sermonStart),
+        "chapters": .array(chapters),
+        "music_segments": .array((analysis?.musicSegments ?? []).map {
+            ["start": .string(formatTime($0.startSeconds)), "end": .string(formatTime($0.endSeconds))]
+        }),
+        "landmarks": .array(landmarks.map {
+            ["kind": .string($0.kind.rawValue), "word_index": .number(Double($0.wordIndex)),
+             "time": .string(formatTime($0.time)), "phrase": .string($0.phrase)]
+        }),
+        "notes": .array(notes),
+        "next_step": .string("Check each point's context (get_transcript around any that isn't high confidence), then "
+            + "refine_cuts with trim_start, trim_end and the chapters."),
+    ]
+}
+
+func houseStyleJSON(_ style: HouseStyle) -> JSONValue {
+    [
+        "trim_start": .string(style.trimStart.rawValue),
+        "trim_end": .string(style.trimEnd.rawValue),
+        "chapter_titles": .array(style.chapterLines.map { .string($0) }),
+        "guidance": .string(style.guidance),
+    ]
+}
+
+// MARK: - Finding episode files
+
+/// MP3s under `folder` (subfolders to `maxDepth`), newest first. Skips hidden folders and packages.
+private func mp3Files(under folder: URL, maxDepth: Int) -> [(URL, Date)] {
+    guard let e = FileManager.default.enumerator(
+        at: folder, includingPropertiesForKeys: [.contentModificationDateKey, .isDirectoryKey],
+        options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return [] }
+    var found: [(URL, Date)] = []
+    var scanned = 0
+    for case let url as URL in e {
+        scanned += 1
+        if scanned > 20_000 { break }  // a huge Downloads folder shouldn't stall the tool
+        if e.level > maxDepth { e.skipDescendants(); continue }
+        guard url.pathExtension.lowercased() == "mp3" else { continue }
+        let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+        found.append((url, modified))
+    }
+    return found.sorted { $0.1 > $1.1 }
+}
+
+/// Where a recorded episode is now: its saved path, or a file of the same name in the scanned
+/// folder, ~/Music, ~/Desktop or ~/Documents (searched a few levels deep).
+private func locateEpisode(_ path: String, near folder: URL) -> String? {
+    if FileManager.default.fileExists(atPath: path) { return path }
+    let name = URL(fileURLWithPath: path).lastPathComponent
+    let home = FileManager.default.homeDirectoryForCurrentUser
+    let places = [folder, home.appendingPathComponent("Downloads"), home.appendingPathComponent("Music"),
+                  home.appendingPathComponent("Desktop"), home.appendingPathComponent("Documents")]
+    var seen = Set<String>()
+    for place in places where seen.insert(place.path).inserted {
+        if let hit = mp3Files(under: place, maxDepth: 4).first(where: { $0.0.lastPathComponent == name }) {
+            return hit.0.path
+        }
+    }
+    return nil
 }

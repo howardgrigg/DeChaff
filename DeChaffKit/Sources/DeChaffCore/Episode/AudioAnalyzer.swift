@@ -9,7 +9,8 @@ public struct AudioAnalysis: Sendable {
     public let integratedLUFS: Double?
     /// Spans below −40 dBFS lasting at least the requested minimum.
     public let silences: [SilenceSegment]
-    /// Stretches classified as music (worship, intros) — likely trim candidates.
+    /// Stretches classified as music (worship, intros) — likely trim candidates. Merged and
+    /// filtered with `consolidateMusicSegments`, so fragments in speech are left out.
     public let musicSegments: [MusicSegment]
 }
 
@@ -22,7 +23,7 @@ public final class AudioAnalyzer: @unchecked Sendable {
 
     public func cancel() { processor.cancel() }
 
-    public func analyze(url: URL, detectMusic: Bool = true, minSilence: Double = 2.0,
+    public func analyze(url: URL, detectMusic: Bool = true, minSilence: Double = 2.0, minMusic: Double = 10,
                         progress: @escaping (Double) -> Void = { _ in },
                         log: @escaping (String) -> Void = { _ in }) -> AudioAnalysis? {
         processor.progressHandler = progress
@@ -50,6 +51,6 @@ public final class AudioAnalyzer: @unchecked Sendable {
 
         return AudioAnalysis(duration: duration, sampleRate: format.sampleRate,
                              channels: Int(format.channelCount), integratedLUFS: lufs,
-                             silences: silences, musicSegments: music)
+                             silences: silences, musicSegments: consolidateMusicSegments(music, minDuration: minMusic))
     }
 }

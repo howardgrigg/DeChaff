@@ -142,3 +142,20 @@ public func remapChapterTime(_ timeSeconds: Double, using segments: [SilenceSegm
     }
     return max(0, timeSeconds - removedBefore)
 }
+
+/// Tidies music detection for planning a trim: joins segments separated by short gaps (a
+/// quiet bar mid-song) and drops what's still shorter than `minDuration` — the stray few
+/// seconds the classifier flags in speech, a laugh or applause.
+public func consolidateMusicSegments(_ segments: [MusicSegment], minDuration: Double = 10,
+                                     maxGap: Double = 4) -> [MusicSegment] {
+    var merged: [MusicSegment] = []
+    for seg in segments.sorted(by: { $0.startSeconds < $1.startSeconds }) {
+        if let last = merged.last, seg.startSeconds - last.endSeconds <= maxGap {
+            merged[merged.count - 1] = MusicSegment(startSeconds: last.startSeconds,
+                                                    endSeconds: max(last.endSeconds, seg.endSeconds))
+        } else {
+            merged.append(seg)
+        }
+    }
+    return merged.filter { $0.endSeconds - $0.startSeconds >= minDuration }
+}

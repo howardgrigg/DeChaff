@@ -702,6 +702,9 @@ struct TemplatesSettingsView: View {
 struct MCPSettingsView: View {
     @AppStorage("dechaff.mcp.serverPath") private var serverPath = ""
     @AppStorage("dechaff.mcp.instructions") private var assistantInstructions = ""
+    @AppStorage(HouseStyle.trimStartKey) private var styleTrimStart: HouseStyle.TrimStart = .sermon
+    @AppStorage(HouseStyle.trimEndKey) private var styleTrimEnd: HouseStyle.TrimEnd = .amen
+    @AppStorage(HouseStyle.chapterTitlesKey) private var styleChapterTitles = ""
     @State private var serverVersion: String? = nil
     @State private var serverError: String? = nil
     @State private var desktopMessage: String? = nil
@@ -765,6 +768,41 @@ struct MCPSettingsView: View {
                                 if assistantInstructions.isEmpty {
                                     Text("e.g. Start the episode at the Bible reader's greeting, including the reading, with a first chapter called “Reading: <passage>”.")
                                         .font(.subheadline).foregroundStyle(.tertiary)
+                                        .padding(.horizontal, 13).padding(.vertical, 8)
+                                        .allowsHitTesting(false)
+                                }
+                            }
+                            .overlay(RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(Color.secondary.opacity(0.15), lineWidth: 1))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                }
+
+                settingsGroup("House style") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Where your episodes start and end, and how chapters are named. The assistant suggests cuts and chapters to match. Restart Claude after changing these.")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Picker("Episode starts", selection: $styleTrimStart) {
+                            ForEach(HouseStyle.TrimStart.allCases, id: \.self) { Text($0.label).tag($0) }
+                        }
+                        Picker("Episode ends", selection: $styleTrimEnd) {
+                            ForEach(HouseStyle.TrimEnd.allCases, id: \.self) { Text($0.label).tag($0) }
+                        }
+                        Text("Chapter titles, one per line, using {title} {reading} {series} {preacher}. A line with just {points} adds a chapter for each main point of the sermon. Leave empty to let the assistant choose.")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        TextEditor(text: $styleChapterTitles)
+                            .font(.system(.subheadline, design: .monospaced))
+                            .frame(minHeight: 60, maxHeight: 110)
+                            .scrollContentBackground(.hidden)
+                            .padding(8)
+                            .background(Color(NSColor.textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(alignment: .topLeading) {
+                                if styleChapterTitles.isEmpty {
+                                    Text("Bible Reading: {reading}\nSermon: {title}")
+                                        .font(.system(.subheadline, design: .monospaced)).foregroundStyle(.tertiary)
                                         .padding(.horizontal, 13).padding(.vertical, 8)
                                         .allowsHitTesting(false)
                                 }
